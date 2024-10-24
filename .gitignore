@@ -1,0 +1,45 @@
+# Node.js dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# TypeScript
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE and editor folders
+.idea/
+.vscode/
+.DS_Store
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Temporary files
+tmp/
+temp/
+
+# Ignore package-lock.json or yarn.lock if you want to avoid committing them
+# package-lock.json
+# yarn.lock
+
+# WhatsApp Web JS library cache
+.whatsapp-web.js/
+node_modules/.cache/
+.wwebjs_auth/
+.wwebjs_cache/
