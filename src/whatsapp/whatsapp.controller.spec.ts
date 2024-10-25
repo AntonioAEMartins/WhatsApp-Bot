@@ -1,15 +1,26 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { WhatsappController } from './whatsapp.controller';
+import { WhatsAppController } from './whatsapp.controller';
+import { WhatsAppService } from './whatsapp.service'; // Import the service
 
-describe('WhatsappController', () => {
-  let controller: WhatsappController;
+describe('WhatsAppController', () => {
+  let controller: WhatsAppController;
+  let service: WhatsAppService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      controllers: [WhatsappController],
+      controllers: [WhatsAppController],
+      providers: [
+        {
+          provide: WhatsAppService, // Mock the WhatsAppService
+          useValue: {
+            someFunction: jest.fn(), // Mock any functions the controller might call
+          },
+        },
+      ],
     }).compile();
 
-    controller = module.get<WhatsappController>(WhatsappController);
+    controller = module.get<WhatsAppController>(WhatsAppController);
+    service = module.get<WhatsAppService>(WhatsAppService);
   });
 
   it('should be defined', () => {
