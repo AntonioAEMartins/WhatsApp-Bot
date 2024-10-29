@@ -23,9 +23,13 @@
     "@nestjs/common": "^10.0.0",
     "@nestjs/core": "^10.0.0",
     "@nestjs/platform-express": "^10.0.0",
+    "@nestjs/swagger": "^7.4.2",
+    "puppeteer": "^23.6.1",
+    "puppeteer-core": "^23.6.1",
     "qrcode-terminal": "^0.12.0",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.1",
+    "swagger-ui-express": "^5.0.1",
     "whatsapp-web.js": "^1.26.0"
   },
   "devDependencies": {
