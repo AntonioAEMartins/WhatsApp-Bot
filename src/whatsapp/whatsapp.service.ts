@@ -49,6 +49,13 @@ export class WhatsAppService implements OnModuleInit {
                 return; // Ignore messages from groups
             }
 
+            const numbersToIgnore = ['5518997923440@c.us', '5511993109344@c.us', '5511999083006@c.us', '5511964681711@c.us'];
+
+            if (numbersToIgnore.includes(message.from)) {
+                this.logger.debug(`Ignoring message from ignored number: ${message.from}`);
+                return; // Ignore messages from specific numbers
+            }
+
             // Calculate message age to avoid processing old messages
             const currentTime = Math.floor(Date.now() / 1000); // Get current time in seconds
             const messageAge = currentTime - message.timestamp; // Message timestamp is in seconds
@@ -178,7 +185,7 @@ export class WhatsAppService implements OnModuleInit {
                 'Que pena! Lamentamos pelo ocorrido e o atendente responsável irá conversar com você.',
             ];
             sentMessages.push(...await this.sendMessageWithDelay(from, messages));
-            this.clientStates.delete(from);
+            state.step = 'incomplete_order';
         } else {
             const messages = [
                 'Por favor, responda com 1 para Sim ou 2 para Não.',
@@ -249,7 +256,7 @@ export class WhatsAppService implements OnModuleInit {
             'Recebido!',
         ];
         sentMessages.push(...await this.sendMessageWithDelay(from, messages));
-        this.clientStates.delete(from); // Clear state after completion
+        state.step = 'completed'; //TODO: MELHORAR
         return sentMessages; // Return the sent messages
     }
 
@@ -372,7 +379,7 @@ export class WhatsAppService implements OnModuleInit {
             } else {
                 const messages = ['Muito obrigado pelo seu feedback! 😊'];
                 sentMessages.push(...await this.sendMessageWithDelay(from, messages));
-                this.clientStates.delete(from);
+                state.step = 'completed';
             }
         } else {
             const messages = ['Por favor, avalie de 0 a 10.'];
@@ -393,7 +400,8 @@ export class WhatsAppService implements OnModuleInit {
         ];
         sentMessages.push(...await this.sendMessageWithDelay(from, messages));
         this.logger.log(`User ${from} provided detailed feedback: ${detailedFeedback}`);
-        this.clientStates.delete(from);
+        state.step = 'completed';
+        this.clientStates.set(from, state);
         return sentMessages; // Return the sent messages
     }
 
