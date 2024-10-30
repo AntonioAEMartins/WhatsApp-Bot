@@ -20,10 +20,16 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@langchain/core": "^0.3.15",
+    "@langchain/openai": "^0.3.11",
     "@nestjs/common": "^10.0.0",
+    "@nestjs/config": "^3.3.0",
     "@nestjs/core": "^10.0.0",
     "@nestjs/platform-express": "^10.0.0",
     "@nestjs/swagger": "^7.4.2",
+    "dotenv": "^16.4.5",
+    "langchain": "^0.3.5",
+    "pdf-poppler": "^0.2.1",
     "puppeteer": "^23.6.1",
     "puppeteer-core": "^23.6.1",
     "qrcode-terminal": "^0.12.0",

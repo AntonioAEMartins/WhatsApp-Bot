@@ -3,6 +3,7 @@
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { Client, LocalAuth, Message } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
+import { TableService } from 'src/table/table.service';
 
 @Injectable()
 export class WhatsAppService implements OnModuleInit {
@@ -13,7 +14,7 @@ export class WhatsAppService implements OnModuleInit {
     private clientStates: Map<string, any> = new Map();
     private typingTimeouts: Map<string, NodeJS.Timeout> = new Map();
 
-    constructor() {
+    constructor(private readonly tableService: TableService) {
         // Initialize the WhatsApp client with LocalAuth for persistent sessions
         this.client = new Client({
             authStrategy: new LocalAuth({
@@ -49,7 +50,7 @@ export class WhatsAppService implements OnModuleInit {
                 return; // Ignore messages from groups
             }
 
-            const numbersToIgnore = ['5518997923440@c.us', '5511993109344@c.us', '5511999083006@c.us', '5511964681711@c.us'];
+            const numbersToIgnore = ['5518997923440@c.us', '5511993109344@c.us', '5511999083006@c.us', '5511964681711@c.us', '5511984566799@c.us', '5511933331163@c.us'];
 
             if (numbersToIgnore.includes(message.from)) {
                 this.logger.debug(`Ignoring message from ignored number: ${message.from}`);
@@ -121,21 +122,35 @@ export class WhatsAppService implements OnModuleInit {
                     break;
 
                 default:
-                    // Handle initial interaction or undefined states
-                    if (userMessage.includes('pagar a comanda')) {
+                    console.log("DEFAULT");
+                    if (userMessage.toLowerCase().includes('pagar a comanda')) {
                         state.step = 'processing_order';
                         this.clientStates.set(from, state);
-                        await message.reply('👋 *Coti Pagamentos* - Que ótimo! Estamos processando sua comanda, por favor aguarde. 😁');
 
-                        // Simulate processing and send messages with delay
-                        setTimeout(async () => {
-                            await this.handleProcessingOrder(from, state);
-                        }, 2000);
+                        const order_id = this.extractOrderId(userMessage);
+
+                        if (!order_id) {
+                            await message.reply(
+                                'Desculpe, não entendi o número da comanda. Por favor, diga "Gostaria de pagar a comanda X", onde X é o número da comanda.',
+                            );
+                            return;
+                        }
+
+                        state.order_id = order_id;
+
+                        this.clientStates.set(from, state);
+
+                        console.log("UserState: ", state);
+
+                        await message.reply('👋 *Coti Pagamentos* - Que ótimo! Estamos processando sua comanda, por favor aguarde. 😁');
+                        await this.handleProcessingOrder(from, state, parseInt(order_id));
+
                     } else {
                         await message.reply(
-                            'Desculpe, não entendi sua mensagem. Você gostaria de pagar a comanda? Por favor, diga "Gostaria de pagar a comanda X"',
+                            'Desculpe, não entendi sua solicitação. Se você gostaria de pagar uma comanda, por favor, use a frase "Gostaria de pagar a comanda X".',
                         );
                     }
+
                     break;
             }
         });
@@ -143,6 +158,10 @@ export class WhatsAppService implements OnModuleInit {
         this.client.initialize();
     }
 
+    private extractOrderId(message: string): string | null {
+        const match = message.match(/\bcomanda\s*(\d+)/i);
+        return match ? match[1] : null;
+    }
 
     // Helper function to send messages with a delay between each
     private async sendMessageWithDelay(from: string, messages: string[], delay: number = 2000): Promise<string[]> {
@@ -157,15 +176,33 @@ export class WhatsAppService implements OnModuleInit {
 
 
     // 1. Processing Order
-    private async handleProcessingOrder(from: string, state: any): Promise<string[]> {
-        const messages = [
-            '(🍽️) Prato 1\n1 un. x R$ 50,00 = R$ 50,00\n\n(🍽️) Prato 2\n2 un. x R$ 30,00 = R$ 60,00\n\n-----------------------------------\n\n✨ Taxa de Serviço: R$ 11,00\n💳 Total Bruto: R$ 121,00',
-            '👍 A sua comanda está correta?\n\n1- Sim\n2- Não',
-        ];
-        const sentMessages = await this.sendMessageWithDelay(from, messages);
-        state.step = 'confirm_order';
-        this.clientStates.set(from, state);
-        return sentMessages; // Return the sent messages
+    private async handleProcessingOrder(from: string, state: any, order_id: number): Promise<string[]> {
+        try {
+            const orderData = await this.tableService.orderMessage(order_id);
+            const orderMessage = orderData.message;
+            const orderDetails = orderData.details;
+
+            const messages = [
+                // '(🍽️) Prato 1\n1 un. x R$ 50,00 = R$ 50,00\n\n(🍽️) Prato 2\n2 un. x R$ 30,00 = R$ 60,00\n\n-----------------------------------\n\n✨ Taxa de Serviço: R$ 11,00\n💳 Total Bruto: R$ 121,00',
+                orderMessage,
+                '👍 A sua comanda está correta?\n\n1- Sim\n2- Não',
+            ];
+            const sentMessages = await this.sendMessageWithDelay(from, messages);
+            state.step = 'confirm_order';
+            state.orderDetails = orderDetails;
+            this.clientStates.set(from, state);
+            return sentMessages; // Return the sent messages
+        } catch (error) {
+            // await message.reply('Desculpe, não foi possível encontrar a comanda. Por favor, verifique o número e tente novamente.');
+            // return;
+            const messages = [
+                'Desculpe, não foi possível encontrar a comanda. Por favor, verifique o número e tente novamente.',
+            ];
+            const sentMessages = await this.sendMessageWithDelay(from, messages);
+            state.step = "order_not_found";
+            this.clientStates.set(from, state);
+            return sentMessages;
+        }
     }
 
     // 2. Confirm Order
@@ -202,7 +239,7 @@ export class WhatsAppService implements OnModuleInit {
         const sentMessages = [];
         const positiveResponses = ['1', 'sim', 'quero dividir', 'dividir', 'sim dividir', 'partes iguais'];
         const negativeResponses = ['2', 'não', 'nao', 'não quero dividir', 'não dividir'];
-    
+
         if (positiveResponses.some(response => userMessage.includes(response))) {
             const messages = [
                 'Ok, gostaria de dividir entre quantas pessoas?\n\nLembrando que apenas suportamos a divisão em partes iguais.',
@@ -266,11 +303,14 @@ export class WhatsAppService implements OnModuleInit {
         const sentMessages = [];
         const noTipKeywords = ['não', 'nao', 'n quero', 'não quero', 'nao quero'];
         const tipPercent = parseFloat(userMessage.replace('%', ''));
-    
+        const totalAmount = state.orderDetails.total.toFixed(2);
+
         if (noTipKeywords.some((keyword) => userMessage.includes(keyword)) || tipPercent === 0) {
+            
             const messages = [
                 'Sem problemas!',
-                'O valor final da sua conta foi de: *R$ VALOR_FINAL*',
+                // 'O valor final da sua conta foi de: *R$ VALOR_FINAL*',
+                `O valor final da sua conta foi de: *R$ ${totalAmount}*`,
                 'Segue abaixo chave copia e cola do PIX 👇\n\n00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
                 'Por favor, envie o comprovante! 📄✅',
             ];
@@ -289,9 +329,12 @@ export class WhatsAppService implements OnModuleInit {
                 tipResponse = `Obrigado pela sua generosidade! 😊`;
             }
             sentMessages.push(tipResponse);
-    
+
+            const totalAmountWithTip = (state.orderDetails.total * (1 + tipPercent / 100)).toFixed(2);
+
             const paymentMessages = [
-                'O valor final da sua conta foi de: *R$ VALOR_FINAL*',
+                // 'O valor final da sua conta foi de: *R$ VALOR_FINAL*',
+                `O valor final da sua conta foi de: *R$ ${totalAmountWithTip}*`,
                 'Segue abaixo chave copia e cola do PIX 👇\n\n00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
                 'Por favor, envie o comprovante! 📄✅',
             ];
@@ -304,7 +347,7 @@ export class WhatsAppService implements OnModuleInit {
             ];
             sentMessages.push(...await this.sendMessageWithDelay(from, messages));
         }
-    
+
         this.clientStates.set(from, state);
         return sentMessages;
     }

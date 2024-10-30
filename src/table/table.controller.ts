@@ -10,4 +10,14 @@ export class TableController {
         return this.tableService.orderTable(id);
     }
 
+    @Post("payment/start/:id")
+    startPayment(@Param('id') id: number): Promise<string> {
+        return this.tableService.startPayment(id);
+    }
+
+    @Post("payment/finish/:id")
+    finishPayment(@Param('id') id: number): Promise<string> {
+        return this.tableService.finishPayment(id);
+    }
+
 }
