@@ -64,7 +64,7 @@ export class WhatsAppService implements OnModuleInit {
             // }
 
             // only respond if the number is 5511971143177@c.us
-            if (message.from !== '551132803247@c.us'){
+            if (message.from !== '551132803247@c.us') {
                 this.logger.debug(`Ignoring message from ${message.from}: ${message.body}`);
                 return;
             }
