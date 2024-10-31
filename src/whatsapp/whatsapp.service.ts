@@ -2,6 +2,7 @@
 
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { Client, LocalAuth, Message } from 'whatsapp-web.js';
+import * as vcardParser from 'vcard-parser';
 import * as qrcode from 'qrcode-terminal';
 import { TableService } from 'src/table/table.service';
 
@@ -12,6 +13,7 @@ export class WhatsAppService implements OnModuleInit {
 
     // Maps to store conversation state per client
     private clientStates: Map<string, any> = new Map();
+    private debugMode = process.env.DEBUG === 'true';
 
     constructor(private readonly tableService: TableService) {
         // Initialize the WhatsApp client with LocalAuth for persistent sessions
@@ -27,7 +29,23 @@ export class WhatsAppService implements OnModuleInit {
         this.initializeClient();
     }
 
+    async onModuleDestroy() {
+        console.log('Shutting down WhatsApp Client...');
+        if (this.client) {
+            try {
+                await this.client.destroy();
+                this.logger.log('WhatsApp Client and Puppeteer closed successfully.');
+            } catch (error) {
+                this.logger.error('Error closing WhatsApp Client:', error);
+            }
+        }
+    }
+
     private initializeClient() {
+        if (this.debugMode) {
+            this.logger.log('DEBUG mode is ON. WhatsApp client will not be initialized.');
+            return; // Skip initializing the WhatsApp client in debug mode
+        }
         this.client.on('qr', (qr) => {
             this.logger.log('QR RECEIVED, scan please');
             qrcode.generate(qr, { small: true });
@@ -49,20 +67,6 @@ export class WhatsAppService implements OnModuleInit {
                 return; // Ignore messages from groups
             }
 
-            // const numbersToIgnore = [
-            //     '5518997923440@c.us',
-            //     '5511993109344@c.us',
-            //     '5511999083006@c.us',
-            //     '5511964681711@c.us',
-            //     '5511984566799@c.us',
-            //     '5511933331163@c.us',
-            // ];
-
-            // if (numbersToIgnore.includes(message.from)) {
-            //     this.logger.debug(`Ignoring message from ignored number: ${message.from}`);
-            //     return; // Ignore messages from specific numbers
-            // }
-
             // only respond if the number is 5511971143177@c.us
             if (message.from !== '551132803247@c.us') {
                 this.logger.debug(`Ignoring message from ${message.from}: ${message.body}`);
@@ -81,7 +85,7 @@ export class WhatsAppService implements OnModuleInit {
 
             const contact = await message.getContact();
             const from = contact.id._serialized;
-            let state = this.clientStates.get(from) || {};
+            let state = this.clientStates.get(from) || { receivedContacts: 0 };
 
             const userMessage = message.body.trim().toLowerCase();
 
@@ -106,7 +110,7 @@ export class WhatsAppService implements OnModuleInit {
                     break;
 
                 case 'waiting_for_contacts':
-                    await this.handleWaitingForContacts(from, state);
+                    await this.handleWaitingForContacts(from, state, message);
                     break;
 
                 case 'extra_tip':
@@ -144,11 +148,21 @@ export class WhatsAppService implements OnModuleInit {
                             return;
                         }
 
-                        // Check if order is already being processed by another user
-                        if (this.isOrderBeingProcessed(order_id, from)) {
-                            await message.reply(
-                                'Desculpe, esta comanda já está sendo processada por outra pessoa.',
-                            );
+                        const orderProcessingInfo = this.isOrderBeingProcessed(order_id, from);
+
+                        if (orderProcessingInfo.isProcessing) {
+                            const otherState = orderProcessingInfo.state;
+                            const userNumber = orderProcessingInfo.userNumber;
+
+                            if (['split_bill', 'split_bill_number', 'waiting_for_contacts'].includes(otherState.step)) {
+                                await message.reply(
+                                    `Sua comanda está em processo de divisão de conta. O número *${userNumber}* está compartilhando os contatos para dividir a conta. Por favor, aguarde ou entre em contato com essa pessoa para participar da divisão.`
+                                );
+                            } else {
+                                await message.reply(
+                                    'Desculpe, esta comanda já está sendo processada por outra pessoa.'
+                                );
+                            }
                             return;
                         }
 
@@ -186,15 +200,20 @@ export class WhatsAppService implements OnModuleInit {
     ): Promise<string[]> {
         const sentMessages = [];
         for (const msg of messages) {
-            await this.client.sendMessage(from, msg);
-            sentMessages.push(msg); // Track the message being sent
+            if (!this.debugMode) {
+                await this.client.sendMessage(from, msg);
+            } else {
+                this.logger.debug(`DEBUG mode ON: Simulating sending message to ${from}: ${msg}`);
+            }
+            sentMessages.push(msg); // Track the message being "sent"
             await new Promise((resolve) => setTimeout(resolve, delay));
         }
-        return sentMessages; // Return the list of messages sent
+        return sentMessages; // Return the list of messages "sent"
     }
 
+
     // Helper function to check if an order is already being processed
-    private isOrderBeingProcessed(order_id: string, from: string): boolean {
+    private isOrderBeingProcessed(order_id: string, from: string): { isProcessing: boolean; state?: any; userNumber?: string } {
         for (const [otherFrom, otherState] of this.clientStates.entries()) {
             if (
                 otherState.order_id === order_id &&
@@ -202,11 +221,13 @@ export class WhatsAppService implements OnModuleInit {
                 otherState.step !== 'completed' &&
                 otherState.step !== 'incomplete_order'
             ) {
-                return true;
+                const userNumber = otherFrom.split('@')[0]; // Extract the phone number
+                return { isProcessing: true, state: otherState, userNumber };
             }
         }
-        return false;
+        return { isProcessing: false };
     }
+
 
     // 1. Processing Order
     private async handleProcessingOrder(
@@ -307,7 +328,13 @@ export class WhatsAppService implements OnModuleInit {
         state: any,
     ): Promise<string[]> {
         const sentMessages = [];
-        const numPeople = parseInt(userMessage);
+
+        // Extract the first number found in the message
+        const numPeopleMatch = userMessage.match(/\d+/); //TODO: Limitation: Only the first number is considered and there isn't considered the case where the user sends a number in words
+        console.log("numPeopleMatch", numPeopleMatch);
+        const numPeople = numPeopleMatch ? parseInt(numPeopleMatch[0]) : NaN;
+        console.log("numPeople", numPeople);
+
         if (!isNaN(numPeople) && numPeople > 1) {
             state.numPeople = numPeople;
             const messages = [
@@ -319,36 +346,112 @@ export class WhatsAppService implements OnModuleInit {
             const messages = ['Por favor, informe um número válido de pessoas (maior que 1).'];
             sentMessages.push(...(await this.sendMessageWithDelay(from, messages)));
         }
+
         this.clientStates.set(from, state);
         return sentMessages; // Return the sent messages
     }
 
+
     // 5. Waiting for Contacts
-    private async handleWaitingForContacts(from: string, state: any): Promise<string[]> {
+    private async handleWaitingForContacts(
+        from: string,
+        state: any,
+        message: Message,
+    ): Promise<string[]> {
         const sentMessages = [];
-        const messages = [
-            '👋 *Coti Pagamentos* - Boa noite! Você foi solicitado para dividir a conta no Cris Parrila.',
-            `Sua parte ficou: *R$ ${(121 / state.numPeople).toFixed(2)}*`,
-            'Recebido!',
-        ];
-        sentMessages.push(...(await this.sendMessageWithDelay(from, messages)));
-        state.step = 'completed';
-        this.clientStates.delete(from); // Remove state
-        return sentMessages; // Return the sent messages
+        if (message.type === 'vcard') {
+            try {
+                const vcardData = message.vCards;
+
+                const vcardName = vcardData[0].split('FN:')[1].split('\n')[0];
+                let vcardPhone = vcardData[0].split('waid=')[1].split(':')[1].split('\n')[0];
+                vcardPhone = vcardPhone.replace(/\D/g, ''); // Remove all non-numeric characters
+
+                state.receivedContacts += 1;
+
+                // Armazena o contato recebido
+                if (!state.contacts) state.contacts = [];
+                state.contacts.push({ name: vcardName, phone: vcardPhone });
+                console.log("HandleWaitingForContacts - C", state.contacts);
+                console.log("HandleWaitingForContacts - RC", state.receivedContacts);
+                console.log("HandleWaitingForContacts - NumPeople", state.numPeople);
+                let responseMessage = `✨ *Contato Recebido com Sucesso!* ✨\n\n👤 *Nome:* ${vcardName}\n📞 *Número:* ${vcardPhone}`;
+
+                const remainingContacts = (state.numPeople - 1) - state.receivedContacts;
+                if (remainingContacts > 0) {
+                    responseMessage += `\n\n🕒 Aguardando mais *${remainingContacts}* contato(s) para continuar.`;
+                } sentMessages.push(...(await this.sendMessageWithDelay(from, [responseMessage])));
+
+                if (state.receivedContacts >= state.numPeople - 1) {
+                    const completionMessage = '🎉 Todos os contatos foram recebidos! Vamos prosseguir com seu atendimento. 😄';
+                    sentMessages.push(...(await this.sendMessageWithDelay(from, [completionMessage])));
+                    state.step = 'extra_tip'; // Próximo passo para o cliente principal
+
+                    // Calcula a parte de cada cliente
+                    const totalAmount = state.orderDetails.total;
+                    const numPeople = state.numPeople;
+                    const userAmount = (totalAmount / numPeople).toFixed(2);
+
+                    // Atualiza o valor individual para o cliente principal
+                    state.userAmount = parseFloat(userAmount);
+
+                    // Inicia interação com os clientes secundários
+                    for (const contact of state.contacts) {
+                        console.log("HandleWaitingForContacts - Contact", contact);
+                        const contactId = `${contact.phone}@c.us`;
+                        const contactState = {
+                            step: 'extra_tip',
+                            order_id: state.order_id,
+                            userAmount: parseFloat(userAmount),
+                            orderDetails: state.orderDetails,
+                        };
+                        this.clientStates.set(contactId, contactState);
+
+                        // Envia mensagem inicial para o cliente secundário
+                        const messages = [
+                            `👋 Olá ${contact.name}! Você foi incluído na divisão da conta pelo(a) ${state.orderDetails.clientName}.`,
+                            `Sua parte na conta é de *R$ ${userAmount}*.`,
+                            'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
+                        ];
+                        await this.sendMessageWithDelay(contactId, messages);
+                    }
+
+                    // Continua o fluxo para o cliente principal
+                    const messages = [
+                        'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
+                    ];
+                    sentMessages.push(...(await this.sendMessageWithDelay(from, messages)));
+                }
+            } catch (error) {
+                this.logger.error('Erro ao processar o vCard:', error);
+                const errorMessages = [
+                    '❌ Ocorreu um erro ao processar o contato. Por favor, tente novamente enviando o contato.',
+                ];
+                sentMessages.push(...(await this.sendMessageWithDelay(from, errorMessages)));
+            }
+        } else {
+            const promptMessages = [
+                '📲 Por favor, envie o contato da pessoa com quem deseja dividir a conta.',
+            ];
+            sentMessages.push(...(await this.sendMessageWithDelay(from, promptMessages)));
+        }
+
+        this.clientStates.set(from, state);
+        return sentMessages;
     }
 
     // 6. Extra Tip
     private async handleExtraTip(from: string, userMessage: string, state: any): Promise<string[]> {
         const sentMessages = [];
         const noTipKeywords = ['não', 'nao', 'n quero', 'não quero', 'nao quero'];
-        const tipPercent = parseFloat(userMessage.replace('%', ''));
-        const totalAmount = state.orderDetails.total.toFixed(2);
+        const tipPercent = parseFloat(userMessage.replace('%', '').replace(',', '.'));
+        const userAmount = state.userAmount.toFixed(2);
 
         if (noTipKeywords.some((keyword) => userMessage.includes(keyword)) || tipPercent === 0) {
             const messages = [
                 'Sem problemas!',
-                `O valor final da sua conta foi de: *R$ ${totalAmount}*`,
-                'Segue abaixo chave copia e cola do PIX 👇\n\n00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
+                `O valor final da sua conta é: *R$ ${userAmount}*`,
+                'Segue abaixo a chave PIX para pagamento 👇\n\n00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
                 'Por favor, envie o comprovante! 📄✅',
             ];
             sentMessages.push(...(await this.sendMessageWithDelay(from, messages)));
@@ -368,13 +471,13 @@ export class WhatsAppService implements OnModuleInit {
             sentMessages.push(tipResponse);
 
             const totalAmountWithTip = (
-                state.orderDetails.total *
+                state.userAmount *
                 (1 + tipPercent / 100)
             ).toFixed(2);
 
             const paymentMessages = [
-                `O valor final da sua conta foi de: *R$ ${totalAmountWithTip}*`,
-                'Segue abaixo chave copia e cola do PIX 👇\n\n00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
+                `O valor final da sua conta é: *R$ ${totalAmountWithTip}*`,
+                'Segue abaixo a chave PIX para pagamento 👇\n\n00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
                 'Por favor, envie o comprovante! 📄✅',
             ];
             sentMessages.push(...(await this.sendMessageWithDelay(from, paymentMessages)));
@@ -390,6 +493,7 @@ export class WhatsAppService implements OnModuleInit {
         this.clientStates.set(from, state);
         return sentMessages;
     }
+
 
     // 7. Waiting for Payment
     private async handleWaitingForPayment(
