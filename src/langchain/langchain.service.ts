@@ -3,6 +3,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ChatOpenAI } from '@langchain/openai';
 import { AIMessageChunk, HumanMessage } from '@langchain/core/messages';
+import { pdfToPng } from 'pdf-to-png-converter';
 import * as fs from 'fs';
 
 @Injectable()
@@ -27,68 +28,64 @@ export class LangchainService {
         }
     }
 
+    private async convertPdfToPng(base64Data: string): Promise<string[]> {
+        const pdfBuffer = Buffer.from(base64Data, 'base64');
+
+        const pngPages = await pdfToPng(pdfBuffer, {
+            viewportScale: 2.0, // Scale to improve image quality
+            outputFolder: './temp_pngs', // Folder to store PNGs temporarily
+            outputFileMaskFunc: (pageNumber) => `page_${pageNumber}`
+        });
+
+        // Collect PNG paths
+        return pngPages.map((page) => page.path);
+    }
+
     // Function to analyze base64 image and compare price
     public async analyzeDocument(base64Data: string, targetPrice: number): Promise<{ isAbove: boolean; isRight: boolean; error?: string }> {
         try {
-            // Determine the MIME type based on the base64 string
             const mimeType = this.getMimeType(base64Data);
 
-            const message = new HumanMessage({
+            // Convert PDF to PNG if necessary
+            let imagePaths: string[] = [];
+            if (mimeType === 'application/pdf') {
+                imagePaths = await this.convertPdfToPng(base64Data);
+            } else {
+                imagePaths.push(`data:${mimeType};base64,${base64Data}`);
+            }
+
+            // Prepare message with each image for analysis
+            const messages = imagePaths.map(path => new HumanMessage({
                 content: [
                     {
                         type: 'text',
-                        text: `
-                        Responda somente em JSON.
-                        Baseado no documento que você recebeu, preencha as informações do JSON abaixo:
-    
-                        {
-                        "nome_pagador": String,
-                        "cpf_cnpj_pagador": String,
-                        "instiuicao_bancaria": String,
-                        "valor": Number,
-                        "data_pagamento": String,
-                        "nome_beneficiario": String,
-                        "cpf_cnpj_beneficiario": String,
-                        "instiuicao_bancaria_beneficiario": String,
-                        "id_transacao": String
-                        }
-    
-                        Se não for possível preencher todas as informações, deixe-as como null.
-                        `
+                        text: `Please analyze this document and provide details in JSON format.`,
                     },
                     {
                         image_url: {
-                            url: `data:${mimeType};base64,${base64Data}`,
+                            url: path.startsWith('data:') ? path : `file://${path}`,
                         },
                         type: "image_url",
                     }
                 ]
+            }));
+
+            // Invoke chat model for each page or image
+            const responses = await Promise.all(messages.map(message => this.chatModel.invoke([message])));
+
+            // Process responses
+            const results = responses.map(response => {
+                let responseContent = response.content.toString().replace(/```json|```/g, '').trim();
+                return JSON.parse(responseContent);
             });
 
-            const response = await this.chatModel.invoke([message]);
-
-            // Clean up the response to extract only the JSON part
-            let responseContent = response.content.toString();
-
-            // Regex to remove markdown code fences and other extraneous characters
-            responseContent = responseContent.replace(/```json|```/g, '').trim();
-
-            // Parse the cleaned-up JSON response from the model
-            const jsonResponse = JSON.parse(responseContent);
-
-            return jsonResponse;
+            return results[0];  // Returning the first result for simplicity
 
         } catch (error) {
             console.error('Error analyzing document:', error);
-            // Return JSON response indicating failure
-            return {
-                isAbove: false,
-                isRight: false,
-                error: 'Failed to analyze document'
-            };
+            return { isAbove: false, isRight: false, error: 'Failed to analyze document' };
         }
     }
-
 
     // Helper function to detect the MIME type from the base64 string
     private getMimeType(base64Data: string): string {
@@ -117,7 +114,7 @@ export class LangchainService {
     public async testAnalyzePDF() {
         const filePath = './src/langchain/extract.JPG'; // Ensure the path is correct
         const base64Data = this.encodeFileToBase64(filePath);
-        const targetPrice = 167.83;
+        const targetPrice = 86.25;
 
         const result = await this.analyzeDocument(base64Data, targetPrice);
         console.log(result);

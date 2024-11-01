@@ -2,7 +2,6 @@
 
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { Client, LocalAuth, Message } from 'whatsapp-web.js';
-import * as vcardParser from 'vcard-parser';
 import * as qrcode from 'qrcode-terminal';
 import { TableService } from 'src/table/table.service';
 
@@ -68,7 +67,7 @@ export class WhatsAppService implements OnModuleInit {
             }
 
             // Only respond if the number is 551132803247@c.us or 5511993109344@c.us
-            if (message.from !== '551132803247@c.us' && message.from !== '5511993109344@c.us') {
+            if (message.from !== '551132803247@c.us' && message.from !== '5511993109344@c.us' && message.from !== '5518997923440@c.us') {
                 this.logger.debug(`Ignoring message from ${message.from}: ${message.body}`);
                 return;
             }
@@ -456,17 +455,21 @@ export class WhatsAppService implements OnModuleInit {
 
 
     // 6. Extra Tip
+    // 6. Extra Tip
     private async handleExtraTip(from: string, userMessage: string, state: any): Promise<string[]> {
         const sentMessages = [];
         const noTipKeywords = ['não', 'nao', 'n quero', 'não quero', 'nao quero'];
         const tipPercent = parseFloat(userMessage.replace('%', '').replace(',', '.'));
-        const userAmount = state.numPeople > 1 ? state.userAmount : state.orderDetails.total.toFixed(2);
+
+        // Corrected line: Use state.userAmount if defined, otherwise use total order amount
+        const userAmount = state.userAmount !== undefined ? state.userAmount.toFixed(2) : state.orderDetails.total.toFixed(2);
 
         if (noTipKeywords.some((keyword) => userMessage.includes(keyword)) || tipPercent === 0) {
             const messages = [
                 'Sem problemas!',
                 `O valor final da sua conta é: *R$ ${userAmount}*`,
-                'Segue abaixo a chave PIX para pagamento 👇\n\n00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
+                'Segue abaixo a chave PIX para pagamento 👇',
+                '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
                 'Por favor, envie o comprovante! 📄✅',
             ];
             sentMessages.push(...(await this.sendMessageWithDelay(from, messages)));
@@ -492,7 +495,8 @@ export class WhatsAppService implements OnModuleInit {
 
             const paymentMessages = [
                 `O valor final da sua conta é: *R$ ${totalAmountWithTip}*`,
-                'Segue abaixo a chave PIX para pagamento 👇\n\n00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
+                'Segue abaixo a chave PIX para pagamento 👇',
+                '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
                 'Por favor, envie o comprovante! 📄✅',
             ];
             sentMessages.push(...(await this.sendMessageWithDelay(from, paymentMessages)));
