@@ -67,11 +67,12 @@ export class WhatsAppService implements OnModuleInit {
                 return; // Ignore messages from groups
             }
 
-            // only respond if the number is 5511971143177@c.us
-            if (message.from !== '551132803247@c.us') {
+            // Only respond if the number is 551132803247@c.us or 5511993109344@c.us
+            if (message.from !== '551132803247@c.us' && message.from !== '5511993109344@c.us') {
                 this.logger.debug(`Ignoring message from ${message.from}: ${message.body}`);
                 return;
             }
+
 
             // Calculate message age to avoid processing old messages
             const currentTime = Math.floor(Date.now() / 1000); // Get current time in seconds
@@ -359,43 +360,55 @@ export class WhatsAppService implements OnModuleInit {
         message: Message,
     ): Promise<string[]> {
         const sentMessages = [];
-        if (message.type === 'vcard') {
+
+        if (message.type === 'vcard' || message.type === 'multi_vcard') {
             try {
-                const vcardData = message.vCards;
+                const vcardDataArray = message.vCards;
+                let responseMessage = `✨ *Contato(s) Recebido(s) com Sucesso!* ✨\n`;
 
-                const vcardName = vcardData[0].split('FN:')[1].split('\n')[0];
-                let vcardPhone = vcardData[0].split('waid=')[1].split(':')[1].split('\n')[0];
-                vcardPhone = vcardPhone.replace(/\D/g, ''); // Remove all non-numeric characters
+                for (const vcardData of vcardDataArray) {
+                    console.log("vcardData", vcardData);
 
-                state.receivedContacts += 1;
+                    const vcardName = vcardData.split('FN:')[1].split('\n')[0];
+                    let vcardPhone = vcardData.split('waid=')[1].split(':')[1].split('\n')[0];
+                    vcardPhone = vcardPhone.replace(/\D/g, ''); // Remove all non-numeric characters
 
-                // Armazena o contato recebido
-                if (!state.contacts) state.contacts = [];
-                state.contacts.push({ name: vcardName, phone: vcardPhone });
-                console.log("HandleWaitingForContacts - C", state.contacts);
-                console.log("HandleWaitingForContacts - RC", state.receivedContacts);
-                console.log("HandleWaitingForContacts - NumPeople", state.numPeople);
-                let responseMessage = `✨ *Contato Recebido com Sucesso!* ✨\n\n👤 *Nome:* ${vcardName}\n📞 *Número:* ${vcardPhone}`;
+                    state.receivedContacts = state.receivedContacts || 0;
+                    state.receivedContacts += 1;
 
+                    // Store the received contact
+                    if (!state.contacts) state.contacts = [];
+                    state.contacts.push({ name: vcardName, phone: vcardPhone });
+
+                    // Append each contact’s details to the response message
+                    responseMessage += `\n👤 *Nome:* ${vcardName}\n📞 *Número:* ${vcardPhone}\n`;
+                }
+
+                // Calculate remaining contacts after processing all received contacts
                 const remainingContacts = (state.numPeople - 1) - state.receivedContacts;
-                if (remainingContacts > 0) {
-                    responseMessage += `\n\n🕒 Aguardando mais *${remainingContacts}* contato(s) para continuar.`;
-                } sentMessages.push(...(await this.sendMessageWithDelay(from, [responseMessage])));
 
-                if (state.receivedContacts >= state.numPeople - 1) {
+                // If more contacts are still needed, inform the user
+                if (remainingContacts > 0) {
+                    responseMessage += `\n🕒 Aguardando mais *${remainingContacts}* contato(s) para continuar.`;
+                }
+
+                sentMessages.push(...(await this.sendMessageWithDelay(from, [responseMessage])));
+
+                // If all required contacts have been received, proceed to the next step
+                if (remainingContacts <= 0) {
                     const completionMessage = '🎉 Todos os contatos foram recebidos! Vamos prosseguir com seu atendimento. 😄';
                     sentMessages.push(...(await this.sendMessageWithDelay(from, [completionMessage])));
-                    state.step = 'extra_tip'; // Próximo passo para o cliente principal
+                    state.step = 'extra_tip'; // Next step for the main client
 
-                    // Calcula a parte de cada cliente
+                    // Calculate each client's share
                     const totalAmount = state.orderDetails.total;
                     const numPeople = state.numPeople;
                     const userAmount = (totalAmount / numPeople).toFixed(2);
 
-                    // Atualiza o valor individual para o cliente principal
+                    // Set individual amount for the main client
                     state.userAmount = parseFloat(userAmount);
 
-                    // Inicia interação com os clientes secundários
+                    // Initiate interaction with secondary clients
                     for (const contact of state.contacts) {
                         console.log("HandleWaitingForContacts - Contact", contact);
                         const contactId = `${contact.phone}@c.us`;
@@ -407,29 +420,30 @@ export class WhatsAppService implements OnModuleInit {
                         };
                         this.clientStates.set(contactId, contactState);
 
-                        // Envia mensagem inicial para o cliente secundário
+                        // Send initial message to secondary client
                         const messages = [
-                            `👋 Olá ${contact.name}! Você foi incluído na divisão da conta pelo(a) ${state.orderDetails.clientName}.`,
+                            `👋 Coti Pagamentos - Olá! Você foi incluído na divisão do pagamento da comanda *${state.order_id}* no restaurante Cris Parrilla. Aguarde para receber mais informações sobre o pagamento.`,
                             `Sua parte na conta é de *R$ ${userAmount}*.`,
                             'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
                         ];
                         await this.sendMessageWithDelay(contactId, messages);
                     }
 
-                    // Continua o fluxo para o cliente principal
+                    // Continue the flow for the main client
                     const messages = [
                         'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
                     ];
                     sentMessages.push(...(await this.sendMessageWithDelay(from, messages)));
                 }
             } catch (error) {
-                this.logger.error('Erro ao processar o vCard:', error);
+                this.logger.error('Erro ao processar o(s) vCard(s):', error);
                 const errorMessages = [
                     '❌ Ocorreu um erro ao processar o contato. Por favor, tente novamente enviando o contato.',
                 ];
                 sentMessages.push(...(await this.sendMessageWithDelay(from, errorMessages)));
             }
         } else {
+            console.log("Message Type", message.type);
             const promptMessages = [
                 '📲 Por favor, envie o contato da pessoa com quem deseja dividir a conta.',
             ];
@@ -439,6 +453,7 @@ export class WhatsAppService implements OnModuleInit {
         this.clientStates.set(from, state);
         return sentMessages;
     }
+
 
     // 6. Extra Tip
     private async handleExtraTip(from: string, userMessage: string, state: any): Promise<string[]> {

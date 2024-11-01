@@ -21,7 +21,7 @@ export class WhatsAppController {
     const state = {
       step: 'waiting_for_contacts',
       numPeople: 2,
-      orderDetails:{
+      orderDetails: {
         total: 100,
       },
       receivedContacts: 0, // Initialize receivedContacts
