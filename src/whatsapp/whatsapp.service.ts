@@ -460,7 +460,7 @@ export class WhatsAppService implements OnModuleInit {
         const sentMessages = [];
         const noTipKeywords = ['não', 'nao', 'n quero', 'não quero', 'nao quero'];
         const tipPercent = parseFloat(userMessage.replace('%', '').replace(',', '.'));
-        const userAmount = state.userAmount.toFixed(2);
+        const userAmount = state.numPeople > 1 ? state.userAmount : state.orderDetails.total.toFixed(2);
 
         if (noTipKeywords.some((keyword) => userMessage.includes(keyword)) || tipPercent === 0) {
             const messages = [
@@ -486,7 +486,7 @@ export class WhatsAppService implements OnModuleInit {
             sentMessages.push(tipResponse);
 
             const totalAmountWithTip = (
-                state.userAmount *
+                parseFloat(userAmount) *
                 (1 + tipPercent / 100)
             ).toFixed(2);
 
@@ -508,6 +508,7 @@ export class WhatsAppService implements OnModuleInit {
         this.clientStates.set(from, state);
         return sentMessages;
     }
+
 
 
     // 7. Waiting for Payment
