@@ -8,5 +8,6 @@ import { ConfigModule } from '@nestjs/config';
   imports: [ConfigModule],
   controllers: [LangchainController],
   providers: [LangchainService],
+  exports: [LangchainService],
 })
 export class LangchainModule {}

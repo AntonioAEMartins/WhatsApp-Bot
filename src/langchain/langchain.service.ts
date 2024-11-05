@@ -3,7 +3,6 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ChatOpenAI } from '@langchain/openai';
 import { AIMessageChunk, HumanMessage } from '@langchain/core/messages';
-import { pdfToPng } from 'pdf-to-png-converter';
 import * as fs from 'fs';
 
 @Injectable()
@@ -28,80 +27,85 @@ export class LangchainService {
         }
     }
 
-    private async convertPdfToPng(base64Data: string): Promise<string[]> {
-        const pdfBuffer = Buffer.from(base64Data, 'base64');
-
-        const pngPages = await pdfToPng(pdfBuffer, {
-            viewportScale: 2.0, // Scale to improve image quality
-            outputFolder: './temp_pngs', // Folder to store PNGs temporarily
-            outputFileMaskFunc: (pageNumber) => `page_${pageNumber}`
-        });
-
-        // Collect PNG paths
-        return pngPages.map((page) => page.path);
-    }
-
     // Function to analyze base64 image and compare price
-    public async analyzeDocument(base64Data: string, targetPrice: number): Promise<{ isAbove: boolean; isRight: boolean; error?: string }> {
+    public async analyzeDocument(extractedText: string, targetPrice: number): Promise<{
+        nome_pagador: string | null;
+        cpf_cnpj_pagador: string | null;
+        instiuicao_bancaria: string | null;
+        valor: number | null;
+        data_pagamento: string | null;
+        nome_beneficiario: string | null;
+        cpf_cnpj_beneficiario: string | null;
+        instiuicao_bancaria_beneficiario: string | null;
+        id_transacao: string | null;
+        error?: string;
+    }> {
         try {
-            const mimeType = this.getMimeType(base64Data);
-
-            // Convert PDF to PNG if necessary
-            let imagePaths: string[] = [];
-            if (mimeType === 'application/pdf') {
-                imagePaths = await this.convertPdfToPng(base64Data);
-            } else {
-                imagePaths.push(`data:${mimeType};base64,${base64Data}`);
-            }
-
-            // Prepare message with each image for analysis
-            const messages = imagePaths.map(path => new HumanMessage({
-                content: [
+            const message = new HumanMessage({
+                content: `
+                    Responda somente em JSON.
+                    Baseado no texto extraído do documento, preencha as informações do JSON abaixo:
+    
                     {
-                        type: 'text',
-                        text: `Please analyze this document and provide details in JSON format.`,
-                    },
-                    {
-                        image_url: {
-                            url: path.startsWith('data:') ? path : `file://${path}`,
-                        },
-                        type: "image_url",
+                        "nome_pagador": String,
+                        "cpf_cnpj_pagador": String,
+                        "instiuicao_bancaria": String,
+                        "valor": Number,
+                        "data_pagamento": String,
+                        "nome_beneficiario": String,
+                        "cpf_cnpj_beneficiario": String,
+                        "instiuicao_bancaria_beneficiario": String,
+                        "id_transacao": String
                     }
-                ]
-            }));
-
-            // Invoke chat model for each page or image
-            const responses = await Promise.all(messages.map(message => this.chatModel.invoke([message])));
-
-            // Process responses
-            const results = responses.map(response => {
-                let responseContent = response.content.toString().replace(/```json|```/g, '').trim();
-                return JSON.parse(responseContent);
+    
+                    Se não for possível preencher todas as informações, deixe-as como null.
+                    Texto extraído:
+                    ${extractedText}
+                `
             });
 
-            return results[0];  // Returning the first result for simplicity
+            const response = await this.chatModel.invoke([message]);
+
+            // Clean up the response to extract only the JSON part
+            let responseContent = response.content.toString();
+            responseContent = responseContent.replace(/```json|```/g, '').trim();
+            const jsonResponse = JSON.parse(responseContent);
+
+            return jsonResponse;
 
         } catch (error) {
             console.error('Error analyzing document:', error);
-            return { isAbove: false, isRight: false, error: 'Failed to analyze document' };
+            return {
+                nome_pagador: null,
+                cpf_cnpj_pagador: null,
+                instiuicao_bancaria: null,
+                valor: null,
+                data_pagamento: null,
+                nome_beneficiario: null,
+                cpf_cnpj_beneficiario: null,
+                instiuicao_bancaria_beneficiario: null,
+                id_transacao: null,
+                error: 'Failed to analyze document'
+            };
         }
     }
 
-    // Helper function to detect the MIME type from the base64 string
-    private getMimeType(base64Data: string): string {
-        if (base64Data.startsWith("JVBERi0")) {
-            return 'application/pdf'; // PDF
-        } else if (base64Data.startsWith("/9j/")) {
-            return 'image/jpeg'; // JPEG
-        } else if (base64Data.startsWith("iVBORw0KGgo")) {
-            return 'image/png'; // PNG
-        } else if (base64Data.startsWith("R0lGODdh") || base64Data.startsWith("R0lGODlh")) {
-            return 'image/gif'; // GIF
-        } else if (base64Data.startsWith("UklGR")) {
-            return 'image/webp'; // WebP
-        } else {
-            throw new Error('Unsupported file type');
+
+    async extractTextFromPDF(base64Data: string): Promise<any> {
+        const response = await fetch(`http://localhost:8000/extract_text_from_image`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ image_base64: base64Data }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to extract text from PDF');
         }
+
+        const { extracted_text } = await response.json();
+        return extracted_text;
     }
 
     // Helper function to read the file and convert it to base64
@@ -112,12 +116,10 @@ export class LangchainService {
 
     // Testing function to read the PDF and analyze it
     public async testAnalyzePDF() {
-        const filePath = './src/langchain/extract.JPG'; // Ensure the path is correct
+        const filePath = './src/langchain/extract.PDF'; // Ensure the path is correct
         const base64Data = this.encodeFileToBase64(filePath);
-        const targetPrice = 86.25;
-
-        const result = await this.analyzeDocument(base64Data, targetPrice);
-        console.log(result);
+        const result = await this.extractTextFromPDF(base64Data);
+        return result;
     }
 
 }
