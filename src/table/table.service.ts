@@ -7,7 +7,6 @@ export class TableService {
 
     constructor() {
         this.url = process.env.POS_BACKEND_URL;
-        console.log('TableService URL:', this.url);
     }
 
     async orderTable(id: number): Promise<any> {

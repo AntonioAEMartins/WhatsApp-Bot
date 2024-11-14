@@ -19,7 +19,6 @@ export class LangchainService {
             temperature: 0.0,
         });
         this.url = process.env.POS_BACKEND_URL;
-        console.log('LangChaing URL:', this.url);
     }
 
     public async analyzeDocument(
