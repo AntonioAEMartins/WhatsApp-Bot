@@ -5,7 +5,7 @@ export class TableService {
 
     async orderTable(id: number): Promise<any> {
 
-        const response = await fetch(`http://localhost:8000/order`, {
+        const response = await fetch(`http://100.125.76.9:8000/order`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -23,7 +23,7 @@ export class TableService {
 
     async startPayment(id: number): Promise<any> {
 
-        const response = await fetch(`http://localhost:8000/payment`, {
+        const response = await fetch(`http://100.125.76.9:8000/payment`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -40,7 +40,7 @@ export class TableService {
 
     async finishPayment(id: number): Promise<any> {
 
-        const response = await fetch(`http://localhost:8000/close`, {
+        const response = await fetch(`http://100.125.76.9:8000/close`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -57,7 +57,7 @@ export class TableService {
 
     async orderMessage(id: number): Promise<any> {
 
-        const response = await fetch(`http://localhost:8000/message`, {
+        const response = await fetch(`http://100.125.76.9:8000/message`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

@@ -1,9 +1,10 @@
 // src/langchain/langchain.service.ts
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ChatOpenAI } from '@langchain/openai';
 import { AIMessageChunk, HumanMessage } from '@langchain/core/messages';
 import * as fs from 'fs';
+import { PaymentProofDTO } from 'src/whatsapp/dto/conversation.dto';
 
 @Injectable()
 export class LangchainService {
@@ -27,41 +28,33 @@ export class LangchainService {
         }
     }
 
-    // Function to analyze base64 image and compare price
-    public async analyzeDocument(extractedText: string, targetPrice: number): Promise<{
-        nome_pagador: string | null;
-        cpf_cnpj_pagador: string | null;
-        instiuicao_bancaria: string | null;
-        valor: number | null;
-        data_pagamento: string | null;
-        nome_beneficiario: string | null;
-        cpf_cnpj_beneficiario: string | null;
-        instiuicao_bancaria_beneficiario: string | null;
-        id_transacao: string | null;
-        error?: string;
-    }> {
+
+    public async analyzeDocument(
+        extractedText: string,
+        targetPrice: number
+    ): Promise<any> {
         try {
             const message = new HumanMessage({
                 content: `
-                    Responda somente em JSON.
-                    Baseado no texto extraído do documento, preencha as informações do JSON abaixo:
-    
-                    {
-                        "nome_pagador": String,
-                        "cpf_cnpj_pagador": String,
-                        "instiuicao_bancaria": String,
-                        "valor": Number,
-                        "data_pagamento": String,
-                        "nome_beneficiario": String,
-                        "cpf_cnpj_beneficiario": String,
-                        "instiuicao_bancaria_beneficiario": String,
-                        "id_transacao": String
-                    }
-    
-                    Se não for possível preencher todas as informações, deixe-as como null.
-                    Texto extraído:
-                    ${extractedText}
-                `
+                Responda somente em JSON.
+                Baseado no texto extraído do documento, preencha as informações do JSON abaixo:
+
+                {
+                    "nome_pagador": String,
+                    "cpf_cnpj_pagador": String,
+                    "instiuicao_bancaria": String,
+                    "valor": Number,
+                    "data_pagamento": String,
+                    "nome_beneficiario": String,
+                    "cpf_cnpj_beneficiario": String,
+                    "instiuicao_bancaria_beneficiario": String,
+                    "id_transacao": String
+                }
+
+                Se não for possível preencher todas as informações, deixe-as como null.
+                Texto extraído:
+                ${extractedText}
+            `
             });
 
             const response = await this.chatModel.invoke([message]);
@@ -69,30 +62,20 @@ export class LangchainService {
             // Clean up the response to extract only the JSON part
             let responseContent = response.content.toString();
             responseContent = responseContent.replace(/```json|```/g, '').trim();
-            const jsonResponse = JSON.parse(responseContent);
+            const jsonResponse: PaymentProofDTO = JSON.parse(responseContent);
 
             return jsonResponse;
 
         } catch (error) {
             console.error('Error analyzing document:', error);
-            return {
-                nome_pagador: null,
-                cpf_cnpj_pagador: null,
-                instiuicao_bancaria: null,
-                valor: null,
-                data_pagamento: null,
-                nome_beneficiario: null,
-                cpf_cnpj_beneficiario: null,
-                instiuicao_bancaria_beneficiario: null,
-                id_transacao: null,
-                error: 'Failed to analyze document'
-            };
+            throw new HttpException('Failed to analyze document', HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
 
+
     async extractTextFromPDF(base64Data: string): Promise<any> {
-        const response = await fetch(`http://localhost:8000/extract_text_from_image`, {
+        const response = await fetch(`http://100.125.76.9:8000/extract_text_from_image`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
