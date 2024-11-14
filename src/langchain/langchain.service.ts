@@ -10,6 +10,7 @@ import { PaymentProofDTO } from 'src/whatsapp/dto/conversation.dto';
 export class LangchainService {
 
     private chatModel: ChatOpenAI;
+    private readonly url: string;
 
     constructor(private configService: ConfigService) {
         this.chatModel = new ChatOpenAI({
@@ -17,17 +18,8 @@ export class LangchainService {
             modelName: 'gpt-4o-mini-2024-07-18',
             temperature: 0.0,
         });
+        this.url = process.env.POS_BACKEND_URL;
     }
-
-    private async helloWorld() {
-        try {
-            const response: AIMessageChunk = await this.chatModel.invoke("Hello world!");
-            console.log(response.content);
-        } catch (error) {
-            console.error(error);
-        }
-    }
-
 
     public async analyzeDocument(
         extractedText: string,
@@ -75,7 +67,7 @@ export class LangchainService {
 
 
     async extractTextFromPDF(base64Data: string): Promise<any> {
-        const response = await fetch(`http://100.125.76.9:8000/extract_text_from_image`, {
+        const response = await fetch(`${this.url}/extract_text_from_image`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
