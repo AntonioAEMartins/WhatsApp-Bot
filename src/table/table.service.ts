@@ -3,9 +3,16 @@ import { Injectable } from '@nestjs/common';
 @Injectable()
 export class TableService {
 
+    private readonly url: string;
+
+    constructor() {
+        this.url = process.env.POS_BACKEND_URL;
+        console.log('TableService URL:', this.url);
+    }
+
     async orderTable(id: number): Promise<any> {
 
-        const response = await fetch(`http://100.125.76.9:8000/order`, {
+        const response = await fetch(`${this.url}/order`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -23,7 +30,7 @@ export class TableService {
 
     async startPayment(id: number): Promise<any> {
 
-        const response = await fetch(`http://100.125.76.9:8000/payment`, {
+        const response = await fetch(`${this.url}/payment`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -40,7 +47,7 @@ export class TableService {
 
     async finishPayment(id: number): Promise<any> {
 
-        const response = await fetch(`http://100.125.76.9:8000/close`, {
+        const response = await fetch(`${this.url}/close`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -57,7 +64,7 @@ export class TableService {
 
     async orderMessage(id: number): Promise<any> {
 
-        const response = await fetch(`http://100.125.76.9:8000/message`, {
+        const response = await fetch(`${this.url}/message`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
