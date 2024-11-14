@@ -1,6 +1,6 @@
 // src/whatsapp/dto/conversation.dto.ts
 
-import { IsString, IsNumber, IsArray, IsOptional, ValidateNested, IsEnum } from 'class-validator';
+import { IsString, IsNumber, IsArray, IsOptional, ValidateNested, IsEnum, IsDate } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum PaymentStatus {
@@ -44,6 +44,36 @@ export class OrderDetailsDTO {
   @IsNumber()
   @IsOptional()
   appliedDiscount?: number;
+}
+
+
+export class PaymentProofDTO {
+  @IsString()
+  nome_pagador: string;
+
+  @IsString()
+  cpf_cnpj_pagador: string;
+
+  @IsString()
+  instiuicao_bancaria: string;
+
+  @IsNumber()
+  valor: number;
+
+  @IsString()
+  data_pagamento: string;
+
+  @IsString()
+  nome_beneficiario: string;
+
+  @IsString()
+  cpf_cnpj_beneficiario: string;
+
+  @IsString()
+  instiuicao_bancaria_beneficiario: string;
+
+  @IsString()
+  id_transacao: string;
 }
 
 export class ContactDTO {
@@ -133,6 +163,18 @@ export class ConversationContextDTO {
   @IsOptional()
   @IsNumber()
   excessPaymentAmount?: number;
+
+  // New property to store payment proofs
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PaymentProofDTO)
+  @IsOptional()
+  paymentProofs?: PaymentProofDTO[];
+
+  // New property to store the timestamp of the last message
+  @IsOptional()
+  @IsDate()
+  lastMessage?: Date;
 }
 
 export class UserConversationDTO {

@@ -5,7 +5,7 @@ import { Client, LocalAuth, Message } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
 import { TableService } from 'src/table/table.service';
 import { LangchainService } from 'src/langchain/langchain.service';
-import { UserConversationDTO, ConversationStep, PaymentStatus, ConversationContextDTO, PaymentDetailsDTO, SplitInfoDTO, FeedbackDTO } from './dto/conversation.dto';
+import { UserConversationDTO, ConversationStep, PaymentStatus, ConversationContextDTO, PaymentDetailsDTO, SplitInfoDTO, FeedbackDTO, PaymentProofDTO } from './dto/conversation.dto';
 import { formatToBRL } from './utils/currency.utils';
 
 @Injectable()
@@ -23,18 +23,9 @@ export class WhatsAppService implements OnModuleInit {
     ) {
         // Initialize the WhatsApp client with LocalAuth for persistent sessions
         this.client = new Client({
-            puppeteer:{
+            puppeteer: {
                 headless: true,
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--no-first-run',
-                    '--no-zygote',
-                    '--single-process',
-                    '--disable-gpu'
-                ],
+                args: ['--no-sandbox', '--disable-setuid-sandbox'],
             },
             authStrategy: new LocalAuth({
                 clientId: 'coti-payments', // You can customize this ID to uniquely identify the session
@@ -85,12 +76,12 @@ export class WhatsAppService implements OnModuleInit {
                 return; // Ignore messages from groups
             }
 
-            // Only respond if the number is in the allowed list
+            // // Only respond if the number is in the allowed list
             // const allowedNumbers = [
             //     '551132803247@c.us',
-            //     '5511993109344@c.us',
-            //     '5518997923440@c.us',
-            //     '5511964681711@c.us'
+            //     '5511964681711@c.us',
+            //     '5587988574866@c.us',
+            //     // Add other allowed numbers as needed
             // ];
             // if (!allowedNumbers.includes(message.from)) {
             //     this.logger.debug(`Ignoring message from ${message.from}: ${message.body}`);
@@ -100,11 +91,11 @@ export class WhatsAppService implements OnModuleInit {
             // Calculate message age to avoid processing old messages
             const currentTime = Math.floor(Date.now() / 1000); // Get current time in seconds
             const messageAge = currentTime - message.timestamp; // Message timestamp is in seconds
-            const maxAllowedAge = 30; // 10 seconds
+            const maxAllowedAge = 30; // 30 seconds
 
             if (messageAge > maxAllowedAge) {
                 this.logger.debug(`Ignoring old message from ${message.from}: ${message.body}`);
-                return; // Ignore message if it's older than 10 seconds
+                return; // Ignore message if it's older than 30 seconds
             }
 
             const contact = await message.getContact();
@@ -117,7 +108,11 @@ export class WhatsAppService implements OnModuleInit {
                 state.id = from;
                 state.conversationContext = new ConversationContextDTO();
                 state.conversationContext.currentStep = ConversationStep.Initial;
+                state.conversationContext.lastMessage = new Date(); // Initialize lastMessage
                 this.clientStates.set(from, state);
+            } else {
+                // Update lastMessage timestamp
+                state.conversationContext.lastMessage = new Date();
             }
 
             const userMessage = message.body.trim().toLowerCase();
@@ -129,7 +124,6 @@ export class WhatsAppService implements OnModuleInit {
 
             switch (state.conversationContext.currentStep) {
                 case ConversationStep.ProcessingOrder:
-                    // Currently processing order; no user input expected
                     break;
 
                 case ConversationStep.ConfirmOrder:
@@ -182,59 +176,16 @@ export class WhatsAppService implements OnModuleInit {
 
                 default:
                     if (userMessage.includes('pagar a comanda')) {
-                        const order_id = this.extractOrderId(userMessage);
-
-                        if (!order_id) {
-                            await message.reply(
-                                'Desculpe, não entendi o número da comanda. Por favor, diga "Gostaria de pagar a comanda X", onde X é o número da comanda.',
-                            );
-                            return;
-                        }
-
-                        const orderProcessingInfo = this.isOrderBeingProcessed(order_id, from);
-
-                        if (orderProcessingInfo.isProcessing) {
-                            const otherState = orderProcessingInfo.state;
-                            const userNumber = orderProcessingInfo.userNumber;
-
-                            if (
-                                [
-                                    ConversationStep.SplitBill,
-                                    ConversationStep.SplitBillNumber,
-                                    ConversationStep.WaitingForContacts,
-                                ].includes(otherState.conversationContext.currentStep)
-                            ) {
-                                await message.reply(
-                                    `Sua comanda está em processo de divisão de conta. O número *${userNumber}* está compartilhando os contatos para dividir a conta. Por favor, aguarde ou entre em contato com essa pessoa para participar da divisão.`,
-                                );
-                            } else {
-                                await message.reply(
-                                    'Desculpe, esta comanda já está sendo processada por outra pessoa.',
-                                );
-                            }
-                            return;
-                        }
-
-                        state.conversationContext.currentStep = ConversationStep.ProcessingOrder;
-                        if (!state.conversationContext.paymentDetails) {
-                            state.conversationContext.paymentDetails = new PaymentDetailsDTO();
-                        }
-                        state.conversationContext.paymentDetails.orderId = parseInt(order_id);
-                        this.clientStates.set(from, state);
-
-                        await message.reply(
-                            '👋 *Coti Pagamentos* - Que ótimo! Estamos processando sua comanda, por favor aguarde. 😁',
-                        );
-                        await this.handleProcessingOrder(from, state, parseInt(order_id));
+                        await this.handleOrderProcessing(from, userMessage, state, message);
                     } else {
                         await message.reply(
                             'Desculpe, não entendi sua solicitação. Se você gostaria de pagar uma comanda, por favor, use a frase "Gostaria de pagar a comanda X".',
                         );
                     }
-
                     break;
             }
         });
+
 
         this.client.initialize();
     }
@@ -275,7 +226,6 @@ export class WhatsAppService implements OnModuleInit {
         return sentMessages; // Return the list of messages "sent"
     }
 
-    // Helper function to check if an order is already being processed
     private isOrderBeingProcessed(
         order_id: string,
         from: string,
@@ -296,6 +246,322 @@ export class WhatsAppService implements OnModuleInit {
         return { isProcessing: false };
     }
 
+    private async retryRequestWithNotification(
+        from: string,
+        requestFunction: () => Promise<any>,
+        state: UserConversationDTO,
+    ): Promise<any> {
+        const maxRetries = 5;
+        const delayBetweenRetries = 30000; // 30 seconds
+        let attempts = 0;
+
+        while (attempts < maxRetries) {
+            try {
+                return await requestFunction();
+            } catch (error) {
+                attempts++;
+                this.logger.error(
+                    `Attempt ${attempts} failed for user ${from} at stage ${state.conversationContext.currentStep}. Error: ${error}`
+                );
+
+                if (attempts === 3) {
+                    // Send a notification to the user on the first failure
+                    const delayMessage = this.getDelayMessage(state.conversationContext.currentStep);
+                    await this.sendMessageWithDelay(from, [delayMessage]);
+                }
+
+                if (attempts < maxRetries) {
+                    await new Promise((resolve) => setTimeout(resolve, delayBetweenRetries));
+                }
+            }
+        }
+
+        // Send final error message if all retries fail
+        const errorMessage = this.generateStageErrorMessage(state.conversationContext.currentStep);
+        await this.sendMessageWithDelay(from, [errorMessage]);
+
+        throw new Error("Max retries reached");
+    }
+
+    private getDelayMessage(
+        currentStep: ConversationStep,
+    ): string {
+        switch (currentStep) {
+            case ConversationStep.ProcessingOrder:
+                return `🔄 O processamento da sua comanda está demorando um pouco mais que o esperado.\n\n Por favor, aguarde um instante enquanto verificamos os detalhes para você! 😊`;
+
+            case ConversationStep.ConfirmOrder:
+                return `🔄 Estamos confirmando os detalhes da sua comanda, mas parece que está demorando um pouco mais do que o habitual.\n\n Por favor, mantenha-se à vontade, logo finalizaremos! 😄`;
+
+            case ConversationStep.SplitBill:
+                return `🔄 O processo de divisão da conta está em andamento, mas pode levar alguns instantes a mais.\n\n Agradecemos pela paciência! 🎉`;
+
+            case ConversationStep.WaitingForContacts:
+                return `🔄 Estamos aguardando os contatos para dividir a conta.\n\n Isso pode demorar um pouco mais do que o esperado. Obrigado pela compreensão! 📲`;
+
+            case ConversationStep.WaitingForPayment:
+                return `🔄 Estamos aguardando a confirmação do pagamento. Pode levar alguns instantes.\n\n Agradecemos pela paciência! 🕒`;
+
+            default:
+                return `🔄 O processo está demorando um pouco mais do que o esperado.\n\n Por favor, mantenha-se à vontade, logo concluiremos! 😄`;
+        }
+    }
+
+    private generateStageErrorMessage(currentStep: ConversationStep): string {
+        switch (currentStep) {
+            case ConversationStep.ProcessingOrder:
+                return `Um erro ocorreu ao processar sua comanda.\n\n👨‍💼 Um de nossos atendentes está a caminho para te ajudar!`;
+
+            case ConversationStep.ConfirmOrder:
+                return `Um erro ocorreu ao confirmar os detalhes da sua comanda.\n\n👨‍💼 Um de nossos atendentes está a caminho para te ajudar!`;
+
+            case ConversationStep.SplitBill:
+                return `Um erro ocorreu ao dividir a conta.\n\n👨‍💼 Um de nossos atendentes está a caminho para te ajudar!`;
+
+            case ConversationStep.WaitingForContacts:
+                return `Um erro ocorreu ao processar os contatos para divisão de conta.\n\n👨‍💼 Um de nossos atendentes está a caminho para te ajudar!`;
+
+            case ConversationStep.WaitingForPayment:
+                return `Um erro ocorreu ao verificar o pagamento.\n\n👨‍💼 Um de nossos atendentes está a caminho para te ajudar!`;
+
+            default:
+                return `Um erro ocorreu durante o processamento.\n\n👨‍💼 Um de nossos atendentes está a caminho para te ajudar!`;
+        }
+    }
+
+    private async sendProofToGroup(proofMessage: Message): Promise<void> {
+        // Nome do grupo
+        const groupName = 'Coti + Cris Parrilla [COMPROVANTES]';
+
+        try {
+            // Localiza o chat do grupo pelo nome
+            const chats = await this.client.getChats();
+            const groupChat = chats.find(chat => chat.isGroup && chat.name === groupName);
+
+            if (groupChat) {
+                // Encaminha a mensagem para o grupo
+                await proofMessage.forward(groupChat.id._serialized);
+                this.logger.log(`Mensagem de comprovante encaminhada para o grupo: ${groupName}`);
+            } else {
+                this.logger.warn(`Grupo "${groupName}" não encontrado.`);
+            }
+        } catch (error) {
+            this.logger.error(`Erro ao encaminhar mensagem para o grupo ${groupName}: ${error}`);
+        }
+    }
+
+    private async sendPaymentConfirmationToAttendants(state: UserConversationDTO): Promise<void> {
+        // Nome do grupo
+        const groupName = 'Grupo Teste';
+
+        try {
+            // Localiza o chat do grupo pelo nome
+            const chats = await this.client.getChats();
+            const groupChat = chats.find(chat => chat.isGroup && chat.name === groupName);
+
+            if (groupChat) {
+                let message = '';
+
+                // Obter o ID do pedido e valor total
+                const orderId = state.conversationContext.paymentDetails.orderId;
+                const totalAmount = state.orderDetails.totalAmount;
+
+                // Verificar se a conta está sendo dividida
+                if (state.conversationContext.splitInfo && state.conversationContext.splitInfo.numberOfPeople > 1) {
+                    const splitInfo = state.conversationContext.splitInfo;
+                    const numberOfPeople = splitInfo.numberOfPeople;
+                    const contacts = splitInfo.contacts;
+
+                    message += `🧾 *Comanda ${orderId}* está sendo paga de forma compartilhada.\n`;
+                    message += `Total a ser pago: ${formatToBRL(totalAmount)}\n\n`;
+                    message += `👥 *Divisão entre ${numberOfPeople} pessoas:*\n`;
+
+                    // Inclui o status do pagamento do cliente que iniciou o processo
+                    const currentUserName = 'Cliente'; // Se possível, obtenha o nome real do usuário
+                    const userAmount = state.conversationContext.userAmount;
+
+                    let totalPaidByUser = 0;
+                    if (state.conversationContext.paymentProofs && state.conversationContext.paymentProofs.length > 0) {
+                        totalPaidByUser = state.conversationContext.paymentProofs.reduce((sum, proof) => sum + proof.valor, 0);
+                    }
+                    const remainingAmount = userAmount - totalPaidByUser;
+
+                    if (remainingAmount > 0) {
+                        // Usuário pagou menos do que deveria
+                        message += `• ${currentUserName} - deveria pagar: ${formatToBRL(userAmount)}, pagou: ${formatToBRL(totalPaidByUser)}, restante: ${formatToBRL(remainingAmount)} - Pendente\n`;
+                    } else if (remainingAmount < 0) {
+                        // Usuário pagou mais do que deveria
+                        message += `• ${currentUserName} - deveria pagar: ${formatToBRL(userAmount)}, pagou: ${formatToBRL(totalPaidByUser)}, excedente: ${formatToBRL(-remainingAmount)} - Pago\n`;
+                    } else {
+                        // Pagamento completo
+                        message += `• ${currentUserName} - pagou: ${formatToBRL(totalPaidByUser)} - Pago\n`;
+                    }
+
+                    // Inclui o status de pagamento de cada contato na divisão
+                    for (const contact of contacts) {
+                        const name = contact.name || 'Cliente';
+                        const contactId = `${contact.phone}@c.us`;
+                        const contactState = this.clientStates.get(contactId);
+
+                        let contactUserAmount = contact.individualAmount;
+                        let totalPaidByContact = 0;
+                        let contactRemainingAmount = contactUserAmount;
+
+                        if (contactState) {
+                            contactUserAmount = contactState.conversationContext.userAmount;
+
+                            if (contactState.conversationContext.paymentProofs && contactState.conversationContext.paymentProofs.length > 0) {
+                                totalPaidByContact = contactState.conversationContext.paymentProofs.reduce((sum, proof) => sum + proof.valor, 0);
+                            }
+
+                            contactRemainingAmount = contactUserAmount - totalPaidByContact;
+
+                            if (contactRemainingAmount > 0) {
+                                // Contato pagou menos do que deveria
+                                message += `• ${name} - deveria pagar: ${formatToBRL(contactUserAmount)}, pagou: ${formatToBRL(totalPaidByContact)}, restante: ${formatToBRL(contactRemainingAmount)} - Pendente\n`;
+                            } else if (contactRemainingAmount < 0) {
+                                // Contato pagou mais do que deveria
+                                message += `• ${name} - deveria pagar: ${formatToBRL(contactUserAmount)}, pagou: ${formatToBRL(totalPaidByContact)}, excedente: ${formatToBRL(-contactRemainingAmount)} - Pago\n`;
+                            } else {
+                                // Pagamento completo
+                                message += `• ${name} - pagou: ${formatToBRL(totalPaidByContact)} - Pago\n`;
+                            }
+                        } else {
+                            // Contato ainda não iniciou o processo de pagamento
+                            message += `• ${name} - deveria pagar: ${formatToBRL(contactUserAmount)} - Pendente\n`;
+                        }
+                    }
+
+                } else {
+                    // Pagamento único (não dividido)
+                    const currentUserName = 'Cliente'; // Se possível, obtenha o nome real do usuário
+                    const userAmount = state.conversationContext.userAmount;
+
+                    let totalPaidByUser = 0;
+                    if (state.conversationContext.paymentProofs && state.conversationContext.paymentProofs.length > 0) {
+                        totalPaidByUser = state.conversationContext.paymentProofs.reduce((sum, proof) => sum + proof.valor, 0);
+                    }
+                    const remainingAmount = userAmount - totalPaidByUser;
+
+                    if (remainingAmount > 0) {
+                        // Usuário pagou menos do que deveria
+                        message += `⚠️ *Comanda ${orderId} paga parcialmente*\n`;
+                        message += `• ${currentUserName} deveria pagar: ${formatToBRL(userAmount)}\n`;
+                        message += `• Pagou: ${formatToBRL(totalPaidByUser)}\n`;
+                        message += `• Restante a pagar: ${formatToBRL(remainingAmount)}\n\n`;
+                    } else if (remainingAmount < 0) {
+                        // Usuário pagou mais do que deveria
+                        message += `⚠️ *Comanda ${orderId} paga com valor excedente*\n`;
+                        message += `• ${currentUserName} deveria pagar: ${formatToBRL(userAmount)}\n`;
+                        message += `• Pagou: ${formatToBRL(totalPaidByUser)}\n`;
+                        message += `• Excedente: ${formatToBRL(-remainingAmount)}\n\n`;
+                    } else {
+                        // Pagamento completo
+                        message += `✅ *Comanda ${orderId} paga em totalidade*\n`;
+                        message += `• ${currentUserName} pagou: ${formatToBRL(totalPaidByUser)}\n\n`;
+                    }
+
+                    message += `🔹 *Total da Comanda:* ${formatToBRL(totalAmount)}`;
+                }
+
+                // Envia a mensagem para o grupo
+                await this.client.sendMessage(groupChat.id._serialized, message);
+                this.logger.log(`Mensagem de confirmação de pagamento enviada para o grupo: ${groupName}`);
+            } else {
+                this.logger.warn(`Grupo "${groupName}" não encontrado.`);
+            }
+        } catch (error) {
+            this.logger.error(`Erro ao enviar mensagem para o grupo ${groupName}: ${error}`);
+        }
+    }
+
+
+
+    // 0. Order Processing
+    private async handleOrderProcessing(
+        from: string,
+        userMessage: string,
+        state: UserConversationDTO,
+        message: Message,
+    ): Promise<void> {
+        const order_id = this.extractOrderId(userMessage);
+
+        if (!order_id) {
+            await message.reply(
+                'Desculpe, não entendi o número da comanda. Por favor, diga "Gostaria de pagar a comanda X", onde X é o número da comanda.',
+            );
+            return;
+        }
+
+        const orderProcessingInfo = this.isOrderBeingProcessed(order_id, from);
+
+        if (orderProcessingInfo.isProcessing) {
+            const otherState = orderProcessingInfo.state;
+            const userNumber = orderProcessingInfo.userNumber;
+
+            const lastMessageTime = otherState.conversationContext.lastMessage
+                ? otherState.conversationContext.lastMessage.getTime()
+                : 0;
+            const currentTimeMs = Date.now();
+            const timeSinceLastMessage = (currentTimeMs - lastMessageTime) / (1000 * 60); // in minutes
+            const inactivityThreshold = 2; // 5 minutes
+
+            if (timeSinceLastMessage > inactivityThreshold) {
+                // Inactive user, allow new user to take over
+                this.logger.log(
+                    `Previous user ${userNumber} inactive for ${timeSinceLastMessage} minutes. Allowing new user to take over.`,
+                );
+
+                // Block the old user by removing their state
+                this.clientStates.delete(userNumber);
+
+                // Assign the order to the new user
+                state.conversationContext.currentStep = ConversationStep.ProcessingOrder;
+                if (!state.conversationContext.paymentDetails) {
+                    state.conversationContext.paymentDetails = new PaymentDetailsDTO();
+                }
+                state.conversationContext.paymentDetails.orderId = parseInt(order_id);
+                this.clientStates.set(from, state);
+
+                await message.reply(
+                    '👋 *Coti Pagamentos* - Que ótimo! Estamos processando sua comanda, por favor aguarde. 😁',
+                );
+                await this.handleProcessingOrder(from, state, parseInt(order_id));
+            } else {
+                // Active user is still processing, inform the current user
+                if (
+                    [
+                        ConversationStep.SplitBill,
+                        ConversationStep.SplitBillNumber,
+                        ConversationStep.WaitingForContacts,
+                    ].includes(otherState.conversationContext.currentStep)
+                ) {
+                    await message.reply(
+                        `Sua comanda está em processo de divisão de conta. O número *${userNumber}* está compartilhando os contatos para dividir a conta. Por favor, aguarde ou entre em contato com essa pessoa para participar da divisão.`,
+                    );
+                } else {
+                    await message.reply(
+                        'Desculpe, esta comanda já está sendo processada por outra pessoa.',
+                    );
+                }
+                return;
+            }
+        } else {
+            state.conversationContext.currentStep = ConversationStep.ProcessingOrder;
+            if (!state.conversationContext.paymentDetails) {
+                state.conversationContext.paymentDetails = new PaymentDetailsDTO();
+            }
+            state.conversationContext.paymentDetails.orderId = parseInt(order_id);
+            this.clientStates.set(from, state);
+
+            await message.reply(
+                '👋 *Coti Pagamentos* - Que ótimo! Estamos processando sua comanda, por favor aguarde. 😁',
+            );
+            await this.handleProcessingOrder(from, state, parseInt(order_id));
+        }
+    }
+
+
     // 1. Processing Order
     private async handleProcessingOrder(
         from: string,
@@ -303,7 +569,11 @@ export class WhatsAppService implements OnModuleInit {
         order_id: number,
     ): Promise<string[]> {
         try {
-            const orderData = await this.tableService.orderMessage(order_id);
+            const orderData = await this.retryRequestWithNotification(
+                from,
+                () => this.tableService.orderMessage(order_id),
+                state,
+            );
             console.log('orderData', orderData);
             const orderMessage = orderData.message;
             const orderDetails = orderData.details;
@@ -318,15 +588,10 @@ export class WhatsAppService implements OnModuleInit {
                 appliedDiscount: orderDetails.discount,
             };
             this.clientStates.set(from, state);
-            return sentMessages; // Return the sent messages
+            return sentMessages;
         } catch (error) {
-            const messages = [
-                'Desculpe, não foi possível encontrar a comanda. Por favor, verifique o número e tente novamente.',
-            ];
-            const sentMessages = await this.sendMessageWithDelay(from, messages);
             state.conversationContext.currentStep = ConversationStep.OrderNotFound;
             this.clientStates.set(from, state);
-            return sentMessages;
         }
     }
 
@@ -390,7 +655,6 @@ export class WhatsAppService implements OnModuleInit {
             sentMessages.push(...(await this.sendMessageWithDelay(from, messages)));
             state.conversationContext.currentStep = ConversationStep.ExtraTip;
 
-            // Define o valor para o usuário, pois ele escolheu não dividir a conta
             state.conversationContext.userAmount = this.calculateUserAmount(state);
         } else {
             const messages = ['Por favor, responda com 1 para Sim ou 2 para Não.'];
@@ -408,7 +672,6 @@ export class WhatsAppService implements OnModuleInit {
     ): Promise<string[]> {
         const sentMessages = [];
 
-        // Extract the first number found in the message
         const numPeopleMatch = userMessage.match(/\d+/);
         const numPeople = numPeopleMatch ? parseInt(numPeopleMatch[0]) : NaN;
 
@@ -430,7 +693,7 @@ export class WhatsAppService implements OnModuleInit {
         }
 
         this.clientStates.set(from, state);
-        return sentMessages; // Return the sent messages
+        return sentMessages;
     }
 
     // 5. Waiting for Contacts
@@ -444,68 +707,78 @@ export class WhatsAppService implements OnModuleInit {
         if (message.type === 'vcard' || message.type === 'multi_vcard') {
             try {
                 const vcardDataArray = message.vCards;
+
+                const contactsReceivedSoFar = state.conversationContext.splitInfo.contacts.length;
+
+                const totalContactsExpected = state.conversationContext.splitInfo.numberOfPeople - 1;
+
+                const remainingContactsNeeded = totalContactsExpected - contactsReceivedSoFar;
+
+                if (remainingContactsNeeded <= 0) {
+                    const messages = [
+                        'Você já enviou todos os contatos necessários.',
+                        'Vamos prosseguir com seu atendimento. 😄',
+                    ];
+                    sentMessages.push(...(await this.sendMessageWithDelay(from, messages)));
+                    state.conversationContext.currentStep = ConversationStep.ExtraTip;
+                    this.clientStates.set(from, state);
+                    return sentMessages;
+                }
+
+                const vcardDataArrayLimited = vcardDataArray.slice(0, remainingContactsNeeded);
+
                 let responseMessage = `✨ *Contato(s) Recebido(s) com Sucesso!* ✨\n`;
 
-                for (const vcardData of vcardDataArray) {
+                for (const vcardData of vcardDataArrayLimited) {
                     console.log('vcardData', vcardData);
 
-                    const vcardName = vcardData.split('FN:')[1].split('\n')[0];
-                    let vcardPhone = vcardData.split('waid=')[1].split(':')[1].split('\n')[0];
-                    vcardPhone = vcardPhone.replace(/\D/g, ''); // Remove all non-numeric characters
+                    const vcardName = vcardData.split('FN:')[1]?.split('\n')[0] || 'Nome não informado';
+                    let vcardPhone = vcardData.split('waid=')[1]?.split(':')[1]?.split('\n')[0] || '';
+                    vcardPhone = vcardPhone.replace(/\D/g, '');
 
-                    if (!state.conversationContext.splitInfo.receivedContacts) {
-                        state.conversationContext.splitInfo.receivedContacts = 0;
-                    }
-
-                    state.conversationContext.splitInfo.receivedContacts += 1;
-
-                    // Store the received contact
                     state.conversationContext.splitInfo.contacts.push({
                         name: vcardName,
                         phone: vcardPhone,
-                        individualAmount: 0, // Será calculado posteriormente
+                        individualAmount: 0,
                     });
 
-                    // Append each contact’s details to the response message
                     responseMessage += `\n👤 *Nome:* ${vcardName}\n📞 *Número:* ${vcardPhone}\n`;
                 }
 
-                // Calculate remaining contacts after processing all received contacts
-                const remainingContacts =
-                    state.conversationContext.splitInfo.numberOfPeople -
-                    1 -
-                    state.conversationContext.splitInfo.receivedContacts;
+                if (vcardDataArray.length > remainingContactsNeeded) {
+                    responseMessage += `\n⚠️ Você enviou mais contatos do que o necessário.\nApenas o${remainingContactsNeeded > 1 ? 's primeiros' : ''} ${remainingContactsNeeded} contato${remainingContactsNeeded > 1 ? 's' : ''} foi${remainingContactsNeeded > 1 ? 'ram' : ''} considerado${remainingContactsNeeded > 1 ? 's' : ''}.`;
+                }
 
-                // If more contacts are still needed, inform the user
+                const totalContactsReceived = state.conversationContext.splitInfo.contacts.length;
+
+                const remainingContacts =
+                    totalContactsExpected - totalContactsReceived;
+
                 if (remainingContacts > 0) {
-                    responseMessage += `\n🕒 Aguardando mais *${remainingContacts}* contato(s) para continuar.`;
+                    responseMessage += `\n🕒 Aguardando mais *${remainingContacts}* contato${remainingContacts > 1 ? 's' : ''} para continuar.`;
+                } else {
+                    if (vcardDataArray.length <= totalContactsExpected) {
+                        responseMessage += `\n🎉 Todos os contatos foram recebidos! Vamos prosseguir com seu atendimento. 😄`;
+                    }
+                    state.conversationContext.currentStep = ConversationStep.ExtraTip;
                 }
 
                 sentMessages.push(...(await this.sendMessageWithDelay(from, [responseMessage])));
 
-                // If all required contacts have been received, proceed to the next step
                 if (remainingContacts <= 0) {
-                    const completionMessage =
-                        '🎉 Todos os contatos foram recebidos! Vamos prosseguir com seu atendimento. 😄';
-                    sentMessages.push(...(await this.sendMessageWithDelay(from, [completionMessage])));
-                    state.conversationContext.currentStep = ConversationStep.ExtraTip; // Next step for the main client
-
-                    // Calculate each client's share
                     const totalAmount = state.orderDetails.totalAmount;
                     const numPeople = state.conversationContext.splitInfo.numberOfPeople;
                     const individualAmount = parseFloat((totalAmount / numPeople).toFixed(2));
 
-                    // Set individual amount for the main client
                     state.conversationContext.paymentDetails = new PaymentDetailsDTO();
-                    state.conversationContext.paymentDetails.totalDue = individualAmount;
                     state.conversationContext.paymentDetails.orderId =
-                        state.conversationContext.paymentDetails.orderId;
+                        state.conversationContext.paymentDetails.orderId || state.orderDetails.tableId;
+                    state.conversationContext.paymentDetails.totalDue = individualAmount;
                     state.conversationContext.paymentDetails.status = PaymentStatus.Pending;
                     state.conversationContext.paymentDetails.initiatedAt = Date.now();
 
                     state.conversationContext.userAmount = individualAmount;
 
-                    // Set individual amounts for contacts
                     state.conversationContext.splitInfo.contacts = state.conversationContext.splitInfo.contacts.map(
                         (contact) => ({
                             ...contact,
@@ -513,7 +786,6 @@ export class WhatsAppService implements OnModuleInit {
                         }),
                     );
 
-                    // Initiate interaction with secondary clients
                     for (const contact of state.conversationContext.splitInfo.contacts) {
                         console.log('HandleWaitingForContacts - Contact', contact);
                         const contactId = `${contact.phone}@c.us`;
@@ -538,7 +810,6 @@ export class WhatsAppService implements OnModuleInit {
 
                         this.clientStates.set(contactId, contactState);
 
-                        // Send initial message to secondary client
                         const messages = [
                             `👋 Coti Pagamentos - Olá! Você foi incluído na divisão do pagamento da comanda *${contactState.conversationContext.paymentDetails.orderId}* no restaurante Cris Parrilla. Aguarde para receber mais informações sobre o pagamento.`,
                             `Sua parte na conta é de *${formatToBRL(individualAmount)}*.`,
@@ -547,7 +818,6 @@ export class WhatsAppService implements OnModuleInit {
                         await this.sendMessageWithDelay(contactId, messages);
                     }
 
-                    // Continue the flow for the main client
                     const messages = [
                         'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
                     ];
@@ -572,6 +842,7 @@ export class WhatsAppService implements OnModuleInit {
         return sentMessages;
     }
 
+
     // 6. Extra Tip
     private async handleExtraTip(
         from: string,
@@ -582,7 +853,6 @@ export class WhatsAppService implements OnModuleInit {
         const noTipKeywords = ['não', 'nao', 'n quero', 'não quero', 'nao quero'];
         const tipPercent = parseFloat(userMessage.replace('%', '').replace(',', '.'));
 
-        // Corrected line: Use state.conversationContext.userAmount if defined, otherwise use total order amount
         const userAmount = state.conversationContext.userAmount;
 
 
@@ -647,7 +917,7 @@ export class WhatsAppService implements OnModuleInit {
         state: UserConversationDTO,
         message: Message,
     ): Promise<string[]> {
-        const sentMessages = [];
+        const sentMessages: string[] = [];
         const currentTime = new Date();
 
         if (userMessage.includes('comprovante') || message.hasMedia) {
@@ -656,19 +926,41 @@ export class WhatsAppService implements OnModuleInit {
                     const media = await message.downloadMedia();
 
                     if (media && media.data) {
-                        // Processar o comprovante com OCR
-                        const extractedText = await this.langchainService.extractTextFromPDF(media.data);
-                        const analysisResult = await this.langchainService.analyzeDocument(
-                            extractedText,
-                            state.conversationContext.userAmount,
+                        const extractedText = await this.retryRequestWithNotification(
+                            from,
+                            () => this.langchainService.extractTextFromPDF(media.data),
+                            state
                         );
 
-                        console.log('Analysis Result:', analysisResult);
+                        const analysisResult: PaymentProofDTO = await this.retryRequestWithNotification(
+                            from,
+                            () => this.langchainService.analyzeDocument(extractedText, state.conversationContext.userAmount),
+                            state
+                        );
 
-                        // Validar data de pagamento
+
+                        if (!state.conversationContext.paymentProofs) {
+                            state.conversationContext.paymentProofs = [];
+                        }
+
+                        const isDuplicate = state.conversationContext.paymentProofs.some(
+                            (proof) => proof.id_transacao === analysisResult.id_transacao,
+                        );
+
+                        if (isDuplicate) {
+                            const duplicateMessage = [
+                                '❌ Este comprovante de pagamento já foi recebido anteriormente.\n\n Por favor, verifique seu comprovante.',
+                            ];
+                            sentMessages.push(...(await this.sendMessageWithDelay(from, duplicateMessage)));
+                            this.clientStates.set(from, state);
+                            return sentMessages;
+                        }
+
+                        state.conversationContext.paymentProofs.push(analysisResult);
+
                         const paymentDate = new Date(analysisResult.data_pagamento.replace(' - ', 'T'));
-                        const timeDifference = (currentTime.getTime() - paymentDate.getTime()) / (1000 * 60); // Diferença em minutos
-                        const isRecentPayment = true; // Temporariamente desabilitado para teste
+                        const timeDifference = (currentTime.getTime() - paymentDate.getTime()) / (1000 * 60);
+                        const isRecentPayment = true;
 
                         // Validar beneficiário e CNPJ
                         const expectedBeneficiary = 'EMPORIO CRISTOVAO';
@@ -682,10 +974,14 @@ export class WhatsAppService implements OnModuleInit {
                         const isAmountCorrect = paymentValue === state.conversationContext.userAmount;
                         const isOverpayment = paymentValue > state.conversationContext.userAmount;
 
+
                         // Condições para validação do pagamento
                         if (isRecentPayment && isBeneficiaryCorrect) {
+                            console.log("Chegou Aqui");
+                            // await this.sendProofToGroup(message);
+                            void this.sendPaymentConfirmationToAttendants(state);
+                            console.log("Passou")
                             if (isAmountCorrect) {
-                                // Pagamento correto
                                 const messages = [
                                     'Pagamento confirmado.',
                                     'Muito obrigado por utilizar a *Coti* e realizar pagamentos mais *rápidos* 🙏',
@@ -744,6 +1040,7 @@ export class WhatsAppService implements OnModuleInit {
         this.clientStates.set(from, state);
         return sentMessages;
     }
+
 
     private async handleOverpaymentDecision(
         from: string,
