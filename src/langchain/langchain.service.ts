@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { ChatOpenAI } from '@langchain/openai';
 import { AIMessageChunk, HumanMessage } from '@langchain/core/messages';
 import * as fs from 'fs';
-import { PaymentProofDTO } from 'src/whatsapp/dto/conversation.dto';
+import { PaymentProofDTO } from 'src/conversation/dto/conversation.dto';
 
 @Injectable()
 export class LangchainService {

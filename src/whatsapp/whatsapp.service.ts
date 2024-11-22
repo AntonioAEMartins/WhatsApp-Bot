@@ -5,7 +5,7 @@ import { Client, LocalAuth, Message } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
 import { TableService } from 'src/table/table.service';
 import { LangchainService } from 'src/langchain/langchain.service';
-import { UserConversationDTO, ConversationStep, PaymentStatus, ConversationContextDTO, PaymentDetailsDTO, SplitInfoDTO, FeedbackDTO, PaymentProofDTO } from './dto/conversation.dto';
+import { UserConversationDTO, ConversationStep, PaymentStatus, ConversationContextDTO, PaymentDetailsDTO, SplitInfoDTO, FeedbackDTO, PaymentProofDTO } from '../conversation/dto/conversation.dto';
 import { formatToBRL } from './utils/currency.utils';
 
 @Injectable()
@@ -265,7 +265,6 @@ export class WhatsAppService implements OnModuleInit {
                 );
 
                 if (attempts === 3) {
-                    // Send a notification to the user on the first failure
                     const delayMessage = this.getDelayMessage(state.conversationContext.currentStep);
                     await this.sendMessageWithDelay(from, [delayMessage]);
                 }
@@ -273,10 +272,11 @@ export class WhatsAppService implements OnModuleInit {
                 if (attempts < maxRetries) {
                     await new Promise((resolve) => setTimeout(resolve, delayBetweenRetries));
                 }
+
+                this.sendAuthenticationStatusToGroup(`Coti Pagamentos - Erro ao conectar com o PDV \n\n Por favor *gere* uma nova *credencial* para a automação.`);
             }
         }
 
-        // Send final error message if all retries fail
         const errorMessage = this.generateStageErrorMessage(state.conversationContext.currentStep);
         await this.sendMessageWithDelay(from, [errorMessage]);
 
@@ -342,6 +342,24 @@ export class WhatsAppService implements OnModuleInit {
                 // Encaminha a mensagem para o grupo
                 await proofMessage.forward(groupChat.id._serialized);
                 this.logger.log(`Mensagem de comprovante encaminhada para o grupo: ${groupName}`);
+            } else {
+                this.logger.warn(`Grupo "${groupName}" não encontrado.`);
+            }
+        } catch (error) {
+            this.logger.error(`Erro ao encaminhar mensagem para o grupo ${groupName}: ${error}`);
+        }
+    }
+
+    private async sendAuthenticationStatusToGroup(message: string): Promise<void> {
+        const groupName = 'Grupo Teste';
+
+        try {
+            const chats = await this.client.getChats();
+            const groupChat = chats.find(chat => chat.isGroup && chat.name === groupName);
+
+            if (groupChat) {
+                await this.client.sendMessage(groupChat.id._serialized, message);
+                this.logger.log(`Mensagem de status de autenticação enviada para o grupo: ${groupName}`);
             } else {
                 this.logger.warn(`Grupo "${groupName}" não encontrado.`);
             }
