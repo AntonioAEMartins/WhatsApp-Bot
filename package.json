@@ -31,6 +31,7 @@
     "class-validator": "^0.14.1",
     "dotenv": "^16.4.5",
     "langchain": "^0.3.5",
+    "mongodb": "^6.10.0",
     "pdf-poppler": "^0.2.1",
     "puppeteer": "^23.6.1",
     "puppeteer-core": "^23.6.1",

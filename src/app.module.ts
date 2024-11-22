@@ -6,9 +6,10 @@ import { WhatsAppController } from './whatsapp/whatsapp.controller';
 import { WhatsAppService } from './whatsapp/whatsapp.service';
 import { TableModule } from './table/table.module';
 import { LangchainModule } from './langchain/langchain.module';
+import { DatabaseModule } from './db/db.module';
 
 @Module({
-  imports: [WhatsAppModule, TableModule, LangchainModule],
+  imports: [WhatsAppModule, TableModule, LangchainModule, DatabaseModule],
   controllers: [AppController, WhatsAppController],
   providers: [AppService, WhatsAppService],
 })
