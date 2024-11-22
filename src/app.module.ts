@@ -7,9 +7,10 @@ import { WhatsAppService } from './whatsapp/whatsapp.service';
 import { TableModule } from './table/table.module';
 import { LangchainModule } from './langchain/langchain.module';
 import { DatabaseModule } from './db/db.module';
+import { ConversationModule } from './conversation/conversation.module';
 
 @Module({
-  imports: [WhatsAppModule, TableModule, LangchainModule, DatabaseModule],
+  imports: [WhatsAppModule, TableModule, LangchainModule, DatabaseModule, ConversationModule],
   controllers: [AppController, WhatsAppController],
   providers: [AppService, WhatsAppService],
 })
