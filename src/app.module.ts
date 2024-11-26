@@ -8,9 +8,17 @@ import { TableModule } from './table/table.module';
 import { LangchainModule } from './langchain/langchain.module';
 import { DatabaseModule } from './db/db.module';
 import { ConversationModule } from './conversation/conversation.module';
+import { UserModule } from './user/user.module';
 
 @Module({
-  imports: [WhatsAppModule, TableModule, LangchainModule, DatabaseModule, ConversationModule],
+  imports: [
+    WhatsAppModule,
+    TableModule,
+    LangchainModule,
+    DatabaseModule,
+    ConversationModule,
+    UserModule,
+  ],
   controllers: [AppController, WhatsAppController],
   providers: [AppService, WhatsAppService],
 })
