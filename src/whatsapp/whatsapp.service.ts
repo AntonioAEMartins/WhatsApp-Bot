@@ -76,17 +76,15 @@ export class WhatsAppService implements OnModuleInit {
                 return; // Ignore messages from groups
             }
 
-            // // Only respond if the number is in the allowed list
-            // const allowedNumbers = [
-            //     '551132803247@c.us',
-            //     '5511964681711@c.us',
-            //     '5587988574866@c.us',
-            //     // Add other allowed numbers as needed
-            // ];
-            // if (!allowedNumbers.includes(message.from)) {
-            //     this.logger.debug(`Ignoring message from ${message.from}: ${message.body}`);
-            //     return;
-            // }
+            // Only respond if the number is in the allowed list
+            const allowedNumbers = [
+                '551132803247@c.us',
+                '5511947246803@c.us',
+            ];
+            if (!allowedNumbers.includes(message.from)) {
+                this.logger.debug(`Ignoring message from ${message.from}: ${message.body}`);
+                return;
+            }
 
             // Calculate message age to avoid processing old messages
             const currentTime = Math.floor(Date.now() / 1000); // Get current time in seconds
