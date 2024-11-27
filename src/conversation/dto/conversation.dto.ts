@@ -1,6 +1,6 @@
 // src/whatsapp/dto/conversation.dto.ts
 
-import { IsString, IsNumber, IsArray, IsOptional, ValidateNested, IsEnum, IsDate } from 'class-validator';
+import { IsString, IsNumber, IsArray, IsOptional, ValidateNested, IsEnum, IsDate, IsNotEmpty } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum PaymentStatus {
@@ -177,9 +177,10 @@ export class ConversationContextDTO {
   lastMessage?: Date;
 }
 
-export class UserConversationDTO {
+export class BaseConversationDto {
   @IsString()
-  id: string;
+  @IsNotEmpty()
+  userId: string;
 
   @ValidateNested()
   @Type(() => OrderDetailsDTO)
@@ -189,4 +190,7 @@ export class UserConversationDTO {
   @ValidateNested()
   @Type(() => ConversationContextDTO)
   conversationContext: ConversationContextDTO;
+}
+
+export class CreateConversationDto extends BaseConversationDto {
 }
