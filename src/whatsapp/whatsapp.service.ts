@@ -5,7 +5,7 @@ import { Client, LocalAuth, Message } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
 import { TableService } from 'src/table/table.service';
 import { LangchainService } from 'src/langchain/langchain.service';
-import { UserConversationDTO, ConversationStep, PaymentStatus, ConversationContextDTO, PaymentDetailsDTO, SplitInfoDTO, FeedbackDTO, PaymentProofDTO } from '../conversation/dto/conversation.dto';
+import { CreateConversationDto, ConversationStep, PaymentStatus, ConversationContextDTO, PaymentDetailsDTO, SplitInfoDTO, FeedbackDTO, PaymentProofDTO } from '../conversation/dto/conversation.dto';
 import { formatToBRL } from './utils/currency.utils';
 
 @Injectable()
@@ -14,7 +14,7 @@ export class WhatsAppService implements OnModuleInit {
     private readonly logger = new Logger(WhatsAppService.name);
 
     // Maps to store conversation state per client
-    private clientStates: Map<string, UserConversationDTO> = new Map();
+    private clientStates: Map<string, CreateConversationDto> = new Map();
     private debugMode = process.env.DEBUG === 'true';
 
     constructor(
@@ -102,8 +102,8 @@ export class WhatsAppService implements OnModuleInit {
 
             if (!state) {
                 // Initialize a new state
-                state = new UserConversationDTO();
-                state.id = from;
+                state = new CreateConversationDto();
+                state.userId = from;
                 state.conversationContext = new ConversationContextDTO();
                 state.conversationContext.currentStep = ConversationStep.Initial;
                 state.conversationContext.lastMessage = new Date(); // Initialize lastMessage
@@ -193,7 +193,7 @@ export class WhatsAppService implements OnModuleInit {
         return match ? match[1] : null;
     }
 
-    private calculateUserAmount(state: UserConversationDTO): number {
+    private calculateUserAmount(state: CreateConversationDto): number {
         const totalAmount = state.orderDetails.totalAmount;
 
         if (!state.conversationContext.splitInfo) {
@@ -227,7 +227,7 @@ export class WhatsAppService implements OnModuleInit {
     private isOrderBeingProcessed(
         order_id: string,
         from: string,
-    ): { isProcessing: boolean; state?: UserConversationDTO; userNumber?: string } {
+    ): { isProcessing: boolean; state?: CreateConversationDto; userNumber?: string } {
         for (const [otherFrom, otherState] of this.clientStates.entries()) {
             if (
                 otherState.conversationContext.paymentDetails &&
@@ -247,7 +247,7 @@ export class WhatsAppService implements OnModuleInit {
     private async retryRequestWithNotification(
         from: string,
         requestFunction: () => Promise<any>,
-        state: UserConversationDTO,
+        state: CreateConversationDto,
     ): Promise<any> {
         const maxRetries = 5;
         const delayBetweenRetries = 30000; // 30 seconds
@@ -366,7 +366,7 @@ export class WhatsAppService implements OnModuleInit {
         }
     }
 
-    private async sendPaymentConfirmationToAttendants(state: UserConversationDTO): Promise<void> {
+    private async sendPaymentConfirmationToAttendants(state: CreateConversationDto): Promise<void> {
         // Nome do grupo
         const groupName = 'Grupo Teste';
 
@@ -497,7 +497,7 @@ export class WhatsAppService implements OnModuleInit {
     private async handleOrderProcessing(
         from: string,
         userMessage: string,
-        state: UserConversationDTO,
+        state: CreateConversationDto,
         message: Message,
     ): Promise<void> {
         const order_id = this.extractOrderId(userMessage);
@@ -581,7 +581,7 @@ export class WhatsAppService implements OnModuleInit {
     // 1. Processing Order
     private async handleProcessingOrder(
         from: string,
-        state: UserConversationDTO,
+        state: CreateConversationDto,
         order_id: number,
     ): Promise<string[]> {
         try {
@@ -615,7 +615,7 @@ export class WhatsAppService implements OnModuleInit {
     private async handleConfirmOrder(
         from: string,
         userMessage: string,
-        state: UserConversationDTO,
+        state: CreateConversationDto,
     ): Promise<string[]> {
         const sentMessages = [];
         const positiveResponses = ['1', 'sim', 'correta', 'está correta', 'sim está correta'];
@@ -645,7 +645,7 @@ export class WhatsAppService implements OnModuleInit {
     private async handleSplitBill(
         from: string,
         userMessage: string,
-        state: UserConversationDTO,
+        state: CreateConversationDto,
     ): Promise<string[]> {
         const sentMessages = [];
         const positiveResponses = [
@@ -684,7 +684,7 @@ export class WhatsAppService implements OnModuleInit {
     private async handleSplitBillNumber(
         from: string,
         userMessage: string,
-        state: UserConversationDTO,
+        state: CreateConversationDto,
     ): Promise<string[]> {
         const sentMessages = [];
 
@@ -715,7 +715,7 @@ export class WhatsAppService implements OnModuleInit {
     // 5. Waiting for Contacts
     private async handleWaitingForContacts(
         from: string,
-        state: UserConversationDTO,
+        state: CreateConversationDto,
         message: Message,
     ): Promise<string[]> {
         const sentMessages = [];
@@ -805,8 +805,8 @@ export class WhatsAppService implements OnModuleInit {
                     for (const contact of state.conversationContext.splitInfo.contacts) {
                         console.log('HandleWaitingForContacts - Contact', contact);
                         const contactId = `${contact.phone}@c.us`;
-                        const contactState = new UserConversationDTO();
-                        contactState.id = contactId;
+                        const contactState = new CreateConversationDto();
+                        contactState.userId = contactId;
                         contactState.conversationContext = new ConversationContextDTO();
                         contactState.conversationContext.currentStep = ConversationStep.ExtraTip;
 
@@ -863,7 +863,7 @@ export class WhatsAppService implements OnModuleInit {
     private async handleExtraTip(
         from: string,
         userMessage: string,
-        state: UserConversationDTO,
+        state: CreateConversationDto,
     ): Promise<string[]> {
         const sentMessages = [];
         const noTipKeywords = ['não', 'nao', 'n quero', 'não quero', 'nao quero'];
@@ -930,7 +930,7 @@ export class WhatsAppService implements OnModuleInit {
     private async handleWaitingForPayment(
         from: string,
         userMessage: string,
-        state: UserConversationDTO,
+        state: CreateConversationDto,
         message: Message,
     ): Promise<string[]> {
         const sentMessages: string[] = [];
@@ -1061,7 +1061,7 @@ export class WhatsAppService implements OnModuleInit {
     private async handleOverpaymentDecision(
         from: string,
         userMessage: string,
-        state: UserConversationDTO,
+        state: CreateConversationDto,
     ): Promise<string[]> {
         const sentMessages = [];
         const excessAmount = state.conversationContext.excessPaymentAmount;
@@ -1105,7 +1105,7 @@ export class WhatsAppService implements OnModuleInit {
     private async handleAwaitingUserDecision(
         from: string,
         userMessage: string,
-        state: UserConversationDTO,
+        state: CreateConversationDto,
     ): Promise<string[]> {
         const sentMessages = [];
 
@@ -1151,7 +1151,7 @@ export class WhatsAppService implements OnModuleInit {
     private async handlePaymentReminder(
         from: string,
         userMessage: string,
-        state: UserConversationDTO,
+        state: CreateConversationDto,
     ): Promise<string[]> {
         const sentMessages = [];
         if (userMessage.includes('sim, preciso de ajuda')) {
@@ -1183,7 +1183,7 @@ export class WhatsAppService implements OnModuleInit {
     private async handleFeedback(
         from: string,
         userMessage: string,
-        state: UserConversationDTO,
+        state: CreateConversationDto,
     ): Promise<string[]> {
         const sentMessages = [];
         const npsScore = parseInt(userMessage);
@@ -1216,7 +1216,7 @@ export class WhatsAppService implements OnModuleInit {
     private async handleFeedbackDetail(
         from: string,
         userMessage: string,
-        state: UserConversationDTO,
+        state: CreateConversationDto,
     ): Promise<string[]> {
         const sentMessages = [];
         const detailedFeedback = userMessage; // Capture the user's detailed feedback

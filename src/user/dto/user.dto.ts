@@ -7,7 +7,7 @@ export class UserDto {
     @IsNotEmpty()
     @Matches(/^\d+$/, { message: '' })
     // _id: string;
-    phone: string;
+    userId: string;
 
     @IsString()
     @IsOptional()

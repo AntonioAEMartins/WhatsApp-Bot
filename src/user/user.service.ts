@@ -15,6 +15,8 @@ export class UserService {
     async listUsers(page: number = 1): Promise<ListResponseDto<UserDto>> {
         if (page < 1) {
             throw new HttpException("Invalid page number", 400);
+        } else if (!Number.isInteger(page)) {
+            page = 1;
         }
 
         let agg: any[] = []
@@ -62,9 +64,9 @@ export class UserService {
         }
     }
 
-    async getUser(phone: string): Promise<SimpleResponseDto<UserDto>> {
+    async getUser(userId: string): Promise<SimpleResponseDto<UserDto>> {
         const user = await this.db.collection<UserDto>("users").findOne(
-            { phone: phone },
+            { userId: userId },
             { projection: { _id: 0 } }
         );
 
@@ -82,7 +84,7 @@ export class UserService {
 
     async createUser(createUser: CreateUserDto): Promise<SimpleResponseDto<UserDto>> {
 
-        const userExists = await this.db.collection("users").findOne({ phone: createUser.phone });
+        const userExists = await this.db.collection("users").findOne({ userId: createUser.userId });
 
         if (userExists) {
             throw new HttpException("User already exists", 400);
