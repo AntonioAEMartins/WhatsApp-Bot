@@ -2,12 +2,19 @@
 
 import { IsString, IsNumber, IsArray, IsOptional, ValidateNested, IsEnum, IsDate, IsNotEmpty } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ObjectId } from 'mongodb';
 
 export enum PaymentStatus {
   Pending = 'pending',
   Confirmed = 'confirmed',
   Partial = 'partial',
   Incomplete = 'incomplete',
+}
+
+export enum MessageType {
+  User = 'user',
+  Bot = 'bot',
+  System = 'system',
 }
 
 export enum ConversationStep {
@@ -129,6 +136,28 @@ export class FeedbackDTO {
   detailedFeedback?: string;
 }
 
+export class MessageDTO {
+  @IsString()
+  @IsNotEmpty()
+  messageId: string;
+
+  @IsString()
+  @IsNotEmpty()
+  content: string;
+
+  @IsEnum(MessageType)
+  type: MessageType;
+
+  @IsDate()
+  @Type(() => Date)
+  timestamp: Date;
+
+  @IsString()
+  @IsOptional()
+  senderId?: string; // ID of the sender (user or bot)
+}
+
+
 export class ConversationContextDTO {
   @IsEnum(ConversationStep)
   currentStep: ConversationStep;
@@ -175,6 +204,11 @@ export class ConversationContextDTO {
   @IsOptional()
   @IsDate()
   lastMessage?: Date;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MessageDTO)
+  messages: MessageDTO[];
 }
 
 export class BaseConversationDto {
@@ -193,4 +227,12 @@ export class BaseConversationDto {
 }
 
 export class CreateConversationDto extends BaseConversationDto {
+}
+
+export class UpdateConversationDto extends BaseConversationDto {}
+
+export class ConversationDto extends BaseConversationDto {
+  @IsString()
+  @IsNotEmpty()
+  _id: ObjectId;
 }
