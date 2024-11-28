@@ -7,5 +7,6 @@ import { DatabaseModule } from 'src/db/db.module';
   imports: [DatabaseModule],
   providers: [ConversationService],
   controllers: [ConversationController],
+  exports: [ConversationService],
 })
 export class ConversationModule {}

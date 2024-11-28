@@ -33,6 +33,7 @@ export enum ConversationStep {
   Completed = 'completed',
   IncompleteOrder = 'incomplete_order',
   OrderNotFound = 'order_not_found',
+  PaymentDeclined = 'payment_declined',
   PaymentInvalid = 'payment_invalid',
   PaymentAssistance = 'payment_assistance',
   OverpaymentDecision = 'overpayment_decision',

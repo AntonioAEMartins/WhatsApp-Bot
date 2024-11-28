@@ -21,10 +21,25 @@ export class ConversationController {
     @HttpCode(HttpStatus.OK)
     @Get('active')
     async getActiveConversation(@Query('userId') userId: string) {
-        if (!userId){
+        if (!userId) {
             throw new HttpException("User ID is required", HttpStatus.BAD_REQUEST);
         }
         return await this.conversationService.getActiveConversation(userId);
+    }
+
+    @HttpCode(HttpStatus.OK)
+    @Get('active_by_order')
+    async getActiveConversationsByOrderId(@Query('orderId') orderId: string) {
+        if (!orderId) {
+            throw new HttpException("Order ID is required", HttpStatus.BAD_REQUEST);
+        }
+
+        const numericOrderId = parseInt(orderId, 10);
+        if (isNaN(numericOrderId)) {
+            throw new HttpException("Order ID must be a valid number", HttpStatus.BAD_REQUEST);
+        }
+
+        return await this.conversationService.getActiveConversationsByOrderId(numericOrderId);
     }
 
     @HttpCode(HttpStatus.OK)

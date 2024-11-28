@@ -8,6 +8,7 @@ import { SimpleResponseDto } from 'src/request/request.dto';
 export class ConversationService {
 
     private readonly mongoClient: MongoClient;
+    private readonly timeThreshold = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
     constructor(@Inject('DATABASE_CONNECTION') private db: Db, clientProvider: ClientProvider) {
         this.mongoClient = clientProvider.getClient();
     }
@@ -47,15 +48,14 @@ export class ConversationService {
     async getActiveConversation(userId: string): Promise<SimpleResponseDto<ConversationDto>> {
         const terminalSteps = [
             ConversationStep.Completed,
-            // ConversationStep.IncompleteOrder,
-            // ConversationStep.OrderNotFound,
-            // ConversationStep.PaymentInvalid,
-            // ConversationStep.PaymentAssistance,
+            ConversationStep.IncompleteOrder,
+            ConversationStep.OrderNotFound,
+            ConversationStep.PaymentInvalid,
+            ConversationStep.PaymentAssistance,
             // ConversationStep.Feedback,
             // ConversationStep.FeedbackDetail,
         ];
 
-        const timeThreshold = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
         const now = new Date();
 
         const conversation = await this.db
@@ -71,7 +71,7 @@ export class ConversationService {
 
             if (!terminalSteps.includes(currentStep) && lastMessage) {
                 const timeDifference = now.getTime() - new Date(lastMessage).getTime();
-                if (timeDifference <= timeThreshold) {
+                if (timeDifference <= this.timeThreshold) {
                     return {
                         msg: "Active conversation found",
                         data: conversation,
@@ -85,6 +85,37 @@ export class ConversationService {
             data: null,
         };
     }
+
+    async getActiveConversationsByOrderId(orderId: number): Promise<SimpleResponseDto<ConversationDto[]>> {
+        const terminalSteps = [
+            ConversationStep.Completed,
+        ];
+
+        const now = new Date();
+
+        // Busca todas as conversas relacionadas ao orderId
+        const conversations = await this.db
+            .collection<ConversationDto>("conversations")
+            .find({
+                "conversationContext.paymentDetails.orderId": orderId,
+                "conversationContext.currentStep": { $nin: terminalSteps },
+                "conversationContext.lastMessage": { $gte: new Date(now.getTime() - this.timeThreshold) },
+            })
+            .toArray();
+
+        if (conversations && conversations.length > 0) {
+            return {
+                msg: "Active conversations found",
+                data: conversations,
+            };
+        }
+
+        return {
+            msg: "No active conversations found",
+            data: [],
+        };
+    }
+
 
     async updateConversation(id: string, userConversation: UpdateConversationDto): Promise<SimpleResponseDto<ConversationDto>> {
         const { conversationContext, orderDetails } = userConversation;
@@ -147,6 +178,30 @@ export class ConversationService {
         };
     }
 
+    async updateConversationWithErrorStatus(id: string, errorStatus: ConversationStep): Promise<SimpleResponseDto<ConversationDto>> {
+        const conversation = await this.db.collection("conversations").findOne({ _id: new ObjectId(id) });
+
+        if (!conversation) {
+            throw new HttpException("Conversation not found", HttpStatus.NOT_FOUND);
+        }
+
+        const updatedConversation = await this.db.collection("conversations").findOneAndUpdate(
+            { _id: new ObjectId(id) },
+            {
+                $set: {
+                    "conversationContext.currentStep": errorStatus,
+                    updatedAt: new Date(),
+                },
+            },
+            { returnDocument: "after" }
+        );
+
+        return {
+            msg: "Conversation updated",
+            data: updatedConversation as ConversationDto,
+        };
+    }
+
 
     async addMessage(id: string, message: MessageDTO): Promise<SimpleResponseDto<ConversationDto>> {
         const conversation = await this.db.collection<ConversationDto>("conversations").findOne({ _id: new ObjectId(id) });
@@ -178,4 +233,36 @@ export class ConversationService {
             data: updatedConversation as ConversationDto,
         };
     }
+
+    async addMessages(id: string, messages: MessageDTO[]): Promise<SimpleResponseDto<ConversationDto>> {
+        const conversation = await this.db.collection<ConversationDto>("conversations").findOne({ _id: new ObjectId(id) });
+
+        if (!conversation) {
+            throw new HttpException("Conversation not found", HttpStatus.NOT_FOUND);
+        }
+
+        const updatedConversation = await this.db.collection<ConversationDto>("conversations").findOneAndUpdate(
+            { _id: new ObjectId(id) },
+            {
+                $push: {
+                    "conversationContext.messages": { $each: messages }, // Adiciona várias mensagens
+                },
+                $set: {
+                    "conversationContext.lastMessage": new Date(),
+                    updatedAt: new Date(),
+                },
+            },
+            { returnDocument: "after" }
+        );
+
+        if (!updatedConversation) {
+            throw new HttpException("Failed to update conversation", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+
+        return {
+            msg: "Messages added",
+            data: updatedConversation as ConversationDto,
+        };
+    }
+
 }

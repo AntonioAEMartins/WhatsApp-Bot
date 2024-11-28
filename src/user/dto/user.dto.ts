@@ -24,10 +24,6 @@ export class UserDto {
     @IsDate()
     @IsOptional()
     updatedAt: Date;
-
-    @IsDate()
-    @IsOptional()
-    lastConversation: Date;
 }
 
 export class CreateUserDto extends UserDto { }
