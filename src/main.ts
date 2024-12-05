@@ -17,6 +17,10 @@ async function bootstrap() {
     }),
   );
 
+  app.enableShutdownHooks();
+  // app.enableShutdownHooks(['SIGINT', 'SIGTERM', 'SIGUSR2']);
+
+
   // Swagger setup
   const config = new DocumentBuilder()
     .setTitle('Your API title')
