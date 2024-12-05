@@ -18,7 +18,6 @@ async function bootstrap() {
   );
 
   app.enableShutdownHooks();
-  // app.enableShutdownHooks(['SIGINT', 'SIGTERM', 'SIGUSR2']);
 
 
   // Swagger setup
