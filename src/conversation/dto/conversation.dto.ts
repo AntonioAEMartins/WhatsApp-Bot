@@ -237,3 +237,7 @@ export class ConversationDto extends BaseConversationDto {
   @IsNotEmpty()
   _id: ObjectId;
 }
+
+// Conversa
+// Transações
+// Pedidos
