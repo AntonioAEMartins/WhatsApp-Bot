@@ -7,7 +7,7 @@ import { UserModule } from 'src/user/user.module';
 import { ConversationModule } from 'src/conversation/conversation.module';
 import { OrderModule } from 'src/order/order.module';
 import { TransactionModule } from 'src/transaction/transaction.module';
-import { WhatsAppUtils } from './whatsapp.utils.service';
+import { WhatsAppUtils } from './whatsapp.utils';
 
 @Module({
   imports: [TableModule, LangchainModule, UserModule, ConversationModule, OrderModule, TransactionModule],
