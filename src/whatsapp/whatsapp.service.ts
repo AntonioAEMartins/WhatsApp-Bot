@@ -667,179 +667,410 @@ export class WhatsAppService implements OnModuleInit {
      * - Handles errors when processing contact details.
      */
 
+    // private async handleWaitingForContacts(
+    //     from: string,
+    //     state: ConversationDto,
+    //     message: Message,
+    // ): Promise<string[]> {
+    //     const sentMessages = [];
+
+    //     if (message.type === 'vcard' || message.type === 'multi_vcard') {
+    //         try {
+    //             const vcardDataArray = message.vCards;
+
+    //             const contactsReceivedSoFar = state.conversationContext.splitInfo.contacts.length;
+    //             const totalContactsExpected = state.conversationContext.splitInfo.numberOfPeople - 1;
+    //             const remainingContactsNeeded = totalContactsExpected - contactsReceivedSoFar;
+
+    //             if (remainingContactsNeeded <= 0) {
+    //                 const messages = [
+    //                     'Você já enviou todos os contatos necessários.',
+    //                     'Vamos prosseguir com seu atendimento. 😄',
+    //                 ];
+    //                 sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+
+    //                 const updatedContext = {
+    //                     ...state.conversationContext,
+    //                     currentStep: ConversationStep.ExtraTip,
+    //                 };
+    //                 await this.conversationService.updateConversation(state._id.toString(), {
+    //                     userId: state.userId,
+    //                     conversationContext: updatedContext,
+    //                 });
+
+    //                 return sentMessages;
+    //             }
+
+    //             const vcardDataArrayLimited = vcardDataArray.slice(0, remainingContactsNeeded);
+
+    //             let responseMessage = `✨ *Contato(s) Recebido(s) com Sucesso!* ✨\n`;
+
+    //             const contactsToAdd = [];
+    //             for (const vcardData of vcardDataArrayLimited) {
+    //                 const vcardName = vcardData.split('FN:')[1]?.split('\n')[0] || 'Nome não informado';
+    //                 let vcardPhone = vcardData.split('waid=')[1]?.split(':')[1]?.split('\n')[0] || '';
+    //                 vcardPhone = vcardPhone.replace(/\D/g, '');
+
+    //                 responseMessage += `\n👤 *Nome:* ${vcardName}\n📞 *Número:* ${vcardPhone}\n`;
+
+    //                 contactsToAdd.push({
+    //                     name: vcardName,
+    //                     phone: vcardPhone,
+    //                     individualAmount: 0,
+    //                 });
+    //             }
+
+    //             state.conversationContext.splitInfo.contacts.push(...contactsToAdd);
+
+    //             if (vcardDataArray.length > remainingContactsNeeded) {
+    //                 responseMessage += `\n⚠️ Você enviou mais contatos do que o necessário.\nApenas o${remainingContactsNeeded > 1 ? 's primeiros' : ''} ${remainingContactsNeeded} contato${remainingContactsNeeded > 1 ? 's' : ''} foi${remainingContactsNeeded > 1 ? 'ram' : ''} considerado${remainingContactsNeeded > 1 ? 's' : ''}.`;
+    //             }
+
+    //             const totalContactsReceived = state.conversationContext.splitInfo.contacts.length;
+    //             const remainingContacts = totalContactsExpected - totalContactsReceived;
+
+    //             if (remainingContacts > 0) {
+    //                 responseMessage += `\n🕒 Aguardando mais *${remainingContacts}* contato${remainingContacts > 1 ? 's' : ''} para continuar.`;
+    //             } else {
+    //                 if (vcardDataArray.length <= totalContactsExpected) {
+    //                     responseMessage += `\n🎉 Todos os contatos foram recebidos! Vamos prosseguir com seu atendimento. 😄`;
+    //                 }
+    //                 state.conversationContext.currentStep = ConversationStep.ExtraTip;
+    //             }
+
+    //             sentMessages.push(...(await this.sendMessageWithDelay(from, [responseMessage], state)));
+
+    //             if (remainingContacts <= 0) {
+    //                 const { data: orderData } = await this.orderService.getOrder(state.orderId);
+    //                 const totalAmount = orderData.totalAmount;
+    //                 const numPeople = state.conversationContext.splitInfo.numberOfPeople;
+    //                 const individualAmount = parseFloat((totalAmount / numPeople).toFixed(2));
+
+    //                 const contacts = state.conversationContext.splitInfo.contacts.map((contact) => ({
+    //                     ...contact,
+    //                     individualAmount,
+    //                 }));
+
+    //                 const updatedConversationData: ConversationContextDTO = {
+    //                     ...state.conversationContext,
+    //                     splitInfo: {
+    //                         ...state.conversationContext.splitInfo,
+    //                         contacts,
+    //                     },
+    //                     currentStep: ConversationStep.ExtraTip,
+    //                     userAmount: individualAmount,
+    //                 };
+
+    //                 const transactionData: CreateTransactionDTO = {
+    //                     orderId: state.orderId,
+    //                     tableId: state.tableId,
+    //                     conversationId: state._id.toString(),
+    //                     userId: state.userId,
+    //                     amountPaid: 0,
+    //                     expectedAmount: individualAmount,
+    //                     status: PaymentStatus.Pending,
+    //                     initiatedAt: new Date(),
+    //                 }
+
+    //                 await this.conversationService.updateConversation(state._id.toString(), {
+    //                     userId: state.userId,
+    //                     conversationContext: updatedConversationData,
+    //                 });
+
+    //                 await this.transactionService.createTransaction(transactionData);
+
+    //                 for (const contact of contacts) {
+    //                     const contactId = `${contact.phone}@c.us`;
+    //                     const messages = [
+    //                         `👋 Coti Pagamentos - Olá! Você foi incluído na divisão do pagamento da comanda *${state.tableId}* no restaurante Cris Parrilla. Aguarde para receber mais informações sobre o pagamento.`,
+    //                         `Sua parte na conta é de *${formatToBRL(individualAmount)}*.`,
+    //                         'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
+    //                     ];
+
+    //                     const contactConversationData: CreateConversationDto = {
+    //                         userId: contactId,
+    //                         tableId: state.tableId,
+    //                         orderId: state.orderId,
+    //                         referrerUserId: state.userId,
+    //                         conversationContext: {
+    //                             currentStep: ConversationStep.ExtraTip,
+    //                             userAmount: individualAmount,
+    //                             totalOrderAmount: totalAmount,
+    //                             messages: [],
+    //                         },
+    //                     };
+
+    //                     const { data: createConversationRequest } = await this.conversationService.createConversation(contactConversationData);
+    //                     const createdConversationId = createConversationRequest._id;
+
+    //                     const transactionData: CreateTransactionDTO = {
+    //                         orderId: state.orderId,
+    //                         tableId: state.tableId,
+    //                         conversationId: createdConversationId,
+    //                         userId: state.userId,
+    //                         amountPaid: 0,
+    //                         expectedAmount: individualAmount,
+    //                         status: PaymentStatus.Pending,
+    //                         initiatedAt: new Date(),
+    //                     }
+
+    //                     await this.transactionService.createTransaction(transactionData);
+
+    //                     await this.sendMessageWithDelay(contactId, messages, state);
+    //                 }
+
+    //                 const messages = [
+    //                     'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
+    //                 ];
+    //                 sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+    //             }
+    //         } catch (error) {
+    //             this.logger.error('Erro ao processar o(s) vCard(s):', error);
+    //             const errorMessages = [
+    //                 '❌ Ocorreu um erro ao processar o contato. Por favor, tente novamente enviando o contato.',
+    //             ];
+    //             sentMessages.push(...(await this.sendMessageWithDelay(from, errorMessages, state)));
+    //         }
+    //     } else {
+    //         const promptMessages = [
+    //             '📲 Por favor, envie o contato da pessoa com quem deseja dividir a conta.',
+    //         ];
+    //         sentMessages.push(...(await this.sendMessageWithDelay(from, promptMessages, state)));
+    //     }
+
+    //     return sentMessages;
+    // }
+
     private async handleWaitingForContacts(
         from: string,
         state: ConversationDto,
         message: Message,
     ): Promise<string[]> {
-        const sentMessages = [];
+        const sentMessages: string[] = [];
 
-        if (message.type === 'vcard' || message.type === 'multi_vcard') {
+        if (this.utilsService.isVcardMessage(message)) {
             try {
-                const vcardDataArray = message.vCards;
-
-                const contactsReceivedSoFar = state.conversationContext.splitInfo.contacts.length;
-                const totalContactsExpected = state.conversationContext.splitInfo.numberOfPeople - 1;
-                const remainingContactsNeeded = totalContactsExpected - contactsReceivedSoFar;
+                const {
+                    contactsNeeded,
+                    remainingContactsNeeded,
+                    totalContactsExpected,
+                } = this.utilsService.calculateContactsNeeded(state);
 
                 if (remainingContactsNeeded <= 0) {
-                    const messages = [
-                        'Você já enviou todos os contatos necessários.',
-                        'Vamos prosseguir com seu atendimento. 😄',
-                    ];
-                    sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
-
-                    const updatedContext = {
-                        ...state.conversationContext,
-                        currentStep: ConversationStep.ExtraTip,
-                    };
-                    await this.conversationService.updateConversation(state._id.toString(), {
-                        userId: state.userId,
-                        conversationContext: updatedContext,
-                    });
-
-                    return sentMessages;
+                    // Já tem todos os contatos
+                    return await this.handleAllContactsAlreadyReceived(from, state, sentMessages);
                 }
 
-                const vcardDataArrayLimited = vcardDataArray.slice(0, remainingContactsNeeded);
+                const extractedContacts = this.utilsService.extractContactsFromVcards(message, remainingContactsNeeded);
+                this.utilsService.addExtractedContactsToState(state, extractedContacts);
 
-                let responseMessage = `✨ *Contato(s) Recebido(s) com Sucesso!* ✨\n`;
-
-                const contactsToAdd = [];
-                for (const vcardData of vcardDataArrayLimited) {
-                    const vcardName = vcardData.split('FN:')[1]?.split('\n')[0] || 'Nome não informado';
-                    let vcardPhone = vcardData.split('waid=')[1]?.split(':')[1]?.split('\n')[0] || '';
-                    vcardPhone = vcardPhone.replace(/\D/g, '');
-
-                    responseMessage += `\n👤 *Nome:* ${vcardName}\n📞 *Número:* ${vcardPhone}\n`;
-
-                    contactsToAdd.push({
-                        name: vcardName,
-                        phone: vcardPhone,
-                        individualAmount: 0,
-                    });
-                }
-
-                state.conversationContext.splitInfo.contacts.push(...contactsToAdd);
-
-                if (vcardDataArray.length > remainingContactsNeeded) {
-                    responseMessage += `\n⚠️ Você enviou mais contatos do que o necessário.\nApenas o${remainingContactsNeeded > 1 ? 's primeiros' : ''} ${remainingContactsNeeded} contato${remainingContactsNeeded > 1 ? 's' : ''} foi${remainingContactsNeeded > 1 ? 'ram' : ''} considerado${remainingContactsNeeded > 1 ? 's' : ''}.`;
-                }
-
-                const totalContactsReceived = state.conversationContext.splitInfo.contacts.length;
-                const remainingContacts = totalContactsExpected - totalContactsReceived;
-
-                if (remainingContacts > 0) {
-                    responseMessage += `\n🕒 Aguardando mais *${remainingContacts}* contato${remainingContacts > 1 ? 's' : ''} para continuar.`;
-                } else {
-                    if (vcardDataArray.length <= totalContactsExpected) {
-                        responseMessage += `\n🎉 Todos os contatos foram recebidos! Vamos prosseguir com seu atendimento. 😄`;
-                    }
-                    state.conversationContext.currentStep = ConversationStep.ExtraTip;
-                }
-
+                const responseMessage = this.buildContactsReceivedMessage(
+                    extractedContacts,
+                    message.vCards.length,
+                    remainingContactsNeeded,
+                    totalContactsExpected,
+                    state
+                );
                 sentMessages.push(...(await this.sendMessageWithDelay(from, [responseMessage], state)));
 
-                if (remainingContacts <= 0) {
-                    const { data: orderData } = await this.orderService.getOrder(state.orderId);
-                    const totalAmount = orderData.totalAmount;
-                    const numPeople = state.conversationContext.splitInfo.numberOfPeople;
-                    const individualAmount = parseFloat((totalAmount / numPeople).toFixed(2));
-
-                    const contacts = state.conversationContext.splitInfo.contacts.map((contact) => ({
-                        ...contact,
-                        individualAmount,
-                    }));
-
-                    const updatedConversationData: ConversationContextDTO = {
-                        ...state.conversationContext,
-                        splitInfo: {
-                            ...state.conversationContext.splitInfo,
-                            contacts,
-                        },
-                        currentStep: ConversationStep.ExtraTip,
-                        userAmount: individualAmount,
-                    };
-
-                    const transactionData: CreateTransactionDTO = {
-                        orderId: state.orderId,
-                        tableId: state.tableId,
-                        conversationId: state._id.toString(),
-                        userId: state.userId,
-                        amountPaid: 0,
-                        expectedAmount: individualAmount,
-                        status: PaymentStatus.Pending,
-                        initiatedAt: new Date(),
-                    }
-
-                    await this.conversationService.updateConversation(state._id.toString(), {
-                        userId: state.userId,
-                        conversationContext: updatedConversationData,
-                    });
-
-                    await this.transactionService.createTransaction(transactionData);
-
-                    for (const contact of contacts) {
-                        const contactId = `${contact.phone}@c.us`;
-                        const messages = [
-                            `👋 Coti Pagamentos - Olá! Você foi incluído na divisão do pagamento da comanda *${state.tableId}* no restaurante Cris Parrilla. Aguarde para receber mais informações sobre o pagamento.`,
-                            `Sua parte na conta é de *${formatToBRL(individualAmount)}*.`,
-                            'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
-                        ];
-
-                        const contactConversationData: CreateConversationDto = {
-                            userId: contactId,
-                            tableId: state.tableId,
-                            orderId: state.orderId,
-                            referrerUserId: state.userId,
-                            conversationContext: {
-                                currentStep: ConversationStep.ExtraTip,
-                                userAmount: individualAmount,
-                                totalOrderAmount: totalAmount,
-                                messages: [],
-                            },
-                        };
-
-                        const { data: createConversationRequest } = await this.conversationService.createConversation(contactConversationData);
-                        const createdConversationId = createConversationRequest._id;
-
-                        const transactionData: CreateTransactionDTO = {
-                            orderId: state.orderId,
-                            tableId: state.tableId,
-                            conversationId: createdConversationId,
-                            userId: state.userId,
-                            amountPaid: 0,
-                            expectedAmount: individualAmount,
-                            status: PaymentStatus.Pending,
-                            initiatedAt: new Date(),
-                        }
-
-                        await this.transactionService.createTransaction(transactionData);
-
-                        await this.sendMessageWithDelay(contactId, messages, state);
-                    }
-
-                    const messages = [
-                        'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
-                    ];
-                    sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+                if (this.utilsService.haveAllContacts(state, totalContactsExpected)) {
+                    await this.finalizeContactsReception(from, state, sentMessages);
                 }
+
             } catch (error) {
-                this.logger.error('Erro ao processar o(s) vCard(s):', error);
-                const errorMessages = [
-                    '❌ Ocorreu um erro ao processar o contato. Por favor, tente novamente enviando o contato.',
-                ];
-                sentMessages.push(...(await this.sendMessageWithDelay(from, errorMessages, state)));
+                await this.handleVcardProcessingError(from, state, sentMessages, error);
             }
         } else {
-            const promptMessages = [
-                '📲 Por favor, envie o contato da pessoa com quem deseja dividir a conta.',
-            ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, promptMessages, state)));
+            await this.promptForContact(from, state, sentMessages);
         }
 
         return sentMessages;
     }
+
+    private async handleAllContactsAlreadyReceived(
+        from: string,
+        state: ConversationDto,
+        sentMessages: string[]
+    ): Promise<string[]> {
+        const messages = [
+            'Você já enviou todos os contatos necessários.',
+            'Vamos prosseguir com seu atendimento. 😄',
+        ];
+        sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+
+        const updatedContext = {
+            ...state.conversationContext,
+            currentStep: ConversationStep.ExtraTip,
+        };
+
+        await this.conversationService.updateConversation(state._id.toString(), {
+            userId: state.userId,
+            conversationContext: updatedContext,
+        });
+
+        return sentMessages;
+    }
+
+    private buildContactsReceivedMessage(
+        contacts: { name: string; phone: string; individualAmount: number }[],
+        totalVcardsSent: number,
+        remainingContactsNeeded: number,
+        totalContactsExpected: number,
+        state: ConversationDto
+    ): string {
+        let responseMessage = `✨ *Contato(s) Recebido(s) com Sucesso!* ✨\n`;
+
+        for (const contact of contacts) {
+            responseMessage += `\n👤 *Nome:* ${contact.name}\n📞 *Número:* ${contact.phone}\n`;
+        }
+
+        if (totalVcardsSent > remainingContactsNeeded) {
+            responseMessage += `\n⚠️ Você enviou mais contatos do que o necessário.\nApenas o${remainingContactsNeeded > 1 ? 's primeiros' : ''} ${remainingContactsNeeded} contato${remainingContactsNeeded > 1 ? 's' : ''} foi${remainingContactsNeeded > 1 ? 'ram' : ''} considerado${remainingContactsNeeded > 1 ? 's' : ''}.`;
+        }
+
+        const totalContactsReceived = state.conversationContext.splitInfo.contacts.length;
+        const remainingContacts = totalContactsExpected - totalContactsReceived;
+
+        if (remainingContacts > 0) {
+            responseMessage += `\n🕒 Aguardando mais *${remainingContacts}* contato${remainingContacts > 1 ? 's' : ''} para continuar.`;
+        } else {
+            if (totalVcardsSent <= totalContactsExpected) {
+                responseMessage += `\n🎉 Todos os contatos foram recebidos! Vamos prosseguir com seu atendimento. 😄`;
+            }
+            state.conversationContext.currentStep = ConversationStep.ExtraTip;
+        }
+
+        return responseMessage;
+    }
+
+    private async finalizeContactsReception(
+        from: string,
+        state: ConversationDto,
+        sentMessages: string[]
+    ): Promise<void> {
+        const { data: orderData } = await this.orderService.getOrder(state.orderId);
+        const totalAmount = orderData.totalAmount;
+        const numPeople = state.conversationContext.splitInfo.numberOfPeople;
+        const individualAmount = parseFloat((totalAmount / numPeople).toFixed(2));
+
+        await this.updateConversationAndCreateTransaction(state, individualAmount, totalAmount);
+        await this.notifyIncludedContacts(state, totalAmount, individualAmount);
+        sentMessages.push(...(await this.sendMessageWithDelay(from, [
+            'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
+        ], state)));
+    }
+
+    private async updateConversationAndCreateTransaction(
+        state: ConversationDto,
+        individualAmount: number,
+        totalAmount: number,
+    ): Promise<void> {
+        const contacts = state.conversationContext.splitInfo.contacts.map((contact) => ({
+            ...contact,
+            individualAmount,
+        }));
+
+        const updatedConversationData: ConversationContextDTO = {
+            ...state.conversationContext,
+            splitInfo: {
+                ...state.conversationContext.splitInfo,
+                contacts,
+            },
+            currentStep: ConversationStep.ExtraTip,
+            userAmount: individualAmount,
+        };
+
+        const transactionData: CreateTransactionDTO = {
+            orderId: state.orderId,
+            tableId: state.tableId,
+            conversationId: state._id.toString(),
+            userId: state.userId,
+            amountPaid: 0,
+            expectedAmount: individualAmount,
+            status: PaymentStatus.Pending,
+            initiatedAt: new Date(),
+        };
+
+        await this.conversationService.updateConversation(state._id.toString(), {
+            userId: state.userId,
+            conversationContext: updatedConversationData,
+        });
+
+        await this.transactionService.createTransaction(transactionData);
+    }
+
+    private async notifyIncludedContacts(
+        state: ConversationDto,
+        totalAmount: number,
+        individualAmount: number
+    ): Promise<void> {
+        const contacts = state.conversationContext.splitInfo.contacts;
+
+        for (const contact of contacts) {
+            const contactId = `${contact.phone}@c.us`;
+            const messages = [
+                `👋 Coti Pagamentos - Olá! Você foi incluído na divisão do pagamento da comanda *${state.tableId}* no restaurante Cris Parrilla. Aguarde para receber mais informações sobre o pagamento.`,
+                `Sua parte na conta é de *${formatToBRL(individualAmount)}*.`,
+                'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
+            ];
+
+            const contactConversationData: CreateConversationDto = {
+                userId: contactId,
+                tableId: state.tableId,
+                orderId: state.orderId,
+                referrerUserId: state.userId,
+                conversationContext: {
+                    currentStep: ConversationStep.ExtraTip,
+                    userAmount: individualAmount,
+                    totalOrderAmount: totalAmount,
+                    messages: [],
+                },
+            };
+
+            const { data: createConversationRequest } = await this.conversationService.createConversation(contactConversationData);
+            const createdConversationId = createConversationRequest._id;
+
+            const transactionData: CreateTransactionDTO = {
+                orderId: state.orderId,
+                tableId: state.tableId,
+                conversationId: createdConversationId,
+                userId: state.userId,
+                amountPaid: 0,
+                expectedAmount: individualAmount,
+                status: PaymentStatus.Pending,
+                initiatedAt: new Date(),
+            };
+
+            await this.transactionService.createTransaction(transactionData);
+            await this.sendMessageWithDelay(contactId, messages, state);
+        }
+    }
+
+    private async handleVcardProcessingError(
+        from: string,
+        state: ConversationDto,
+        sentMessages: string[],
+        error: any
+    ): Promise<void> {
+        this.logger.error('Erro ao processar o(s) vCard(s):', error);
+        const errorMessages = [
+            '❌ Ocorreu um erro ao processar o contato. Por favor, tente novamente enviando o contato.',
+        ];
+        sentMessages.push(...(await this.sendMessageWithDelay(from, errorMessages, state)));
+    }
+
+    private async promptForContact(
+        from: string,
+        state: ConversationDto,
+        sentMessages: string[]
+    ): Promise<void> {
+        const promptMessages = [
+            '📲 Por favor, envie o contato da pessoa com quem deseja dividir a conta.',
+        ];
+        sentMessages.push(...(await this.sendMessageWithDelay(from, promptMessages, state)));
+    }
+
+
 
     /**
      * Step 6: Extra Tip
