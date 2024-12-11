@@ -17,7 +17,7 @@ async function bootstrap() {
     }),
   );
 
-  app.enableShutdownHooks();
+  // app.enableShutdownHooks();
 
 
   // Swagger setup

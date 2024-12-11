@@ -37,6 +37,8 @@ export class TableService {
             body: JSON.stringify({ table_id: id }),
         });
 
+        console.log("Start Payment Response: ", response);
+
         if (!response.ok) {
             throw new Error('Failed to start payment');
         }

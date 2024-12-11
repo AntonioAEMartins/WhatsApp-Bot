@@ -9,6 +9,8 @@ import { LangchainModule } from './langchain/langchain.module';
 import { DatabaseModule } from './db/db.module';
 import { ConversationModule } from './conversation/conversation.module';
 import { UserModule } from './user/user.module';
+import { TransactionModule } from './transaction/transaction.module';
+import { OrderModule } from './order/order.module';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { UserModule } from './user/user.module';
     DatabaseModule,
     ConversationModule,
     UserModule,
+    TransactionModule,
+    OrderModule,
   ],
   controllers: [AppController, WhatsAppController],
   providers: [AppService, WhatsAppService],
