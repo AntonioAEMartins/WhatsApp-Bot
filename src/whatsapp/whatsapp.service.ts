@@ -25,6 +25,9 @@ import { BaseTransactionDTO, CreateTransactionDTO, PaymentProofDTO, ReceivedPaym
 import { table } from 'console';
 import { GroupMessageKeys, GroupMessages } from './utils/group.messages.utils';
 import { WhatsAppUtils } from './whatsapp.utils';
+import { PaymentProcessorDTO } from './payment.processor';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
 /**
  * The WhatsAppService class integrates with the WhatsApp Web API to manage conversations.
  * It handles incoming messages from authorized users, updates conversation states,
@@ -45,6 +48,7 @@ export class WhatsAppService implements OnModuleInit {
         private readonly orderService: OrderService,
         private readonly transactionService: TransactionService,
         private readonly utilsService: WhatsAppUtils,
+        @InjectQueue('payment') private readonly paymentQueue: Queue
     ) {
         this.client = new Client({
             puppeteer: {
@@ -573,18 +577,18 @@ export class WhatsAppService implements OnModuleInit {
                 conversationContext: updatedContext,
             });
 
-            const transactionData: CreateTransactionDTO = {
-                orderId: state.orderId,
-                tableId: state.tableId,
-                conversationId: state._id.toString(),
-                userId: state.userId,
-                amountPaid: 0,
-                expectedAmount: updatedContext.userAmount,
-                status: PaymentStatus.Pending,
-                initiatedAt: new Date(),
-            }
+            // const transactionData: CreateTransactionDTO = {
+            //     orderId: state.orderId,
+            //     tableId: state.tableId,
+            //     conversationId: state._id.toString(),
+            //     userId: state.userId,
+            //     amountPaid: 0,
+            //     expectedAmount: updatedContext.userAmount,
+            //     status: PaymentStatus.Pending,
+            //     initiatedAt: new Date(),
+            // }
 
-            await this.transactionService.createTransaction(transactionData);
+            // await this.transactionService.createTransaction(transactionData);
 
         } else {
             const messages = ['Por favor, responda com 1 para Sim ou 2 para Não.'];
@@ -980,23 +984,23 @@ export class WhatsAppService implements OnModuleInit {
             userAmount: individualAmount,
         };
 
-        const transactionData: CreateTransactionDTO = {
-            orderId: state.orderId,
-            tableId: state.tableId,
-            conversationId: state._id.toString(),
-            userId: state.userId,
-            amountPaid: 0,
-            expectedAmount: individualAmount,
-            status: PaymentStatus.Pending,
-            initiatedAt: new Date(),
-        };
+        // const transactionData: CreateTransactionDTO = {
+        //     orderId: state.orderId,
+        //     tableId: state.tableId,
+        //     conversationId: state._id.toString(),
+        //     userId: state.userId,
+        //     amountPaid: 0,
+        //     expectedAmount: individualAmount,
+        //     status: PaymentStatus.Pending,
+        //     initiatedAt: new Date(),
+        // };
 
         await this.conversationService.updateConversation(state._id.toString(), {
             userId: state.userId,
             conversationContext: updatedConversationData,
         });
 
-        await this.transactionService.createTransaction(transactionData);
+        // await this.transactionService.createTransaction(transactionData);
     }
 
     private async notifyIncludedContacts(
@@ -1030,18 +1034,18 @@ export class WhatsAppService implements OnModuleInit {
             const { data: createConversationRequest } = await this.conversationService.createConversation(contactConversationData);
             const createdConversationId = createConversationRequest._id;
 
-            const transactionData: CreateTransactionDTO = {
-                orderId: state.orderId,
-                tableId: state.tableId,
-                conversationId: createdConversationId,
-                userId: state.userId,
-                amountPaid: 0,
-                expectedAmount: individualAmount,
-                status: PaymentStatus.Pending,
-                initiatedAt: new Date(),
-            };
+            // const transactionData: CreateTransactionDTO = {
+            //     orderId: state.orderId,
+            //     tableId: state.tableId,
+            //     conversationId: createdConversationId,
+            //     userId: state.userId,
+            //     amountPaid: 0,
+            //     expectedAmount: individualAmount,
+            //     status: PaymentStatus.Pending,
+            //     initiatedAt: new Date(),
+            // };
 
-            await this.transactionService.createTransaction(transactionData);
+            // await this.transactionService.createTransaction(transactionData);
             await this.sendMessageWithDelay(contactId, messages, state);
         }
     }
@@ -1089,6 +1093,96 @@ export class WhatsAppService implements OnModuleInit {
      * - Sends appropriate messages to confirm the user's choice and provide payment details.
      */
 
+    // private async handleExtraTip(
+    //     from: string,
+    //     userMessage: string,
+    //     state: ConversationDto,
+    // ): Promise<string[]> {
+    //     const sentMessages = [];
+    //     const noTipKeywords = ['não', 'nao', 'n quero', 'não quero', 'nao quero'];
+    //     const tipPercent = parseFloat(userMessage.replace('%', '').replace(',', '.'));
+
+    //     const userAmount = state.conversationContext.userAmount;
+
+    //     if (noTipKeywords.some((keyword) => userMessage.includes(keyword)) || tipPercent === 0) {
+    //         const messages = [
+    //             'Sem problemas!',
+    //             `O valor final da sua conta é: *${formatToBRL(userAmount.toFixed(2))}*`,
+    //             'Segue abaixo a chave PIX para pagamento 👇',
+    //             '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
+    //             'Por favor, envie o comprovante! 📄✅',
+    //         ];
+    //         sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+
+    //         const updatedContext = {
+    //             ...state.conversationContext,
+    //             currentStep: ConversationStep.WaitingForPayment,
+    //             paymentStartTime: Date.now(),
+    //         };
+
+    //         await this.conversationService.updateConversation(state._id.toString(), {
+    //             userId: state.userId,
+    //             conversationContext: updatedContext,
+    //         });
+    //     } else if (tipPercent > 0) {
+    //         let tipResponse = '';
+    //         if (tipPercent <= 3) {
+    //             tipResponse = `Obrigado! 😊 \nVocê escolheu ${tipPercent}%. Cada contribuição conta e sua ajuda é muito apreciada pela nossa equipe! 🙌`;
+    //         } else if (tipPercent > 3 && tipPercent <= 5) {
+    //             tipResponse = `Obrigado! 😊 \nVocê escolheu ${tipPercent}%, a mesma opção da maioria das últimas mesas. Sua contribuição faz a diferença para a equipe! 💪`;
+    //         } else if (tipPercent > 5 && tipPercent <= 7) {
+    //             tipResponse = `Incrível! 😄 \nVocê escolheu ${tipPercent}%, uma gorjeta generosa! Obrigado por apoiar nossa equipe de maneira tão especial. 💫`;
+    //         } else {
+    //             tipResponse = `Obrigado pela sua generosidade! 😊`;
+    //         }
+    //         sentMessages.push(tipResponse);
+
+    //         const totalAmountWithTip = userAmount * (1 + tipPercent / 100);
+    //         console.log("User Amount: ", userAmount);
+    //         console.log("Tip Percent: ", tipPercent);
+    //         console.log("Total Amount With Tip: ", totalAmountWithTip);
+
+    //         const paymentMessages = [
+    //             `O valor final da sua conta é: *${formatToBRL(totalAmountWithTip.toFixed(2))}*`,
+    //             'Segue abaixo a chave PIX para pagamento 👇',
+    //             '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
+    //             'Por favor, envie o comprovante! 📄✅',
+    //         ];
+    //         sentMessages.push(...(await this.sendMessageWithDelay(from, paymentMessages, state)));
+
+    //         const updatedContext: ConversationContextDTO = {
+    //             ...state.conversationContext,
+    //             currentStep: ConversationStep.WaitingForPayment,
+    //             paymentStartTime: Date.now(),
+    //             userAmount: totalAmountWithTip,
+    //             tipAmount: totalAmountWithTip - userAmount,
+    //         };
+
+    //         await this.conversationService.updateConversation(state._id.toString(), {
+    //             userId: state.userId,
+    //             conversationContext: updatedContext,
+    //         });
+    //     } else {
+    //         const messages = [
+    //             'Por favor, escolha uma das opções de gorjeta: 3%, 5% ou 7%, ou diga que não deseja dar gorjeta.',
+    //         ];
+    //         sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+    //     }
+
+    //     const transactionData: CreateTransactionDTO = {
+    //         orderId: state.orderId,
+    //         tableId: state.tableId,
+    //         conversationId: state._id.toString(),
+    //         userId: state.userId,
+    //         amountPaid: 0,
+    //         expectedAmount: state.conversationContext.userAmount,
+    //         status: PaymentStatus.Pending,
+    //         initiatedAt: new Date(),
+    //     };
+
+    //     return sentMessages;
+    // }
+
     private async handleExtraTip(
         from: string,
         userMessage: string,
@@ -1098,72 +1192,125 @@ export class WhatsAppService implements OnModuleInit {
         const noTipKeywords = ['não', 'nao', 'n quero', 'não quero', 'nao quero'];
         const tipPercent = parseFloat(userMessage.replace('%', '').replace(',', '.'));
 
-        const userAmount = state.conversationContext.userAmount;
-
-        if (noTipKeywords.some((keyword) => userMessage.includes(keyword)) || tipPercent === 0) {
-            const messages = [
-                'Sem problemas!',
-                `O valor final da sua conta é: *${formatToBRL(userAmount.toFixed(2))}*`,
-                'Segue abaixo a chave PIX para pagamento 👇',
-                '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
-                'Por favor, envie o comprovante! 📄✅',
-            ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
-
-            const updatedContext = {
-                ...state.conversationContext,
-                currentStep: ConversationStep.WaitingForPayment,
-                paymentStartTime: Date.now(),
-            };
-
-            await this.conversationService.updateConversation(state._id.toString(), {
-                userId: state.userId,
-                conversationContext: updatedContext,
-            });
+        if (this.isNoTip(userMessage, noTipKeywords) || tipPercent === 0) {
+            await this.handleNoTip(from, state, sentMessages);
         } else if (tipPercent > 0) {
-            let tipResponse = '';
-            if (tipPercent <= 3) {
-                tipResponse = `Obrigado! 😊 \nVocê escolheu ${tipPercent}%. Cada contribuição conta e sua ajuda é muito apreciada pela nossa equipe! 🙌`;
-            } else if (tipPercent > 3 && tipPercent <= 5) {
-                tipResponse = `Obrigado! 😊 \nVocê escolheu ${tipPercent}%, a mesma opção da maioria das últimas mesas. Sua contribuição faz a diferença para a equipe! 💪`;
-            } else if (tipPercent > 5 && tipPercent <= 7) {
-                tipResponse = `Incrível! 😄 \nVocê escolheu ${tipPercent}%, uma gorjeta generosa! Obrigado por apoiar nossa equipe de maneira tão especial. 💫`;
-            } else {
-                tipResponse = `Obrigado pela sua generosidade! 😊`;
-            }
-            sentMessages.push(tipResponse);
-
-            const totalAmountWithTip = state.conversationContext.userAmount * (1 + tipPercent / 100);
-
-            const paymentMessages = [
-                `O valor final da sua conta é: *${formatToBRL(totalAmountWithTip.toFixed(2))}*`,
-                'Segue abaixo a chave PIX para pagamento 👇',
-                '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
-                'Por favor, envie o comprovante! 📄✅',
-            ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, paymentMessages, state)));
-
-            const updatedContext: ConversationContextDTO = {
-                ...state.conversationContext,
-                currentStep: ConversationStep.WaitingForPayment,
-                paymentStartTime: Date.now(),
-                userAmount: totalAmountWithTip,
-                tipAmount: totalAmountWithTip - userAmount,
-            };
-
-            await this.conversationService.updateConversation(state._id.toString(), {
-                userId: state.userId,
-                conversationContext: updatedContext,
-            });
+            await this.handleTipAmount(from, state, sentMessages, tipPercent);
         } else {
-            const messages = [
-                'Por favor, escolha uma das opções de gorjeta: 3%, 5% ou 7%, ou diga que não deseja dar gorjeta.',
-            ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            await this.handleInvalidTip(from, state, sentMessages);
         }
+
+        await this.createTransaction(state);
 
         return sentMessages;
     }
+
+    private isNoTip(userMessage: string, noTipKeywords: string[]): boolean {
+        return noTipKeywords.some((keyword) => userMessage.includes(keyword));
+    }
+
+    private async handleNoTip(
+        from: string,
+        state: ConversationDto,
+        sentMessages: string[]
+    ): Promise<void> {
+        const userAmount = state.conversationContext.userAmount;
+
+        const messages = [
+            'Sem problemas!',
+            `O valor final da sua conta é: *${formatToBRL(userAmount.toFixed(2))}*`,
+            'Segue abaixo a chave PIX para pagamento 👇',
+            '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
+            'Por favor, envie o comprovante! 📄✅',
+        ];
+        sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+
+        const updatedContext = {
+            ...state.conversationContext,
+            currentStep: ConversationStep.WaitingForPayment,
+            paymentStartTime: Date.now(),
+        };
+
+        await this.conversationService.updateConversation(state._id.toString(), {
+            userId: state.userId,
+            conversationContext: updatedContext,
+        });
+    }
+
+    private async handleTipAmount(
+        from: string,
+        state: ConversationDto,
+        sentMessages: string[],
+        tipPercent: number
+    ): Promise<void> {
+        const userAmount = state.conversationContext.userAmount;
+        const totalAmountWithTip = userAmount * (1 + tipPercent / 100);
+        const tipResponse = this.getTipResponse(tipPercent);
+
+        sentMessages.push(tipResponse);
+
+        const paymentMessages = [
+            `O valor final da sua conta é: *${formatToBRL(totalAmountWithTip.toFixed(2))}*`,
+            'Segue abaixo a chave PIX para pagamento 👇',
+            '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
+            'Por favor, envie o comprovante! 📄✅',
+        ];
+        sentMessages.push(...(await this.sendMessageWithDelay(from, paymentMessages, state)));
+
+        const updatedContext: ConversationContextDTO = {
+            ...state.conversationContext,
+            currentStep: ConversationStep.WaitingForPayment,
+            paymentStartTime: Date.now(),
+            userAmount: totalAmountWithTip,
+            tipAmount: totalAmountWithTip - userAmount,
+        };
+
+        await this.conversationService.updateConversation(state._id.toString(), {
+            userId: state.userId,
+            conversationContext: updatedContext,
+        });
+
+        // As the userAmount will be used to create the transaction, we need to update it in the conversation context
+        state.conversationContext.userAmount = totalAmountWithTip;
+    }
+
+    private async handleInvalidTip(
+        from: string,
+        state: ConversationDto,
+        sentMessages: string[]
+    ): Promise<void> {
+        const messages = [
+            'Por favor, escolha uma das opções de gorjeta: 3%, 5% ou 7%, ou diga que não deseja dar gorjeta.',
+        ];
+        sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+    }
+
+    private getTipResponse(tipPercent: number): string {
+        if (tipPercent <= 3) {
+            return `Obrigado! 😊 \nVocê escolheu ${tipPercent}%. Cada contribuição conta e sua ajuda é muito apreciada pela nossa equipe! 🙌`;
+        } else if (tipPercent > 3 && tipPercent <= 5) {
+            return `Obrigado! 😊 \nVocê escolheu ${tipPercent}%, a mesma opção da maioria das últimas mesas. Sua contribuição faz a diferença para a equipe! 💪`;
+        } else if (tipPercent > 5 && tipPercent <= 7) {
+            return `Incrível! 😄 \nVocê escolheu ${tipPercent}%, uma gorjeta generosa! Obrigado por apoiar nossa equipe de maneira tão especial. 💫`;
+        }
+        return `Obrigado pela sua generosidade! 😊`;
+    }
+
+    private async createTransaction(state: ConversationDto): Promise<void> {
+        const transactionData: CreateTransactionDTO = {
+            orderId: state.orderId,
+            tableId: state.tableId,
+            conversationId: state._id.toString(),
+            userId: state.userId,
+            amountPaid: 0,
+            expectedAmount: state.conversationContext.userAmount,
+            status: PaymentStatus.Pending,
+            initiatedAt: new Date(),
+        };
+
+        await this.transactionService.createTransaction(transactionData);
+    }
+
 
     /**
      * Step 7: Waiting For Payment
@@ -1183,21 +1330,49 @@ export class WhatsAppService implements OnModuleInit {
      * - If provided, processes the payment proof and updates conversation state.
      * - If no proof is received in time, sends a reminder message.
      */
+
     private async handleWaitingForPayment(
         from: string,
         userMessage: string,
         state: ConversationDto,
         message: Message,
-    ): Promise<string[]> {
+    ): Promise<any> {
+        let mediaData: string | null = null;
+        if (message.hasMedia) {
+            const media = await message.downloadMedia();
+            if (media && media.data) {
+                mediaData = media.data;
+            }
+        }
+
+        const paymentMessageData: PaymentProcessorDTO = {
+            from,
+            userMessage,
+            state,
+            message,
+            mediaData,
+        };
+
+        await this.paymentQueue.add(paymentMessageData);
+    }
+
+
+    public async processPayment(paymentData: PaymentProcessorDTO): Promise<string[]> {
+
+        console.log("Payment Data: ", paymentData);
+
+        const { from, userMessage, message, mediaData, state } = paymentData;
+
         const sentMessages: string[] = [];
 
         if (this.utilsService.userSentProof(userMessage, message)) {
-            return await this.processPaymentProof(from, message, state, sentMessages);
+            return await this.processPaymentProof(from, message, mediaData, state, sentMessages);
         } else {
             await this.remindIfNoProof(from, state, sentMessages);
         }
 
         return sentMessages;
+
     }
 
     /**
@@ -1220,27 +1395,21 @@ export class WhatsAppService implements OnModuleInit {
     private async processPaymentProof(
         from: string,
         message: Message,
+        mediaData: string | null,
         state: ConversationDto,
         sentMessages: string[]
     ): Promise<string[]> {
         try {
-            console.log("Message: ", message);
-            if (message.hasMedia) {
-                console.log("Downloading media...");
-                const media = await message.downloadMedia();
-                console.log("Media: ", media);
-                if (media && media.data) {
-                    console.log("Extracting and analyzing payment proof...");
-                    const analysisResult = await this.utilsService.extractAndAnalyzePaymentProof(
-                        media.data,
-                        state,
-                    );
-                    console.log("Analysis result: ", analysisResult);
-                    return await this.handleProofAnalysisResult(from, state, sentMessages, analysisResult);
 
-                }
-            }
-        } catch (error) {
+            const analysisResult = await this.utilsService.extractAndAnalyzePaymentProof(
+                mediaData,
+                state,
+            );
+            return await this.handleProofAnalysisResult(from, state, sentMessages, analysisResult);
+
+
+        }
+        catch (error) {
             this.logger.error('Error processing payment proof:', error);
             const errorMessage = ['Desculpe, não conseguimos processar o comprovante de pagamento. Por favor, envie novamente.'];
             sentMessages.push(...(await this.sendMessageWithDelay(from, errorMessage, state)));
@@ -1271,7 +1440,6 @@ export class WhatsAppService implements OnModuleInit {
         sentMessages: string[],
         paymentData: PaymentProofDTO
     ): Promise<string[]> {
-        console.log("Payment data: ", paymentData);
         const isDuplicate = await this.transactionService.isPaymentProofTransactionIdDuplicate(
             state.userId,
             paymentData.id_transacao,
@@ -1292,7 +1460,8 @@ export class WhatsAppService implements OnModuleInit {
 
         const updateTransactionData: TransactionDTO = {
             ...activeTransaction,
-            ...paymentData,
+            amountPaid: amountPaid,
+            paymentProofs: [paymentData]
         }
 
         if (!isBeneficiaryCorrect) {
@@ -1303,6 +1472,16 @@ export class WhatsAppService implements OnModuleInit {
             await this.handleOverpayment(from, state, sentMessages, updateTransactionData, amountPaid);
         } else {
             await this.handleUnderpayment(from, state, sentMessages, updateTransactionData, amountPaid);
+        }
+
+        // In this region the payment made by the user has already been processed.
+        // As a result, it is the right time to check if the paid amount is greater or equal to the expected amount.
+        // Methods that must be called after the payment has been processed should be placed here.
+        //
+        // 1. Update `amountPaidSoFar` in the `Order` collection + Check if the order is paid
+
+        if (await this.orderService.updateAmountPaidAndCheckOrderStatus(state.orderId, amountPaid)) {
+            await this.tableService.finishPayment(parseInt(state.tableId));
         }
 
         return sentMessages;
@@ -1688,7 +1867,8 @@ export class WhatsAppService implements OnModuleInit {
             console.log("Waiting User Decision. UserId: ", state.userId, "OrderId: ", state.orderId);
             const { data: transactionData } = await this.transactionService.getLastUnderpaidTransactionByUserAndOrder(state.userId, state.orderId);
             console.log("TransactionData: ", transactionData);
-            const remainingAmount = transactionData.expectedAmount - transactionData.amountPaid;
+            // const remainingAmount = transactionData.expectedAmount - transactionData.amountPaid;
+            const remainingAmount = state.conversationContext.userAmount - transactionData.amountPaid;
             const transactionId = transactionData._id.toString();
             state.conversationContext.userAmount = remainingAmount; // Atualiza o valor necessário com o saldo restante
 

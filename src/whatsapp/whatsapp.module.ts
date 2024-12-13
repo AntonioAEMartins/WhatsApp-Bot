@@ -8,11 +8,25 @@ import { ConversationModule } from 'src/conversation/conversation.module';
 import { OrderModule } from 'src/order/order.module';
 import { TransactionModule } from 'src/transaction/transaction.module';
 import { WhatsAppUtils } from './whatsapp.utils';
+import { PaymentProcessor } from './payment.processor';
+import { BullModule } from '@nestjs/bull';
 
 @Module({
-  imports: [TableModule, LangchainModule, UserModule, ConversationModule, OrderModule, TransactionModule],
-  providers: [WhatsAppService, WhatsAppUtils],
+  imports: [
+    TableModule, LangchainModule, UserModule, ConversationModule,
+    OrderModule, TransactionModule,
+    BullModule.forRoot({
+      redis: {
+        host: 'localhost',
+        port: 6379,
+      },
+    }),
+    BullModule.registerQueue({
+      name: 'payment',
+    }),
+  ],
+  providers: [WhatsAppService, WhatsAppUtils, PaymentProcessor],
   controllers: [WhatsAppController],
-  exports: [WhatsAppUtils],
+  exports: [WhatsAppUtils, WhatsAppService],
 })
-export class WhatsAppModule {}
+export class WhatsAppModule { }
