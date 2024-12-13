@@ -45,4 +45,40 @@ export class OrderService {
         }
     }
 
+    async updateAmountPaidAndCheckOrderStatus(
+        id: string,
+        amountPaid: number
+    ): Promise<SimpleResponseDto<{ isPaid: boolean }>> {
+        const order = await this.db.collection("orders").findOne({ _id: new ObjectId(id) });
+
+        if (!order) {
+            throw new HttpException("Order not found", HttpStatus.NOT_FOUND);
+        }
+
+        const orderData = order as BaseOrderDTO;
+
+        const newAmountPaidSoFar = (orderData.amountPaidSoFar || 0) + amountPaid;
+
+        const updateFields: Partial<BaseOrderDTO> = {
+            amountPaidSoFar: newAmountPaidSoFar,
+            updatedAt: new Date(),
+        };
+
+        var isPaid = false;
+
+        if (newAmountPaidSoFar >= orderData.totalAmount) {
+            isPaid = true;
+        }
+
+        await this.db.collection("orders").updateOne(
+            { _id: new ObjectId(id) },
+            { $set: updateFields }
+        );
+        return {
+            msg: "Order updated",
+            data: { isPaid: isPaid },
+        };
+    }
+
+
 }

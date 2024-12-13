@@ -16,4 +16,14 @@ export class OrderController {
     async getOrder(@Param('id') id: string) {
         return await this.orderService.getOrder(id);
     }
+
+    @HttpCode(HttpStatus.OK)
+    @Put(':id')
+    async updateAmountPaidAndCheckOrderStatus(
+        @Param('id') id: string,
+        @Query('amountPaid') amountPaid: number
+    ) {
+        return await this.orderService.updateAmountPaidAndCheckOrderStatus(id, amountPaid);
+    }
+
 }
