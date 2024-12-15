@@ -10,6 +10,7 @@ export class PaymentProcessorDTO {
   state: ConversationDto;
   message: Message;
   mediaData: string;
+  mediaType: string;
 }
 
 
