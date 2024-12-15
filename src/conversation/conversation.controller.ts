@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, HttpException, HttpStatus, Param, Post, Put, Query } from '@nestjs/common';
 import { ConversationService } from './conversation.service';
-import { CreateConversationDto, MessageDTO, UpdateConversationDto } from './dto/conversation.dto';
+import { BaseConversationDto, ConversationContextDTO, ConversationDto, CreateConversationDto, MessageDTO } from './dto/conversation.dto';
 
 @Controller('conversation')
 export class ConversationController {
@@ -49,10 +49,17 @@ export class ConversationController {
     }
 
     @HttpCode(HttpStatus.OK)
-    @Put(':id')
-    async updateConversation(@Param('id') id: string, @Body() userConversation: UpdateConversationDto) {
-        return await this.conversationService.updateConversation(id, userConversation);
+    @Put(':id/context')
+    async updateConversationContext(@Param('id') id: string, @Body() conversationContext: ConversationContextDTO) {
+        return await this.conversationService.updateConversationContext(id, conversationContext);
     }
+
+    @HttpCode(HttpStatus.OK)
+    @Put(':id')
+    async updateConversation(@Param('id') id: string, @Body() conversationData: BaseConversationDto) {
+        return await this.conversationService.updateConversation(id, conversationData);
+    }
+
 
     @HttpCode(HttpStatus.OK)
     @Get(':id')

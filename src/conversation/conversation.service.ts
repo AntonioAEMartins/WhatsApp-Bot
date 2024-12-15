@@ -1,8 +1,9 @@
 import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { MongoClient, Db, WithId, ObjectId } from 'mongodb';
 import { ClientProvider } from 'src/db/db.module';
-import { ConversationDto, ConversationStep, CreateConversationDto, MessageDTO, UpdateConversationDto } from './dto/conversation.dto';
 import { SimpleResponseDto } from 'src/request/request.dto';
+import { ConversationStep } from './dto/conversation.enums';
+import { BaseConversationDto, ConversationContextDTO, ConversationDto, CreateConversationDto, MessageDTO } from './dto/conversation.dto';
 
 @Injectable()
 export class ConversationService {
@@ -13,24 +14,26 @@ export class ConversationService {
         this.mongoClient = clientProvider.getClient();
     }
 
-    async createConversation(userConversation: CreateConversationDto): Promise<SimpleResponseDto<CreateConversationDto>> {
-
+    async createConversation(userConversation: CreateConversationDto): Promise<SimpleResponseDto<{ _id: string }>> {
         const conversationData = {
             ...userConversation,
             conversationContext: {
-                currentStep: ConversationStep.Initial,
-                messages: [],
+                ...userConversation.conversationContext,
+                currentStep: userConversation.conversationContext?.currentStep || ConversationStep.Initial,
+                messages: userConversation.conversationContext?.messages || [],
                 lastMessage: new Date(),
             },
-        }
-
-        const conversation = await this.db.collection("conversations").insertOne(conversationData);
-
+        };
+    
+        const result = await this.db.collection("conversations").insertOne(conversationData);
+    
         return {
             msg: "Conversation created",
-            data: userConversation
-        }
+            data: { _id: result.insertedId.toString() },
+        };
     }
+    
+
 
     async getConversation(id: string): Promise<SimpleResponseDto<ConversationDto>> {
         const conversation = await this.db.collection("conversations").findOne({ _id: new ObjectId(id) });
@@ -116,9 +119,7 @@ export class ConversationService {
         };
     }
 
-
-    async updateConversation(id: string, userConversation: UpdateConversationDto): Promise<SimpleResponseDto<ConversationDto>> {
-        const { conversationContext, orderDetails } = userConversation;
+    async updateConversationContext(id: string, conversationContext: ConversationContextDTO): Promise<SimpleResponseDto<ConversationDto>> {
 
         const existingConversation = await this.db.collection("conversations").findOne({ _id: new ObjectId(id) });
 
@@ -131,17 +132,11 @@ export class ConversationService {
             ...conversationContext,
         };
 
-        const updatedOrderDetails = {
-            ...existingConversation.orderDetails,
-            ...orderDetails,
-        };
-
         const updatedConversation = await this.db.collection("conversations").findOneAndUpdate(
             { _id: new ObjectId(id) },
             {
                 $set: {
                     conversationContext: updatedConversationContext,
-                    orderDetails: updatedOrderDetails,
                     updatedAt: new Date(),
                 },
             },
@@ -151,6 +146,35 @@ export class ConversationService {
         return {
             msg: "Conversation updated",
             data: updatedConversation as ConversationDto,
+        };
+    }
+
+    async updateConversation(id: string, conversationData: BaseConversationDto): Promise<SimpleResponseDto<BaseConversationDto>> {
+        const existingConversation = await this.db.collection("conversations").findOne({ _id: new ObjectId(id) });
+
+        if (!existingConversation) {
+            throw new HttpException("Conversation not found", HttpStatus.NOT_FOUND);
+        }
+
+        const updatedConversation = {
+            ...existingConversation,
+            ...conversationData,
+            updatedAt: new Date(),
+        }
+
+        const conversation = await this.db.collection("conversations").findOneAndUpdate(
+            { _id: new ObjectId(id) },
+            {
+                $set: {
+                    ...updatedConversation,
+                },
+            },
+            { returnDocument: "after" }
+        );
+
+        return {
+            msg: "Conversation updated",
+            data: updatedConversation as BaseConversationDto,
         };
     }
 
@@ -201,7 +225,6 @@ export class ConversationService {
             data: updatedConversation as ConversationDto,
         };
     }
-
 
     async addMessage(id: string, message: MessageDTO): Promise<SimpleResponseDto<ConversationDto>> {
         const conversation = await this.db.collection<ConversationDto>("conversations").findOne({ _id: new ObjectId(id) });
