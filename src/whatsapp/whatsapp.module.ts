@@ -10,11 +10,12 @@ import { TransactionModule } from 'src/transaction/transaction.module';
 import { WhatsAppUtils } from './whatsapp.utils';
 import { PaymentProcessor } from './payment.processor';
 import { BullModule } from '@nestjs/bull';
+import { DatabaseModule } from 'src/db/db.module';
 
 @Module({
   imports: [
     TableModule, LangchainModule, UserModule, ConversationModule,
-    OrderModule, TransactionModule,
+    OrderModule, TransactionModule, DatabaseModule,
     BullModule.forRoot({
       redis: {
         host: 'localhost',

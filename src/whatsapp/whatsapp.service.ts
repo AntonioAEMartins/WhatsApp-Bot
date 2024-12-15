@@ -1,10 +1,7 @@
-// src/whatsapp/whatsapp.service.ts
-
-import { Injectable, OnModuleInit, Logger, OnApplicationShutdown } from '@nestjs/common';
-import { Client, LocalAuth, Message } from 'whatsapp-web.js';
+import { Injectable, OnModuleInit, Logger, Inject, HttpException, HttpStatus } from '@nestjs/common';
+import WAWebJS, { Client, CreateGroupResult, LocalAuth, Message } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
 import { TableService } from 'src/table/table.service';
-import { LangchainService } from 'src/langchain/langchain.service';
 import {
     BaseConversationDto,
     ConversationContextDTO,
@@ -21,18 +18,17 @@ import { ConversationStep, MessageType, PaymentStatus } from 'src/conversation/d
 import { OrderService } from 'src/order/order.service';
 import { CreateOrderDTO } from 'src/order/dto/order.dto';
 import { TransactionService } from 'src/transaction/transaction.service';
-import { BaseTransactionDTO, CreateTransactionDTO, PaymentProofDTO, ReceivedPaymentDTO, TransactionDTO } from 'src/transaction/dto/transaction.dto';
-import { table } from 'console';
+import { CreateTransactionDTO, PaymentProofDTO, TransactionDTO } from 'src/transaction/dto/transaction.dto';
 import { GroupMessageKeys, GroupMessages } from './utils/group.messages.utils';
 import { WhatsAppUtils } from './whatsapp.utils';
 import { PaymentProcessorDTO } from './payment.processor';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
-/**
- * The WhatsAppService class integrates with the WhatsApp Web API to manage conversations.
- * It handles incoming messages from authorized users, updates conversation states,
- * and delegates message handling to factory functions for different conversation steps.
- */
+import { CreateWhatsAppGroupDTO, WhatsAppGroupDTO, WhatsAppParticipantsDTO } from './dto/whatsapp.dto';
+import { Db, ObjectId } from 'mongodb';
+import { ClientProvider } from 'src/db/db.module';
+import { SimpleResponseDto } from 'src/request/request.dto';
+
 @Injectable()
 export class WhatsAppService implements OnModuleInit {
     private client: Client;
@@ -42,13 +38,13 @@ export class WhatsAppService implements OnModuleInit {
 
     constructor(
         private readonly tableService: TableService,
-        private readonly langchainService: LangchainService,
         private readonly userService: UserService,
         private readonly conversationService: ConversationService,
         private readonly orderService: OrderService,
         private readonly transactionService: TransactionService,
         private readonly utilsService: WhatsAppUtils,
-        @InjectQueue('payment') private readonly paymentQueue: Queue
+        @InjectQueue('payment') private readonly paymentQueue: Queue,
+        @Inject('DATABASE_CONNECTION') private db: Db, clientProvider: ClientProvider
     ) {
         this.client = new Client({
             puppeteer: {
@@ -59,36 +55,82 @@ export class WhatsAppService implements OnModuleInit {
                 clientId: 'coti-payments',
             }),
         });
+    } 1
+
+    public async createGroup(createGroupData: CreateWhatsAppGroupDTO): Promise<SimpleResponseDto<WhatsAppGroupDTO>> {
+
+        const { title, participants } = createGroupData;
+
+        if (!this.client) {
+            throw new HttpException('WhatsApp client not initialized', HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+
+        if (!title) {
+            throw new HttpException('Invalid group creation parameters', HttpStatus.BAD_REQUEST);
+        }
+
+        participants.forEach((participant, index) => {
+            if (!participant.includes('@c.us')) {
+                participants[index] = `${participant}@c.us`;
+            }
+        });
+
+        let result: CreateGroupResult | string;
+        try {
+            result = await this.client.createGroup(title, participants);
+        } catch {
+            throw new HttpException('Error creating group on WhatsApp', HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+
+        if (typeof result === 'string') {
+            throw new HttpException(result, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+
+        const group = result;
+
+        const groupParticipants: WhatsAppParticipantsDTO[] = [];
+        for (const participantId in group.participants) {
+            if (Object.prototype.hasOwnProperty.call(group.participants, participantId)) {
+                const p = group.participants[participantId];
+                groupParticipants.push({
+                    id: participantId,
+                    statusCode: p.statusCode,
+                    message: p.message,
+                    isGroupCreator: p.isGroupCreator,
+                    isInviteV4Sent: p.isInviteV4Sent,
+                });
+            }
+        }
+
+        const groupData: WhatsAppGroupDTO = {
+            _id: new ObjectId(),
+            title: group.title,
+            gid: {
+                server: group.gid.server,
+                user: group.gid.user,
+                _serialized: group.gid._serialized,
+            },
+            participants: groupParticipants,
+            type: createGroupData.type,
+        };
+
+        try {
+            await this.db.collection("groups").insertOne(groupData);
+        } catch {
+            throw new HttpException('Error saving group data to database', HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+
+        return {
+            msg: "Group created",
+            data: groupData,
+        };
     }
 
-    /**
-     * Lifecycle hook called when the module is initialized.
-     * Initializes the WhatsApp client unless in debug mode.
-     */
     async onModuleInit() {
         console.log('Initializing WhatsApp Client...');
         this.initializeClient();
     }
 
-    /**
-     * Lifecycle hook called when the module is destroyed.
-     * Ensures the WhatsApp client is properly closed.
-     */
-    // async onApplicationShutdown(signal?: string) {
-    //     console.log('Shutting down WhatsApp Client...', signal);
-    //     if (this.client) {
-    //         try {
-    //             await this.client.destroy();
-    //             this.logger.log('WhatsApp Client and Puppeteer closed successfully.');
-    //         } catch (error) {
-    //             this.logger.error('Error closing WhatsApp Client:', error);
-    //         }
-    //     }
-    // }
-
-    /**
-     * Initializes the WhatsApp client, setting up event listeners for QR code, readiness, and incoming messages.
-     */
     private initializeClient() {
         if (this.debugMode) {
             this.logger.log('DEBUG mode is ON. WhatsApp client will not be initialized.');
@@ -368,7 +410,6 @@ export class WhatsAppService implements OnModuleInit {
                 '👋 *Coti Pagamentos* - Que ótimo! Estamos processando sua comanda, por favor aguarde. 😁',
             );
 
-            this.notifyAttendantsTableStartedPayment(table_id_int); // There is not need to wait for this to finish, as we don't want to block the user
             await this.handleProcessingOrder(from, state, table_id_int);
         } else {
             const step = otherState?.conversationContext?.currentStep;
@@ -480,6 +521,10 @@ export class WhatsAppService implements OnModuleInit {
         let updatedContext = { ...state.conversationContext };
 
         if (positiveResponses.some((response) => userMessage.includes(response))) {
+
+            const table_id_int = parseInt(state.tableId);
+            this.notifyAttendantsTableStartedPayment(table_id_int); // There is not need to wait for this to finish, as we don't want to block the user
+
             const messages = [
                 '👍 Você gostaria de dividir a conta?\n\n1- Sim, em partes iguais\n2- Não',
             ];
@@ -652,198 +697,6 @@ export class WhatsAppService implements OnModuleInit {
 
         return sentMessages;
     }
-
-    /**
-     * Step 5: Waiting for Contacts
-     *
-     * Handles the reception of contact details for splitting the bill and updates the conversation state.
-     *
-     * @param from - The user's unique identifier (WhatsApp ID).
-     * @param state - The current state of the user's conversation.
-     * @param message - The message object containing metadata and contact information.
-     * @returns A Promise that resolves to an array of strings representing the messages sent to the user.
-     * 
-     * Functionality:
-     * - Processes vCard(s) sent by the user for contact information.
-     * - Validates the number of contacts and ensures the required number is met.
-     * - Updates the conversation state to continue processing the split bill.
-     * - Sends appropriate messages for successfully received contacts or prompts for additional contacts.
-     * - Handles errors when processing contact details.
-     */
-
-    // private async handleWaitingForContacts(
-    //     from: string,
-    //     state: ConversationDto,
-    //     message: Message,
-    // ): Promise<string[]> {
-    //     const sentMessages = [];
-
-    //     if (message.type === 'vcard' || message.type === 'multi_vcard') {
-    //         try {
-    //             const vcardDataArray = message.vCards;
-
-    //             const contactsReceivedSoFar = state.conversationContext.splitInfo.contacts.length;
-    //             const totalContactsExpected = state.conversationContext.splitInfo.numberOfPeople - 1;
-    //             const remainingContactsNeeded = totalContactsExpected - contactsReceivedSoFar;
-
-    //             if (remainingContactsNeeded <= 0) {
-    //                 const messages = [
-    //                     'Você já enviou todos os contatos necessários.',
-    //                     'Vamos prosseguir com seu atendimento. 😄',
-    //                 ];
-    //                 sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
-
-    //                 const updatedContext = {
-    //                     ...state.conversationContext,
-    //                     currentStep: ConversationStep.ExtraTip,
-    //                 };
-    //                 await this.conversationService.updateConversation(state._id.toString(), {
-    //                     userId: state.userId,
-    //                     conversationContext: updatedContext,
-    //                 });
-
-    //                 return sentMessages;
-    //             }
-
-    //             const vcardDataArrayLimited = vcardDataArray.slice(0, remainingContactsNeeded);
-
-    //             let responseMessage = `✨ *Contato(s) Recebido(s) com Sucesso!* ✨\n`;
-
-    //             const contactsToAdd = [];
-    //             for (const vcardData of vcardDataArrayLimited) {
-    //                 const vcardName = vcardData.split('FN:')[1]?.split('\n')[0] || 'Nome não informado';
-    //                 let vcardPhone = vcardData.split('waid=')[1]?.split(':')[1]?.split('\n')[0] || '';
-    //                 vcardPhone = vcardPhone.replace(/\D/g, '');
-
-    //                 responseMessage += `\n👤 *Nome:* ${vcardName}\n📞 *Número:* ${vcardPhone}\n`;
-
-    //                 contactsToAdd.push({
-    //                     name: vcardName,
-    //                     phone: vcardPhone,
-    //                     individualAmount: 0,
-    //                 });
-    //             }
-
-    //             state.conversationContext.splitInfo.contacts.push(...contactsToAdd);
-
-    //             if (vcardDataArray.length > remainingContactsNeeded) {
-    //                 responseMessage += `\n⚠️ Você enviou mais contatos do que o necessário.\nApenas o${remainingContactsNeeded > 1 ? 's primeiros' : ''} ${remainingContactsNeeded} contato${remainingContactsNeeded > 1 ? 's' : ''} foi${remainingContactsNeeded > 1 ? 'ram' : ''} considerado${remainingContactsNeeded > 1 ? 's' : ''}.`;
-    //             }
-
-    //             const totalContactsReceived = state.conversationContext.splitInfo.contacts.length;
-    //             const remainingContacts = totalContactsExpected - totalContactsReceived;
-
-    //             if (remainingContacts > 0) {
-    //                 responseMessage += `\n🕒 Aguardando mais *${remainingContacts}* contato${remainingContacts > 1 ? 's' : ''} para continuar.`;
-    //             } else {
-    //                 if (vcardDataArray.length <= totalContactsExpected) {
-    //                     responseMessage += `\n🎉 Todos os contatos foram recebidos! Vamos prosseguir com seu atendimento. 😄`;
-    //                 }
-    //                 state.conversationContext.currentStep = ConversationStep.ExtraTip;
-    //             }
-
-    //             sentMessages.push(...(await this.sendMessageWithDelay(from, [responseMessage], state)));
-
-    //             if (remainingContacts <= 0) {
-    //                 const { data: orderData } = await this.orderService.getOrder(state.orderId);
-    //                 const totalAmount = orderData.totalAmount;
-    //                 const numPeople = state.conversationContext.splitInfo.numberOfPeople;
-    //                 const individualAmount = parseFloat((totalAmount / numPeople).toFixed(2));
-
-    //                 const contacts = state.conversationContext.splitInfo.contacts.map((contact) => ({
-    //                     ...contact,
-    //                     individualAmount,
-    //                 }));
-
-    //                 const updatedConversationData: ConversationContextDTO = {
-    //                     ...state.conversationContext,
-    //                     splitInfo: {
-    //                         ...state.conversationContext.splitInfo,
-    //                         contacts,
-    //                     },
-    //                     currentStep: ConversationStep.ExtraTip,
-    //                     userAmount: individualAmount,
-    //                 };
-
-    //                 const transactionData: CreateTransactionDTO = {
-    //                     orderId: state.orderId,
-    //                     tableId: state.tableId,
-    //                     conversationId: state._id.toString(),
-    //                     userId: state.userId,
-    //                     amountPaid: 0,
-    //                     expectedAmount: individualAmount,
-    //                     status: PaymentStatus.Pending,
-    //                     initiatedAt: new Date(),
-    //                 }
-
-    //                 await this.conversationService.updateConversation(state._id.toString(), {
-    //                     userId: state.userId,
-    //                     conversationContext: updatedConversationData,
-    //                 });
-
-    //                 await this.transactionService.createTransaction(transactionData);
-
-    //                 for (const contact of contacts) {
-    //                     const contactId = `${contact.phone}@c.us`;
-    //                     const messages = [
-    //                         `👋 Coti Pagamentos - Olá! Você foi incluído na divisão do pagamento da comanda *${state.tableId}* no restaurante Cris Parrilla. Aguarde para receber mais informações sobre o pagamento.`,
-    //                         `Sua parte na conta é de *${formatToBRL(individualAmount)}*.`,
-    //                         'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
-    //                     ];
-
-    //                     const contactConversationData: CreateConversationDto = {
-    //                         userId: contactId,
-    //                         tableId: state.tableId,
-    //                         orderId: state.orderId,
-    //                         referrerUserId: state.userId,
-    //                         conversationContext: {
-    //                             currentStep: ConversationStep.ExtraTip,
-    //                             userAmount: individualAmount,
-    //                             totalOrderAmount: totalAmount,
-    //                             messages: [],
-    //                         },
-    //                     };
-
-    //                     const { data: createConversationRequest } = await this.conversationService.createConversation(contactConversationData);
-    //                     const createdConversationId = createConversationRequest._id;
-
-    //                     const transactionData: CreateTransactionDTO = {
-    //                         orderId: state.orderId,
-    //                         tableId: state.tableId,
-    //                         conversationId: createdConversationId,
-    //                         userId: state.userId,
-    //                         amountPaid: 0,
-    //                         expectedAmount: individualAmount,
-    //                         status: PaymentStatus.Pending,
-    //                         initiatedAt: new Date(),
-    //                     }
-
-    //                     await this.transactionService.createTransaction(transactionData);
-
-    //                     await this.sendMessageWithDelay(contactId, messages, state);
-    //                 }
-
-    //                 const messages = [
-    //                     'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
-    //                 ];
-    //                 sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
-    //             }
-    //         } catch (error) {
-    //             this.logger.error('Erro ao processar o(s) vCard(s):', error);
-    //             const errorMessages = [
-    //                 '❌ Ocorreu um erro ao processar o contato. Por favor, tente novamente enviando o contato.',
-    //             ];
-    //             sentMessages.push(...(await this.sendMessageWithDelay(from, errorMessages, state)));
-    //         }
-    //     } else {
-    //         const promptMessages = [
-    //             '📲 Por favor, envie o contato da pessoa com quem deseja dividir a conta.',
-    //         ];
-    //         sentMessages.push(...(await this.sendMessageWithDelay(from, promptMessages, state)));
-    //     }
-
-    //     return sentMessages;
-    // }
 
     private async handleWaitingForContacts(
         from: string,
@@ -1073,115 +926,6 @@ export class WhatsAppService implements OnModuleInit {
         ];
         sentMessages.push(...(await this.sendMessageWithDelay(from, promptMessages, state)));
     }
-
-
-
-    /**
-     * Step 6: Extra Tip
-     *
-     * Handles the user's decision on adding an extra tip and updates the conversation state.
-     *
-     * @param from - The user's unique identifier (WhatsApp ID).
-     * @param userMessage - The text message sent by the user indicating their tip preference.
-     * @param state - The current state of the user's conversation.
-     * @returns A Promise that resolves to an array of strings representing the messages sent to the user.
-     * 
-     * Functionality:
-     * - Processes the user's input to determine the tip percentage.
-     * - Calculates the total amount including the tip, or retains the original amount if no tip is chosen.
-     * - Updates the conversation state to proceed to the payment step.
-     * - Sends appropriate messages to confirm the user's choice and provide payment details.
-     */
-
-    // private async handleExtraTip(
-    //     from: string,
-    //     userMessage: string,
-    //     state: ConversationDto,
-    // ): Promise<string[]> {
-    //     const sentMessages = [];
-    //     const noTipKeywords = ['não', 'nao', 'n quero', 'não quero', 'nao quero'];
-    //     const tipPercent = parseFloat(userMessage.replace('%', '').replace(',', '.'));
-
-    //     const userAmount = state.conversationContext.userAmount;
-
-    //     if (noTipKeywords.some((keyword) => userMessage.includes(keyword)) || tipPercent === 0) {
-    //         const messages = [
-    //             'Sem problemas!',
-    //             `O valor final da sua conta é: *${formatToBRL(userAmount.toFixed(2))}*`,
-    //             'Segue abaixo a chave PIX para pagamento 👇',
-    //             '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
-    //             'Por favor, envie o comprovante! 📄✅',
-    //         ];
-    //         sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
-
-    //         const updatedContext = {
-    //             ...state.conversationContext,
-    //             currentStep: ConversationStep.WaitingForPayment,
-    //             paymentStartTime: Date.now(),
-    //         };
-
-    //         await this.conversationService.updateConversation(state._id.toString(), {
-    //             userId: state.userId,
-    //             conversationContext: updatedContext,
-    //         });
-    //     } else if (tipPercent > 0) {
-    //         let tipResponse = '';
-    //         if (tipPercent <= 3) {
-    //             tipResponse = `Obrigado! 😊 \nVocê escolheu ${tipPercent}%. Cada contribuição conta e sua ajuda é muito apreciada pela nossa equipe! 🙌`;
-    //         } else if (tipPercent > 3 && tipPercent <= 5) {
-    //             tipResponse = `Obrigado! 😊 \nVocê escolheu ${tipPercent}%, a mesma opção da maioria das últimas mesas. Sua contribuição faz a diferença para a equipe! 💪`;
-    //         } else if (tipPercent > 5 && tipPercent <= 7) {
-    //             tipResponse = `Incrível! 😄 \nVocê escolheu ${tipPercent}%, uma gorjeta generosa! Obrigado por apoiar nossa equipe de maneira tão especial. 💫`;
-    //         } else {
-    //             tipResponse = `Obrigado pela sua generosidade! 😊`;
-    //         }
-    //         sentMessages.push(tipResponse);
-
-    //         const totalAmountWithTip = userAmount * (1 + tipPercent / 100);
-    //         console.log("User Amount: ", userAmount);
-    //         console.log("Tip Percent: ", tipPercent);
-    //         console.log("Total Amount With Tip: ", totalAmountWithTip);
-
-    //         const paymentMessages = [
-    //             `O valor final da sua conta é: *${formatToBRL(totalAmountWithTip.toFixed(2))}*`,
-    //             'Segue abaixo a chave PIX para pagamento 👇',
-    //             '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
-    //             'Por favor, envie o comprovante! 📄✅',
-    //         ];
-    //         sentMessages.push(...(await this.sendMessageWithDelay(from, paymentMessages, state)));
-
-    //         const updatedContext: ConversationContextDTO = {
-    //             ...state.conversationContext,
-    //             currentStep: ConversationStep.WaitingForPayment,
-    //             paymentStartTime: Date.now(),
-    //             userAmount: totalAmountWithTip,
-    //             tipAmount: totalAmountWithTip - userAmount,
-    //         };
-
-    //         await this.conversationService.updateConversation(state._id.toString(), {
-    //             userId: state.userId,
-    //             conversationContext: updatedContext,
-    //         });
-    //     } else {
-    //         const messages = [
-    //             'Por favor, escolha uma das opções de gorjeta: 3%, 5% ou 7%, ou diga que não deseja dar gorjeta.',
-    //         ];
-    //         sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
-    //     }
-
-    //     const transactionData: CreateTransactionDTO = {
-    //         orderId: state.orderId,
-    //         tableId: state.tableId,
-    //         conversationId: state._id.toString(),
-    //         userId: state.userId,
-    //         amountPaid: 0,
-    //         expectedAmount: state.conversationContext.userAmount,
-    //         status: PaymentStatus.Pending,
-    //         initiatedAt: new Date(),
-    //     };
-
-    //     return sentMessages;
-    // }
 
     private async handleExtraTip(
         from: string,
@@ -1481,7 +1225,9 @@ export class WhatsAppService implements OnModuleInit {
         // 1. Update `amountPaidSoFar` in the `Order` collection + Check if the order is paid
 
         if (await this.orderService.updateAmountPaidAndCheckOrderStatus(state.orderId, amountPaid)) {
-            await this.tableService.finishPayment(parseInt(state.tableId));
+            const tableId = parseInt(state.tableId);
+            await this.tableService.finishPayment(tableId);
+            this.notifyAttendantsTableFinishedPayment(tableId);
         }
 
         return sentMessages;
@@ -1816,7 +1562,7 @@ export class WhatsAppService implements OnModuleInit {
                 currentStep: ConversationStep.Feedback,
             };
 
-            // TODO: Enviar Mensagem para o time de suporte para processar o estorno
+            this.notifyRefundRequestToAttendants(parseInt(state.tableId), excessAmount);
 
             await this.conversationService.updateConversation(state._id.toString(), {
                 userId: state.userId,
@@ -2118,7 +1864,7 @@ export class WhatsAppService implements OnModuleInit {
      */
 
     private async sendPaymentConfirmationToAttendants(state: ConversationDto): Promise<void> {
-        const groupName = 'Grupo Teste';
+        const groupName = 'Grupo Testee';
 
         try {
             const chats = await this.client.getChats();
@@ -2251,7 +1997,7 @@ export class WhatsAppService implements OnModuleInit {
      */
 
     private async sendAuthenticationStatusToGroup(message: string): Promise<void> {
-        const groupName = 'Grupo Teste';
+        const groupName = 'Grupo Testee';
 
         try {
             const chats = await this.client.getChats();
@@ -2284,7 +2030,7 @@ export class WhatsAppService implements OnModuleInit {
     private async sendProofToGroup(proofMessage: Message): Promise<void> {
         // Nome do grupo
         // const groupName = 'Coti + Cris Parrilla [COMPROVANTES]';
-        const groupName = 'Grupo Teste';
+        const groupName = 'Grupo Testee';
 
         try {
             // Localiza o chat do grupo pelo nome
@@ -2317,21 +2063,56 @@ export class WhatsAppService implements OnModuleInit {
      */
 
     private async notifyAttendantsTableStartedPayment(tableNumber: number): Promise<void> {
-        const groupName = 'Grupo Teste';
+        const groupId = '120363357617310555@g.us'; // ID do grupo fornecido
+
+        this.logger.log(`Notificação de início de pagamentos para a mesa ${tableNumber}`);
+
+        try {
+            // Envia a mensagem para o grupo especificado
+            const message = `👋 *Coti Pagamentos* - A mesa ${tableNumber} iniciou o processo de pagamentos.`;
+            await this.client.sendMessage(groupId, message);
+
+            this.logger.log(`Notificação de início de pagamentos enviada para o grupo: ${groupId}`);
+        } catch (error) {
+            this.logger.error(`Erro ao enviar notificação de início de pagamentos para o grupo ${groupId}: ${error}`);
+        }
+    }
+
+    private async notifyAttendantsTableFinishedPayment(tableNumber: number): Promise<void> {
+        const groupName = 'Grupo Testee';
+
+        try {
+            const chats = await this.client.getChats();
+            const groupChat = chats.find(chat => chat.isGroup && chat.name === groupName);
+            console.log("Group Chat: ", groupChat);
+            if (groupChat) {
+                const message = `👋 *Coti Pagamentos* - Comanda ${tableNumber} Finalizada ✅`;
+                await this.client.sendMessage(groupChat.id._serialized, message);
+                this.logger.log(`Notificação de finalização de pagamentos enviada para o grupo: ${groupName}`);
+            } else {
+                this.logger.warn(`Grupo "${groupName}" não encontrado para notificação de início de pagamentos.`);
+            }
+        } catch (error) {
+            this.logger.error(`Erro ao enviar notificação de finalização de pagamentos para o grupo ${groupName}: ${error}`);
+        }
+    }
+
+    private async notifyRefundRequestToAttendants(tableNumber: number, refundAmount: number): Promise<void> {
+        const groupName = 'Grupo Testee';
 
         try {
             const chats = await this.client.getChats();
             const groupChat = chats.find(chat => chat.isGroup && chat.name === groupName);
 
             if (groupChat) {
-                const message = `👋 *Coti Pagamentos* - A mesa ${tableNumber} iniciou o processo de pagamentos.`;
+                const message = `👋 *Coti Pagamentos* - A mesa ${tableNumber} solicitou um estorno de *${formatToBRL(refundAmount)}*.`;
                 await this.client.sendMessage(groupChat.id._serialized, message);
-                this.logger.log(`Notificação de início de pagamentos enviada para o grupo: ${groupName}`);
+                this.logger.log(`Notificação de estorno enviada para o grupo: ${groupName}`);
             } else {
                 this.logger.warn(`Grupo "${groupName}" não encontrado para notificação de início de pagamentos.`);
             }
         } catch (error) {
-            this.logger.error(`Erro ao enviar notificação de início de pagamentos para o grupo ${groupName}: ${error}`);
+            this.logger.error(`Erro ao enviar notificação de estorno para o grupo ${groupName}: ${error}`);
         }
     }
 
