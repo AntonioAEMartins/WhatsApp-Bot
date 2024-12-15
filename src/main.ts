@@ -17,6 +17,9 @@ async function bootstrap() {
     }),
   );
 
+  // app.enableShutdownHooks();
+
+
   // Swagger setup
   const config = new DocumentBuilder()
     .setTitle('Your API title')

@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { ChatOpenAI } from '@langchain/openai';
 import { AIMessageChunk, HumanMessage } from '@langchain/core/messages';
 import * as fs from 'fs';
-import { PaymentProofDTO } from 'src/conversation/dto/conversation.dto';
+import { PaymentProofDTO } from 'src/transaction/dto/transaction.dto';
 
 @Injectable()
 export class LangchainService {
@@ -67,6 +67,7 @@ export class LangchainService {
 
 
     async extractTextFromPDF(base64Data: string): Promise<any> {
+        console.log("URL: ", this.url);
         const response = await fetch(`${this.url}/extract_text_from_image`, {
             method: 'POST',
             headers: {
