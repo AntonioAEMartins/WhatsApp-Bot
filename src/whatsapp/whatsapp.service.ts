@@ -126,6 +126,26 @@ export class WhatsAppService implements OnModuleInit {
         };
     }
 
+    public async sendGroupMessage(groupId: string, message: string): Promise<SimpleResponseDto<{ message: string }>> {
+
+        this.logger.log(`[sendGroupMessage] Sending message to group ${groupId}: ${message}`);
+
+        if (!groupId.includes('@g.us')) {
+            groupId = `${ groupId }@g.us`;
+        }
+
+        try {
+            await this.client.sendMessage(groupId, message);
+            this.logger.log(`[sendGroupMessage] Message sent to group ${groupId}`);
+            return {
+                msg: 'Message sent',
+                data: { message: message },
+            };
+        } catch (error) {
+            this.logger.error(`[sendGroupMessage] Error sending message to group ${groupId}:`, error);
+        }
+    }
+
     async onModuleInit() {
         console.log('Initializing WhatsApp Client...');
         this.initializeClient();
