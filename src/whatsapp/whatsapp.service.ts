@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit, Logger, Inject, HttpException, HttpStatus } from '@nestjs/common';
-import WAWebJS, { Client, CreateGroupResult, LocalAuth, Message } from 'whatsapp-web.js';
+import WAWebJS, { Client, CreateGroupResult, LocalAuth, Message, MessageMedia } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
 import { TableService } from 'src/table/table.service';
 import {
@@ -126,8 +126,27 @@ export class WhatsAppService implements OnModuleInit {
         };
     }
 
+    public async sendGroupMessage(groupId: string, message: string): Promise<SimpleResponseDto<{ message: string }>> {
+
+        this.logger.log(`[sendGroupMessage] Sending message to group ${groupId}: ${message}`);
+
+        if (!groupId.includes('@g.us')) {
+            groupId = `${groupId}@g.us`;
+        }
+
+        try {
+            await this.client.sendMessage(groupId, message);
+            this.logger.log(`[sendGroupMessage] Message sent to group ${groupId}`);
+            return {
+                msg: 'Message sent',
+                data: { message: message },
+            };
+        } catch (error) {
+            this.logger.error(`[sendGroupMessage] Error sending message to group ${groupId}:`, error);
+        }
+    }
+
     async onModuleInit() {
-        console.log('Initializing WhatsApp Client...');
         this.initializeClient();
     }
 
@@ -326,11 +345,9 @@ export class WhatsAppService implements OnModuleInit {
                 },
             };
             const createdConversation = await this.conversationService.createConversation(newConversation);
-            console.log("New conversation started:", createdConversation);
         } else {
             const conversationId = activeConversationResponse.data._id;
             await this.conversationService.addMessage(conversationId, messageDTO);
-            console.log("Message added to active conversation:", conversationId);
         }
     }
 
@@ -544,6 +561,7 @@ export class WhatsAppService implements OnModuleInit {
                 'Que pena! Lamentamos pelo ocorrido e o atendente responsável irá conversar com você.',
             ];
             sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            this.notifyAttendantsWrongOrder(parseInt(state.tableId));
             updatedContext.currentStep = ConversationStep.IncompleteOrder;
         } else {
             const messages = ['Por favor, responda com 1 para Sim ou 2 para Não.'];
@@ -621,19 +639,6 @@ export class WhatsAppService implements OnModuleInit {
                 userId: state.userId,
                 conversationContext: updatedContext,
             });
-
-            // const transactionData: CreateTransactionDTO = {
-            //     orderId: state.orderId,
-            //     tableId: state.tableId,
-            //     conversationId: state._id.toString(),
-            //     userId: state.userId,
-            //     amountPaid: 0,
-            //     expectedAmount: updatedContext.userAmount,
-            //     status: PaymentStatus.Pending,
-            //     initiatedAt: new Date(),
-            // }
-
-            // await this.transactionService.createTransaction(transactionData);
 
         } else {
             const messages = ['Por favor, responda com 1 para Sim ou 2 para Não.'];
@@ -837,23 +842,10 @@ export class WhatsAppService implements OnModuleInit {
             userAmount: individualAmount,
         };
 
-        // const transactionData: CreateTransactionDTO = {
-        //     orderId: state.orderId,
-        //     tableId: state.tableId,
-        //     conversationId: state._id.toString(),
-        //     userId: state.userId,
-        //     amountPaid: 0,
-        //     expectedAmount: individualAmount,
-        //     status: PaymentStatus.Pending,
-        //     initiatedAt: new Date(),
-        // };
-
         await this.conversationService.updateConversation(state._id.toString(), {
             userId: state.userId,
             conversationContext: updatedConversationData,
         });
-
-        // await this.transactionService.createTransaction(transactionData);
     }
 
     private async notifyIncludedContacts(
@@ -887,18 +879,6 @@ export class WhatsAppService implements OnModuleInit {
             const { data: createConversationRequest } = await this.conversationService.createConversation(contactConversationData);
             const createdConversationId = createConversationRequest._id;
 
-            // const transactionData: CreateTransactionDTO = {
-            //     orderId: state.orderId,
-            //     tableId: state.tableId,
-            //     conversationId: createdConversationId,
-            //     userId: state.userId,
-            //     amountPaid: 0,
-            //     expectedAmount: individualAmount,
-            //     status: PaymentStatus.Pending,
-            //     initiatedAt: new Date(),
-            // };
-
-            // await this.transactionService.createTransaction(transactionData);
             await this.sendMessageWithDelay(contactId, messages, state);
         }
     }
@@ -1082,10 +1062,12 @@ export class WhatsAppService implements OnModuleInit {
         message: Message,
     ): Promise<any> {
         let mediaData: string | null = null;
+        let mediaType: string | null = null;
         if (message.hasMedia) {
             const media = await message.downloadMedia();
             if (media && media.data) {
                 mediaData = media.data;
+                mediaType = media.mimetype;
             }
         }
 
@@ -1095,6 +1077,7 @@ export class WhatsAppService implements OnModuleInit {
             state,
             message,
             mediaData,
+            mediaType
         };
 
         await this.paymentQueue.add(paymentMessageData);
@@ -1103,14 +1086,12 @@ export class WhatsAppService implements OnModuleInit {
 
     public async processPayment(paymentData: PaymentProcessorDTO): Promise<string[]> {
 
-        console.log("Payment Data: ", paymentData);
-
-        const { from, userMessage, message, mediaData, state } = paymentData;
+        const { from, userMessage, message, mediaData, mediaType, state } = paymentData;
 
         const sentMessages: string[] = [];
 
         if (this.utilsService.userSentProof(userMessage, message)) {
-            return await this.processPaymentProof(from, message, mediaData, state, sentMessages);
+            return await this.processPaymentProof(from, message, mediaData, mediaType, state, sentMessages);
         } else {
             await this.remindIfNoProof(from, state, sentMessages);
         }
@@ -1140,6 +1121,7 @@ export class WhatsAppService implements OnModuleInit {
         from: string,
         message: Message,
         mediaData: string | null,
+        mediaType: string | null,
         state: ConversationDto,
         sentMessages: string[]
     ): Promise<string[]> {
@@ -1149,7 +1131,7 @@ export class WhatsAppService implements OnModuleInit {
                 mediaData,
                 state,
             );
-            return await this.handleProofAnalysisResult(from, state, sentMessages, analysisResult);
+            return await this.handleProofAnalysisResult(from, state, sentMessages, analysisResult, mediaData, mediaType);
 
 
         }
@@ -1182,7 +1164,9 @@ export class WhatsAppService implements OnModuleInit {
         from: string,
         state: ConversationDto,
         sentMessages: string[],
-        paymentData: PaymentProofDTO
+        paymentData: PaymentProofDTO,
+        mediaData: string | null,
+        mediaType: string | null,
     ): Promise<string[]> {
         const isDuplicate = await this.transactionService.isPaymentProofTransactionIdDuplicate(
             state.userId,
@@ -1210,7 +1194,13 @@ export class WhatsAppService implements OnModuleInit {
 
         if (!isBeneficiaryCorrect) {
             await this.handleInvalidBeneficiary(from, state, sentMessages);
-        } else if (isAmountCorrect) {
+
+            // There is a need to return here to avoid further processing of the payment.
+
+            return sentMessages;
+        }
+
+        if (isAmountCorrect) {
             await this.handleCorrectPayment(from, state, sentMessages, updateTransactionData);
         } else if (isOverpayment) {
             await this.handleOverpayment(from, state, sentMessages, updateTransactionData, amountPaid);
@@ -1218,11 +1208,14 @@ export class WhatsAppService implements OnModuleInit {
             await this.handleUnderpayment(from, state, sentMessages, updateTransactionData, amountPaid);
         }
 
+        if (mediaData && mediaType) {
+            this.sendProofToGroup(mediaData, mediaType);
+        }
+
+        this.notifyAttendantsPaymentMade(state);
+
         // In this region the payment made by the user has already been processed.
         // As a result, it is the right time to check if the paid amount is greater or equal to the expected amount.
-        // Methods that must be called after the payment has been processed should be placed here.
-        //
-        // 1. Update `amountPaidSoFar` in the `Order` collection + Check if the order is paid
 
         if (await this.orderService.updateAmountPaidAndCheckOrderStatus(state.orderId, amountPaid)) {
             const tableId = parseInt(state.tableId);
@@ -1380,14 +1373,6 @@ export class WhatsAppService implements OnModuleInit {
             updateTransactionData._id.toString(),
             updateTransactionData
         );
-
-        // this.retryRequestWithNotification({
-        //     from: from,
-        //     requestFunction: () => this.tableService.finishPayment(parseInt(state.tableId)),
-        //     state: state,
-        //     sendDelayNotification: false,
-        //     groupMessage: GroupMessages[GroupMessageKeys.FINISH_PAYMENT_ERROR](state.tableId),
-        // })
     }
 
     /**
@@ -1562,7 +1547,7 @@ export class WhatsAppService implements OnModuleInit {
                 currentStep: ConversationStep.Feedback,
             };
 
-            this.notifyRefundRequestToAttendants(parseInt(state.tableId), excessAmount);
+            this.notifyRefundRequest(parseInt(state.tableId), excessAmount);
 
             await this.conversationService.updateConversation(state._id.toString(), {
                 userId: state.userId,
@@ -1609,11 +1594,7 @@ export class WhatsAppService implements OnModuleInit {
         const assistanceResponses = ['2', 'chamar atendente', 'ajuda', 'preciso de ajuda'];
 
         if (positiveResponses.some((response) => userMessage.includes(response))) {
-            // Atualizar o valor necessário para a nova transação
-            console.log("Waiting User Decision. UserId: ", state.userId, "OrderId: ", state.orderId);
             const { data: transactionData } = await this.transactionService.getLastUnderpaidTransactionByUserAndOrder(state.userId, state.orderId);
-            console.log("TransactionData: ", transactionData);
-            // const remainingAmount = transactionData.expectedAmount - transactionData.amountPaid;
             const remainingAmount = state.conversationContext.userAmount - transactionData.amountPaid;
             const transactionId = transactionData._id.toString();
             state.conversationContext.userAmount = remainingAmount; // Atualiza o valor necessário com o saldo restante
@@ -1863,125 +1844,103 @@ export class WhatsAppService implements OnModuleInit {
      * - Logs the status of the message delivery or errors in case of failure.
      */
 
-    private async sendPaymentConfirmationToAttendants(state: ConversationDto): Promise<void> {
-        const groupName = 'Grupo Testee';
+    private async notifyAttendantsPaymentMade(state: ConversationDto): Promise<void> {
+        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
 
         try {
-            const chats = await this.client.getChats();
-            const groupChat = chats.find(chat => chat.isGroup && chat.name === groupName);
+            let message = '';
 
-            if (groupChat) {
-                let message = '';
+            const orderId = state.orderId;
+            const tableId = state.tableId;
 
-                const orderId = state.orderId;
-                const tableId = state.tableId;
+            const { data: orderData } = await this.orderService.getOrder(orderId);
+            const totalAmount = orderData.totalAmount;
 
-                const { data: orderData } = await this.orderService.getOrder(orderId);
+            if (state.conversationContext.splitInfo && state.conversationContext.splitInfo.numberOfPeople > 1) {
+                const splitInfo = state.conversationContext.splitInfo;
+                const numberOfPeople = splitInfo.numberOfPeople;
+                const contacts = splitInfo.contacts;
 
-                const totalAmount = orderData.totalAmount;
+                message += `🧾 *Comanda ${tableId}* está sendo paga de forma compartilhada.\n`;
+                message += `Total a ser pago: ${formatToBRL(totalAmount)}\n\n`;
+                message += `👥 *Divisão entre ${numberOfPeople} pessoas:*\n`;
 
-                if (state.conversationContext.splitInfo && state.conversationContext.splitInfo.numberOfPeople > 1) {
-                    const splitInfo = state.conversationContext.splitInfo;
-                    const numberOfPeople = splitInfo.numberOfPeople;
-                    const contacts = splitInfo.contacts;
+                const currentUserName = 'Cliente';
+                const userAmount = state.conversationContext.userAmount;
 
-                    message += `🧾 *Comanda ${tableId}* está sendo paga de forma compartilhada.\n`;
-                    message += `Total a ser pago: ${formatToBRL(totalAmount)}\n\n`;
-                    message += `👥 *Divisão entre ${numberOfPeople} pessoas:*\n`;
+                const { data: totalPaid } = await this.transactionService.getTotalPaidByUserAndOrderId(state.userId, orderId);
+                const totalPaidByUser = totalPaid.totalPaid || 0;
+                const remainingAmount = userAmount - totalPaidByUser;
 
-                    const currentUserName = 'Cliente';
-                    const userAmount = state.conversationContext.userAmount;
-
-                    const { data: totalPaid } = await this.transactionService.getTotalPaidByUserAndOrderId(state.userId, orderId);
-                    const totalPaidByUser = totalPaid.totalPaid || 0;
-                    const remainingAmount = userAmount - totalPaidByUser;
-
-                    if (remainingAmount > 0) {
-                        // Usuário pagou menos do que deveria
-                        message += `• ${currentUserName} - deveria pagar: ${formatToBRL(userAmount)}, pagou: ${formatToBRL(totalPaidByUser)}, restante: ${formatToBRL(remainingAmount)} - Pendente\n`;
-                    } else if (remainingAmount < 0) {
-                        // Usuário pagou mais do que deveria
-                        message += `• ${currentUserName} - deveria pagar: ${formatToBRL(userAmount)}, pagou: ${formatToBRL(totalPaidByUser)}, excedente: ${formatToBRL(-remainingAmount)} - Pago\n`;
-                    } else {
-                        // Pagamento completo
-                        message += `• ${currentUserName} - pagou: ${formatToBRL(totalPaidByUser)} - Pago\n`;
-                    }
-
-                    // Inclui o status de pagamento de cada contato na divisão
-                    for (const contact of contacts) {
-                        const name = contact.name || 'Cliente';
-                        const contactId = `${contact.phone}@c.us`;
-                        const contactState = this.clientStates.get(contactId);
-
-                        let contactUserAmount = contact.individualAmount;
-                        let totalPaidByContact = 0;
-                        let contactRemainingAmount = contactUserAmount;
-
-                        if (contactState) {
-                            contactUserAmount = contactState.conversationContext.userAmount;
-
-                            const { data: totalPaid } = await this.transactionService.getTotalPaidByUserAndOrderId(contactId, orderId);
-                            totalPaidByContact = totalPaid.totalPaid || 0;
-
-                            contactRemainingAmount = contactUserAmount - totalPaidByContact;
-
-                            if (contactRemainingAmount > 0) {
-                                // Contato pagou menos do que deveria
-                                message += `• ${name} - deveria pagar: ${formatToBRL(contactUserAmount)}, pagou: ${formatToBRL(totalPaidByContact)}, restante: ${formatToBRL(contactRemainingAmount)} - Pendente\n`;
-                            } else if (contactRemainingAmount < 0) {
-                                // Contato pagou mais do que deveria
-                                message += `• ${name} - deveria pagar: ${formatToBRL(contactUserAmount)}, pagou: ${formatToBRL(totalPaidByContact)}, excedente: ${formatToBRL(-contactRemainingAmount)} - Pago\n`;
-                            } else {
-                                // Pagamento completo
-                                message += `• ${name} - pagou: ${formatToBRL(totalPaidByContact)} - Pago\n`;
-                            }
-                        } else {
-                            // Contato ainda não iniciou o processo de pagamento
-                            message += `• ${name} - deveria pagar: ${formatToBRL(contactUserAmount)} - Pendente\n`;
-                        }
-                    }
-
+                if (remainingAmount > 0) {
+                    message += `• ${currentUserName} - deveria pagar: ${formatToBRL(userAmount)}, pagou: ${formatToBRL(totalPaidByUser)}, restante: ${formatToBRL(remainingAmount)} - Pendente\n`;
+                } else if (remainingAmount < 0) {
+                    message += `• ${currentUserName} - deveria pagar: ${formatToBRL(userAmount)}, pagou: ${formatToBRL(totalPaidByUser)}, excedente: ${formatToBRL(-remainingAmount)} - Pago\n`;
                 } else {
-                    // Pagamento único (não dividido)
-                    const currentUserName = 'Cliente'; // Se possível, obtenha o nome real do usuário
-                    const userAmount = state.conversationContext.userAmount;
-
-                    const { data: totalPaid } = await this.transactionService.getTotalPaidByUserAndOrderId(state.userId, orderId);
-                    const totalPaidByUser = totalPaid.totalPaid || 0;
-
-                    const remainingAmount = userAmount - totalPaidByUser;
-
-                    if (remainingAmount > 0) {
-                        // Usuário pagou menos do que deveria
-                        message += `⚠️ *Comanda ${tableId} paga parcialmente*\n`;
-                        message += `• ${currentUserName} deveria pagar: ${formatToBRL(userAmount)}\n`;
-                        message += `• Pagou: ${formatToBRL(totalPaidByUser)}\n`;
-                        message += `• Restante a pagar: ${formatToBRL(remainingAmount)}\n\n`;
-                    } else if (remainingAmount < 0) {
-                        // Usuário pagou mais do que deveria
-                        message += `⚠️ *Comanda ${tableId} paga com valor excedente*\n`;
-                        message += `• ${currentUserName} deveria pagar: ${formatToBRL(userAmount)}\n`;
-                        message += `• Pagou: ${formatToBRL(totalPaidByUser)}\n`;
-                        message += `• Excedente: ${formatToBRL(-remainingAmount)}\n\n`;
-                    } else {
-                        // Pagamento completo
-                        message += `✅ *Comanda ${tableId} paga em totalidade*\n`;
-                        message += `• ${currentUserName} pagou: ${formatToBRL(totalPaidByUser)}\n\n`;
-                    }
-
-                    message += `🔹 *Total da Comanda:* ${formatToBRL(totalAmount)}`;
+                    message += `• ${currentUserName} - pagou: ${formatToBRL(totalPaidByUser)} - Pago\n`;
                 }
 
-                // Envia a mensagem para o grupo
-                await this.client.sendMessage(groupChat.id._serialized, message);
-                this.logger.log(`Mensagem de confirmação de pagamento enviada para o grupo: ${groupName}`);
+                for (const contact of contacts) {
+                    const name = contact.name || 'Cliente';
+                    const contactId = `${contact.phone}@c.us`;
+                    const contactState = this.clientStates.get(contactId);
+
+                    let contactUserAmount = contact.individualAmount;
+                    let totalPaidByContact = 0;
+                    let contactRemainingAmount = contactUserAmount;
+
+                    if (contactState) {
+                        contactUserAmount = contactState.conversationContext.userAmount;
+                        const { data: contactTotalPaid } = await this.transactionService.getTotalPaidByUserAndOrderId(contactId, orderId);
+                        totalPaidByContact = contactTotalPaid.totalPaid || 0;
+                        contactRemainingAmount = contactUserAmount - totalPaidByContact;
+
+                        if (contactRemainingAmount > 0) {
+                            message += `• ${name} - deveria pagar: ${formatToBRL(contactUserAmount)}, pagou: ${formatToBRL(totalPaidByContact)}, restante: ${formatToBRL(contactRemainingAmount)} - Pendente\n`;
+                        } else if (contactRemainingAmount < 0) {
+                            message += `• ${name} - deveria pagar: ${formatToBRL(contactUserAmount)}, pagou: ${formatToBRL(totalPaidByContact)}, excedente: ${formatToBRL(-contactRemainingAmount)} - Pago\n`;
+                        } else {
+                            message += `• ${name} - pagou: ${formatToBRL(totalPaidByContact)} - Pago\n`;
+                        }
+                    } else {
+                        message += `• ${name} - deveria pagar: ${formatToBRL(contactUserAmount)} - Pendente\n`;
+                    }
+                }
+
             } else {
-                this.logger.warn(`Grupo "${groupName}" não encontrado.`);
+                const currentUserName = 'Cliente';
+                const userAmount = state.conversationContext.userAmount;
+
+                const { data: totalPaid } = await this.transactionService.getTotalPaidByUserAndOrderId(state.userId, orderId);
+                const totalPaidByUser = totalPaid.totalPaid || 0;
+
+                const remainingAmount = userAmount - totalPaidByUser;
+
+                if (remainingAmount > 0) {
+                    message += `⚠️ *Comanda ${tableId}* paga parcialmente\n`;
+                    message += `• ${currentUserName} deveria pagar: ${formatToBRL(userAmount)}\n`;
+                    message += `• Pagou: ${formatToBRL(totalPaidByUser)}\n`;
+                    message += `• Restante a pagar: ${formatToBRL(remainingAmount)}\n\n`;
+                } else if (remainingAmount < 0) {
+                    message += `⚠️ *Comanda ${tableId}* paga com valor excedente\n`;
+                    message += `• ${currentUserName} deveria pagar: ${formatToBRL(userAmount)}\n`;
+                    message += `• Pagou: ${formatToBRL(totalPaidByUser)}\n`;
+                    message += `• Excedente: ${formatToBRL(-remainingAmount)}\n\n`;
+                } else {
+                    message += `✅ *Comanda ${tableId}* paga em totalidade\n`;
+                    message += `• ${currentUserName} pagou: ${formatToBRL(totalPaidByUser)}\n\n`;
+                }
+
+                // message += `🔹 *Total da Comanda:* ${formatToBRL(totalAmount)}`;
             }
+
+            await this.client.sendMessage(groupId, message);
+            this.logger.log(`[sendPaymentConfirmationToAttendants] Mensagem de confirmação de pagamento enviada para o grupo: ${groupId}`);
         } catch (error) {
-            this.logger.error(`Erro ao enviar mensagem para o grupo ${groupName}: ${error}`);
+            this.logger.error(`[sendPaymentConfirmationToAttendants] Erro ao enviar mensagem para o grupo ${groupId}: ${error}`);
         }
     }
+
 
     /**
      * Sends an authentication status message to a designated group chat.
@@ -1996,21 +1955,16 @@ export class WhatsAppService implements OnModuleInit {
      * - Handles and logs any errors that occur during the message-sending process.
      */
 
-    private async sendAuthenticationStatusToGroup(message: string): Promise<void> {
-        const groupName = 'Grupo Testee';
+    private async notifyAttendantsAuthenticationStatus(message: string): Promise<void> {
+        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
+
+        this.logger.log(`[notifyAttendantsAuthenticationStatus] Notificação de status de autenticação: ${message}`);
 
         try {
-            const chats = await this.client.getChats();
-            const groupChat = chats.find(chat => chat.isGroup && chat.name === groupName);
-
-            if (groupChat) {
-                await this.client.sendMessage(groupChat.id._serialized, message);
-                this.logger.log(`Mensagem de status de autenticação enviada para o grupo: ${groupName}`);
-            } else {
-                this.logger.warn(`Grupo "${groupName}" não encontrado.`);
-            }
+            await this.client.sendMessage(groupId, message);
+            this.logger.log(`[notifyAttendantsAuthenticationStatus] Mensagem de status de autenticação enviada para o grupo: ${groupId}`);
         } catch (error) {
-            this.logger.error(`Erro ao encaminhar mensagem para o grupo ${groupName}: ${error}`);
+            this.logger.error(`[notifyAttendantsAuthenticationStatus] Erro ao enviar mensagem para o grupo ${groupId}: ${error}`);
         }
     }
 
@@ -2027,25 +1981,33 @@ export class WhatsAppService implements OnModuleInit {
      * - Handles and logs any errors encountered during the forwarding process.
      */
 
-    private async sendProofToGroup(proofMessage: Message): Promise<void> {
-        // Nome do grupo
-        // const groupName = 'Coti + Cris Parrilla [COMPROVANTES]';
-        const groupName = 'Grupo Testee';
+    private async sendProofToGroup(mediaData: string, mediaType: string): Promise<void> {
+        const groupId = '120363379784971558@g.us'; // [HOM][Comprovantes] Cris Parrilla
+
+        this.logger.log(`[sendProofToGroup] Enviando comprovante para o grupo: ${groupId}`);
 
         try {
-            // Localiza o chat do grupo pelo nome
-            const chats = await this.client.getChats();
-            const groupChat = chats.find(chat => chat.isGroup && chat.name === groupName);
+            let fileName: string;
+            let caption = 'Comprovante de pagamento';
 
-            if (groupChat) {
-                // Encaminha a mensagem para o grupo
-                await proofMessage.forward(groupChat.id._serialized);
-                this.logger.log(`Mensagem de comprovante encaminhada para o grupo: ${groupName}`);
+            // Define o nome do arquivo com base no tipo de mídia
+            if (mediaType === 'application/pdf') {
+                fileName = 'comprovante.pdf';
+            } else if (mediaType.startsWith('image/')) {
+                // Poderia ser image/jpeg, image/png, etc.
+                // Ajuste se necessário de acordo com o tipo específico
+                fileName = 'comprovante.jpg';
             } else {
-                this.logger.warn(`Grupo "${groupName}" não encontrado.`);
+                // Caso não reconheça o tipo, utiliza um genérico
+                fileName = 'comprovante.bin';
             }
+
+            const media = new MessageMedia(mediaType, mediaData, fileName);
+            await this.client.sendMessage(groupId, media, { caption });
+
+            this.logger.log(`[sendProofToGroup] Mensagem de comprovante enviada para o grupo: ${groupId}`);
         } catch (error) {
-            this.logger.error(`Erro ao encaminhar mensagem para o grupo ${groupName}: ${error}`);
+            this.logger.error(`[sendProofToGroup] Erro ao enviar mensagem para o grupo ${groupId}: ${error}`);
         }
     }
 
@@ -2063,59 +2025,62 @@ export class WhatsAppService implements OnModuleInit {
      */
 
     private async notifyAttendantsTableStartedPayment(tableNumber: number): Promise<void> {
-        const groupId = '120363357617310555@g.us'; // ID do grupo fornecido
+        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
 
-        this.logger.log(`Notificação de início de pagamentos para a mesa ${tableNumber}`);
+        this.logger.log(`[notifyAttendantsTableStartedPayment] Notificação de início de pagamentos para a mesa ${tableNumber}`);
 
         try {
-            // Envia a mensagem para o grupo especificado
             const message = `👋 *Coti Pagamentos* - A mesa ${tableNumber} iniciou o processo de pagamentos.`;
             await this.client.sendMessage(groupId, message);
-
-            this.logger.log(`Notificação de início de pagamentos enviada para o grupo: ${groupId}`);
+            this.logger.log(`[notifyAttendantsTableStartedPayment] Notificação de início de pagamentos enviada para o grupo: ${groupId}`);
         } catch (error) {
-            this.logger.error(`Erro ao enviar notificação de início de pagamentos para o grupo ${groupId}: ${error}`);
+            this.logger.error(`[notifyAttendantsTableStartedPayment] Erro ao enviar notificação de início de pagamentos para o grupo ${groupId}: ${error}`);
         }
     }
 
     private async notifyAttendantsTableFinishedPayment(tableNumber: number): Promise<void> {
-        const groupName = 'Grupo Testee';
+        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
+
+        this.logger.log(`[notifyAttendantsTableFinishedPayment] Notificação de finalização de pagamentos para a mesa ${tableNumber}`);
 
         try {
-            const chats = await this.client.getChats();
-            const groupChat = chats.find(chat => chat.isGroup && chat.name === groupName);
-            console.log("Group Chat: ", groupChat);
-            if (groupChat) {
-                const message = `👋 *Coti Pagamentos* - Comanda ${tableNumber} Finalizada ✅`;
-                await this.client.sendMessage(groupChat.id._serialized, message);
-                this.logger.log(`Notificação de finalização de pagamentos enviada para o grupo: ${groupName}`);
-            } else {
-                this.logger.warn(`Grupo "${groupName}" não encontrado para notificação de início de pagamentos.`);
-            }
+            const message = `👋 *Coti Pagamentos* - Comanda ${tableNumber} Finalizada ✅`;
+            await this.client.sendMessage(groupId, message);
+            this.logger.log(`[notifyAttendantsTableFinishedPayment] Notificação de finalização de pagamentos enviada para o grupo: ${groupId}`);
+
         } catch (error) {
-            this.logger.error(`Erro ao enviar notificação de finalização de pagamentos para o grupo ${groupName}: ${error}`);
+            this.logger.error(`[notifyAttendantsTableFinishedPayment] Erro ao enviar notificação de finalização de pagamentos para o grupo ${groupId}: ${error}`);
         }
     }
 
-    private async notifyRefundRequestToAttendants(tableNumber: number, refundAmount: number): Promise<void> {
-        const groupName = 'Grupo Testee';
+    private async notifyRefundRequest(tableNumber: number, refundAmount: number): Promise<void> {
+        const groupId = '120363360992675621@g.us'; // [HOM][Reembolso] Cris Parrilla
+
+        this.logger.log(`[notifyRefundRequestToAttendants] Notificação de estorno para a mesa ${tableNumber}`);
 
         try {
-            const chats = await this.client.getChats();
-            const groupChat = chats.find(chat => chat.isGroup && chat.name === groupName);
-
-            if (groupChat) {
-                const message = `👋 *Coti Pagamentos* - A mesa ${tableNumber} solicitou um estorno de *${formatToBRL(refundAmount)}*.`;
-                await this.client.sendMessage(groupChat.id._serialized, message);
-                this.logger.log(`Notificação de estorno enviada para o grupo: ${groupName}`);
-            } else {
-                this.logger.warn(`Grupo "${groupName}" não encontrado para notificação de início de pagamentos.`);
-            }
+            const message = `👋 *Coti Pagamentos* - A mesa ${tableNumber} solicitou um estorno de *${formatToBRL(refundAmount)}*.`;
+            await this.client.sendMessage(groupId, message);
+            this.logger.log(`[notifyRefundRequestToAttendants] Notificação de estorno enviada para o grupo: ${groupId}`);
         } catch (error) {
-            this.logger.error(`Erro ao enviar notificação de estorno para o grupo ${groupName}: ${error}`);
+            this.logger.error(`[notifyRefundRequestToAttendants] Erro ao enviar notificação de estorno para o grupo ${groupId}: ${error}`);
         }
     }
 
+    private async notifyAttendantsWrongOrder(tableNumber: number): Promise<void> {
+        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
+
+        this.logger.log(`[notifyAttendantsWrongOrder] Notificação de pedido errado para a mesa ${tableNumber}`);
+
+        try {
+            const message = `👋 *Coti Pagamentos* - A Mesa ${tableNumber} relatou um problema com os pedidos da comanda.\n\nPor favor, dirija-se à mesa para verificar.`;
+            await this.client.sendMessage(groupId, message);
+            this.logger.log(`[notifyAttendantsWrongOrder] Notificação de pedido errado enviada para o grupo: ${groupId}`);
+        } catch (error) {
+            this.logger.error(`[notifyAttendantsWrongOrder] Erro ao enviar notificação de pedido errado para o grupo ${groupId}: ${error}`);
+        }
+
+    }
 
     /**
      * Extracts the order ID from a given message.
@@ -2238,7 +2203,7 @@ export class WhatsAppService implements OnModuleInit {
                     await new Promise((resolve) => setTimeout(resolve, delayBetweenRetries));
                 }
 
-                this.sendAuthenticationStatusToGroup(groupMessage);
+                this.notifyAttendantsAuthenticationStatus(groupMessage);
             }
         }
 
@@ -2309,8 +2274,6 @@ export class WhatsAppService implements OnModuleInit {
     ): Promise<string[]> {
         const sentMessages = [];
         const messageLogs: MessageDTO[] = []; // Lista para registrar mensagens no banco
-
-        console.log("Delay Message to: ", from, messages);
 
         for (const msg of messages) {
             if (!this.debugMode) {
