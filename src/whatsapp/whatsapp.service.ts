@@ -561,6 +561,7 @@ export class WhatsAppService implements OnModuleInit {
                 'Que pena! Lamentamos pelo ocorrido e o atendente responsável irá conversar com você.',
             ];
             sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            this.notifyAttendantsWrongOrder(parseInt(state.tableId));
             updatedContext.currentStep = ConversationStep.IncompleteOrder;
         } else {
             const messages = ['Por favor, responda com 1 para Sim ou 2 para Não.'];
@@ -2064,6 +2065,21 @@ export class WhatsAppService implements OnModuleInit {
         } catch (error) {
             this.logger.error(`[notifyRefundRequestToAttendants] Erro ao enviar notificação de estorno para o grupo ${groupId}: ${error}`);
         }
+    }
+
+    private async notifyAttendantsWrongOrder(tableNumber: number): Promise<void> {
+        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
+
+        this.logger.log(`[notifyAttendantsWrongOrder] Notificação de pedido errado para a mesa ${tableNumber}`);
+
+        try {
+            const message = `👋 *Coti Pagamentos* - A Mesa ${tableNumber} relatou um problema com os pedidos da comanda.\n\nPor favor, dirija-se à mesa para verificar.`;
+            await this.client.sendMessage(groupId, message);
+            this.logger.log(`[notifyAttendantsWrongOrder] Notificação de pedido errado enviada para o grupo: ${groupId}`);
+        } catch (error) {
+            this.logger.error(`[notifyAttendantsWrongOrder] Erro ao enviar notificação de pedido errado para o grupo ${groupId}: ${error}`);
+        }
+
     }
 
     /**
