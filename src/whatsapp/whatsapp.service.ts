@@ -259,6 +259,10 @@ export class WhatsAppService implements OnModuleInit {
                     await this.handleExtraTip(from, userMessage, state);
                     break;
 
+                case ConversationStep.CollectCPF:
+                    await this.handleCollectCPF(from, userMessage, state);
+                    break;
+
                 case ConversationStep.WaitingForPayment:
                     await this.handleWaitingForPayment(from, userMessage, state, message);
                     break;
@@ -907,6 +911,12 @@ export class WhatsAppService implements OnModuleInit {
         sentMessages.push(...(await this.sendMessageWithDelay(from, promptMessages, state)));
     }
 
+    /**
+     * Step 6: Extra Tip
+     *
+     * Agora, em vez de enviar diretamente a chave PIX e ir para o WaitingForPayment,
+     * o usuário será direcionado para a coleta do CPF (CollectCPF).
+     */
     private async handleExtraTip(
         from: string,
         userMessage: string,
@@ -924,6 +934,7 @@ export class WhatsAppService implements OnModuleInit {
             await this.handleInvalidTip(from, state, sentMessages);
         }
 
+        // Mantém a criação inicial da transação (caso seja necessária para controle)
         await this.createTransaction(state);
 
         return sentMessages;
@@ -933,26 +944,28 @@ export class WhatsAppService implements OnModuleInit {
         return noTipKeywords.some((keyword) => userMessage.includes(keyword));
     }
 
+    /**
+     * Subfluxo: Usuário optou por NÃO dar gorjeta.
+     * Antes, enviávamos a chave PIX e mudávamos para WaitingForPayment.
+     * Agora, mudamos o fluxo para CollectCPF.
+     */
     private async handleNoTip(
         from: string,
         state: ConversationDto,
         sentMessages: string[]
     ): Promise<void> {
-        const userAmount = state.conversationContext.userAmount;
-
+        // Mensagem anterior de confirmação de "sem problemas".
         const messages = [
             'Sem problemas!',
-            `O valor final da sua conta é: *${formatToBRL(userAmount.toFixed(2))}*`,
-            'Segue abaixo a chave PIX para pagamento 👇',
-            '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
-            'Por favor, envie o comprovante! 📄✅',
+            'Por favor, nos informe o seu CPF para que possamos prosseguir com o atendimento. 😊'
         ];
+
         sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
 
+        // Agora definimos o passo para CollectCPF, sem enviar PIX ainda.
         const updatedContext = {
             ...state.conversationContext,
-            currentStep: ConversationStep.WaitingForPayment,
-            paymentStartTime: Date.now(),
+            currentStep: ConversationStep.CollectCPF,
         };
 
         await this.conversationService.updateConversation(state._id.toString(), {
@@ -961,6 +974,11 @@ export class WhatsAppService implements OnModuleInit {
         });
     }
 
+    /**
+     * Subfluxo: Usuário optou por DAR gorjeta (tip).
+     * Anteriormente, enviávamos a chave PIX e alterávamos para WaitingForPayment.
+     * Agora, mudamos o fluxo para CollectCPF.
+     */
     private async handleTipAmount(
         from: string,
         state: ConversationDto,
@@ -971,20 +989,20 @@ export class WhatsAppService implements OnModuleInit {
         const totalAmountWithTip = userAmount * (1 + tipPercent / 100);
         const tipResponse = this.getTipResponse(tipPercent);
 
+        // Mantém a mensagem de agradecimento ou destaque da gorjeta
         sentMessages.push(tipResponse);
 
-        const paymentMessages = [
-            `O valor final da sua conta é: *${formatToBRL(totalAmountWithTip.toFixed(2))}*`,
-            'Segue abaixo a chave PIX para pagamento 👇',
-            '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
-            'Por favor, envie o comprovante! 📄✅',
+        // Em vez de enviar o PIX agora, primeiro solicitamos o CPF.
+        const collectCpfMessage = [
+            'Por favor, nos informe o seu CPF para que possamos prosseguir com o atendimento. 😊'
         ];
-        sentMessages.push(...(await this.sendMessageWithDelay(from, paymentMessages, state)));
+        sentMessages.push(...(await this.sendMessageWithDelay(from, collectCpfMessage, state)));
 
+        // Atualiza o contexto para coletar o CPF em seguida
         const updatedContext: ConversationContextDTO = {
             ...state.conversationContext,
-            currentStep: ConversationStep.WaitingForPayment,
-            paymentStartTime: Date.now(),
+            currentStep: ConversationStep.CollectCPF,
+            // Armazenamos o valor final que o usuário terá de pagar (com gorjeta)
             userAmount: totalAmountWithTip,
             tipAmount: totalAmountWithTip - userAmount,
         };
@@ -994,7 +1012,7 @@ export class WhatsAppService implements OnModuleInit {
             conversationContext: updatedContext,
         });
 
-        // As the userAmount will be used to create the transaction, we need to update it in the conversation context
+        // Ajusta o valor direto no estado (caso seja usado em outras partes do fluxo)
         state.conversationContext.userAmount = totalAmountWithTip;
     }
 
@@ -1019,6 +1037,96 @@ export class WhatsAppService implements OnModuleInit {
         }
         return `Obrigado pela sua generosidade! 😊`;
     }
+
+    private async handleCollectCPF(
+        from: string,
+        userMessage: string,
+        state: ConversationDto,
+    ): Promise<string[]> {
+        const sentMessages: string[] = [];
+        const conversationId = state._id.toString();
+
+        // Remove todos os caracteres que não são dígitos
+        const cpfLimpo = userMessage.replace(/\D/g, '');
+
+        // Verifica se o CPF possui 11 dígitos e é válido matematicamente
+        if (cpfLimpo.length !== 11 || !this.isValidCPF(cpfLimpo)) {
+            const messages = [
+                'Por favor, informe um CPF válido com 11 dígitos. 🧐',
+            ];
+            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            return sentMessages;
+        }
+
+        // Armazena o CPF no contexto, caso desejado
+        const updatedContext = {
+            ...state.conversationContext,
+            currentStep: ConversationStep.WaitingForPayment, // Depois do CPF, vamos para pagamento
+            paymentStartTime: Date.now(),
+            userCPF: cpfLimpo,  // Salva o CPF no contexto, se for útil posteriormente
+        };
+
+        await this.conversationService.updateConversation(conversationId, {
+            userId: state.userId,
+            conversationContext: updatedContext,
+        });
+
+        // Agora enviamos as mesmas mensagens que antes eram enviadas diretamente no handleNoTip ou handleTipAmount
+        const finalAmount = state.conversationContext.userAmount.toFixed(2);
+        const messages = [
+            `O valor final da sua conta é: *${formatToBRL(finalAmount)}*`,
+            'Segue abaixo a chave PIX para pagamento 👇',
+            '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
+            'Por favor, envie o comprovante! 📄✅'
+        ];
+
+        sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+
+        return sentMessages;
+    }
+
+    /**
+     * Valida matematicamente um CPF.
+     * @param cpf - CPF limpo (apenas números)
+     * @returns boolean - Retorna true se o CPF for válido, caso contrário, false.
+     */
+    private isValidCPF(cpf: string): boolean {
+        // Elimina CPFs com todos os dígitos iguais
+        if (/^(\d)\1{10}$/.test(cpf)) {
+            return false;
+        }
+
+        let sum = 0;
+        let remainder;
+
+        // Validação do primeiro dígito verificador
+        for (let i = 1; i <= 9; i++) {
+            sum += parseInt(cpf.substring(i - 1, i)) * (11 - i);
+        }
+        remainder = (sum * 10) % 11;
+        if (remainder === 10 || remainder === 11) {
+            remainder = 0;
+        }
+        if (remainder !== parseInt(cpf.substring(9, 10))) {
+            return false;
+        }
+
+        // Validação do segundo dígito verificador
+        sum = 0;
+        for (let i = 1; i <= 10; i++) {
+            sum += parseInt(cpf.substring(i - 1, i)) * (12 - i);
+        }
+        remainder = (sum * 10) % 11;
+        if (remainder === 10 || remainder === 11) {
+            remainder = 0;
+        }
+        if (remainder !== parseInt(cpf.substring(10, 11))) {
+            return false;
+        }
+
+        return true;
+    }
+
 
     private async createTransaction(state: ConversationDto): Promise<void> {
         const transactionData: CreateTransactionDTO = {
@@ -2207,7 +2315,7 @@ export class WhatsAppService implements OnModuleInit {
             }
         }
 
-        const errorMessage = this.generateStageErrorMessage(state.conversationContext.currentStep);
+        const errorMessage = this.generateStageErrorMessage(state);
         await this.sendMessageWithDelay(from, [errorMessage], state);
 
         throw new Error("Max retries reached");
@@ -2316,9 +2424,11 @@ export class WhatsAppService implements OnModuleInit {
      * - Ensures users are informed about errors in a professional and supportive manner, with a notice that assistance is on the way.
      */
 
-    private generateStageErrorMessage(currentStep: ConversationStep): string {
+    private generateStageErrorMessage(conversation: ConversationDto): string {
+        const currentStep = conversation.conversationContext.currentStep;
         switch (currentStep) {
             case ConversationStep.ProcessingOrder:
+                this.notifyAttendantsAuthenticationStatus(GroupMessages[GroupMessageKeys.ORDER_PROCESSING_ERROR](conversation.tableId));
                 return `Um erro ocorreu ao processar sua comanda.\n\n👨‍💼 Um de nossos atendentes está a caminho para te ajudar!`;
 
             case ConversationStep.ConfirmOrder:

@@ -1,6 +1,6 @@
 // src/whatsapp/dto/conversation.dto.ts
 
-import { IsString, IsNumber, IsArray, IsOptional, ValidateNested, IsEnum, IsDate, IsNotEmpty } from 'class-validator';
+import { IsString, IsNumber, IsArray, IsOptional, ValidateNested, IsEnum, IsDate, IsNotEmpty, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ObjectId } from 'mongodb';
 import { ConversationStep, MessageType, PaymentStatus } from './conversation.enums';
@@ -87,6 +87,11 @@ export class ConversationContextDTO {
   @IsOptional()
   @IsNumber()
   totalOrderAmount?: number;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d+$/, { message: 'cpf deve conter apenas números.' })
+  cpf?: string;
 
   @IsOptional()
   @IsNumber()
