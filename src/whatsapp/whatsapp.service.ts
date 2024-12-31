@@ -1038,12 +1038,6 @@ export class WhatsAppService implements OnModuleInit {
         return `Obrigado pela sua generosidade! 😊`;
     }
 
-    /**
-     * Novo passo: CollectCPF
-     *
-     * Após o usuário informar o CPF, agora sim enviamos a chave PIX e mudamos
-     * o estado para WaitingForPayment, mantendo o "mesmo comportamento" anterior.
-     */
     private async handleCollectCPF(
         from: string,
         userMessage: string,
@@ -1052,9 +1046,11 @@ export class WhatsAppService implements OnModuleInit {
         const sentMessages: string[] = [];
         const conversationId = state._id.toString();
 
+        // Remove todos os caracteres que não são dígitos
         const cpfLimpo = userMessage.replace(/\D/g, '');
 
-        if (cpfLimpo.length !== 11) {
+        // Verifica se o CPF possui 11 dígitos e é válido matematicamente
+        if (cpfLimpo.length !== 11 || !this.isValidCPF(cpfLimpo)) {
             const messages = [
                 'Por favor, informe um CPF válido com 11 dígitos. 🧐',
             ];
@@ -1078,7 +1074,7 @@ export class WhatsAppService implements OnModuleInit {
         // Agora enviamos as mesmas mensagens que antes eram enviadas diretamente no handleNoTip ou handleTipAmount
         const finalAmount = state.conversationContext.userAmount.toFixed(2);
         const messages = [
-            `O valor final da sua conta é: *R$ ${finalAmount}*`,
+            `O valor final da sua conta é: *${formatToBRL(finalAmount)}*`,
             'Segue abaixo a chave PIX para pagamento 👇',
             '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
             'Por favor, envie o comprovante! 📄✅'
@@ -1088,6 +1084,49 @@ export class WhatsAppService implements OnModuleInit {
 
         return sentMessages;
     }
+
+    /**
+     * Valida matematicamente um CPF.
+     * @param cpf - CPF limpo (apenas números)
+     * @returns boolean - Retorna true se o CPF for válido, caso contrário, false.
+     */
+    private isValidCPF(cpf: string): boolean {
+        // Elimina CPFs com todos os dígitos iguais
+        if (/^(\d)\1{10}$/.test(cpf)) {
+            return false;
+        }
+
+        let sum = 0;
+        let remainder;
+
+        // Validação do primeiro dígito verificador
+        for (let i = 1; i <= 9; i++) {
+            sum += parseInt(cpf.substring(i - 1, i)) * (11 - i);
+        }
+        remainder = (sum * 10) % 11;
+        if (remainder === 10 || remainder === 11) {
+            remainder = 0;
+        }
+        if (remainder !== parseInt(cpf.substring(9, 10))) {
+            return false;
+        }
+
+        // Validação do segundo dígito verificador
+        sum = 0;
+        for (let i = 1; i <= 10; i++) {
+            sum += parseInt(cpf.substring(i - 1, i)) * (12 - i);
+        }
+        remainder = (sum * 10) % 11;
+        if (remainder === 10 || remainder === 11) {
+            remainder = 0;
+        }
+        if (remainder !== parseInt(cpf.substring(10, 11))) {
+            return false;
+        }
+
+        return true;
+    }
+
 
     private async createTransaction(state: ConversationDto): Promise<void> {
         const transactionData: CreateTransactionDTO = {
@@ -2276,7 +2315,7 @@ export class WhatsAppService implements OnModuleInit {
             }
         }
 
-        const errorMessage = this.generateStageErrorMessage(state.conversationContext.currentStep);
+        const errorMessage = this.generateStageErrorMessage(state);
         await this.sendMessageWithDelay(from, [errorMessage], state);
 
         throw new Error("Max retries reached");
@@ -2385,9 +2424,11 @@ export class WhatsAppService implements OnModuleInit {
      * - Ensures users are informed about errors in a professional and supportive manner, with a notice that assistance is on the way.
      */
 
-    private generateStageErrorMessage(currentStep: ConversationStep): string {
+    private generateStageErrorMessage(conversation: ConversationDto): string {
+        const currentStep = conversation.conversationContext.currentStep;
         switch (currentStep) {
             case ConversationStep.ProcessingOrder:
+                this.notifyAttendantsAuthenticationStatus(GroupMessages[GroupMessageKeys.ORDER_PROCESSING_ERROR](conversation.tableId));
                 return `Um erro ocorreu ao processar sua comanda.\n\n👨‍💼 Um de nossos atendentes está a caminho para te ajudar!`;
 
             case ConversationStep.ConfirmOrder:
