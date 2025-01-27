@@ -62,6 +62,10 @@ export class FeedbackDTO {
   @IsString()
   @IsOptional()
   detailedFeedback?: string;
+
+  @IsString()
+  @IsOptional()
+  recommendedRestaurants?: string;
 }
 
 export class ConversationContextDTO {
@@ -100,6 +104,14 @@ export class ConversationContextDTO {
   @IsOptional()
   @IsNumber()
   tipAmount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  excessPaymentAmount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  underPaymentAmount?: number;
 
   // Última mensagem registrada
   @IsOptional()
