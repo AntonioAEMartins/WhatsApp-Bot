@@ -10,13 +10,6 @@ import { CreateWhatsAppGroupDTO } from './dto/whatsapp.dto';
 export class WhatsAppController {
   constructor(private readonly whatsappService: WhatsAppService) { }
 
-
-  @HttpCode(200)
-  @Post('send/group/:id/message')
-  async sendGroupMessage(@Param('id') id: string, @Body("message") message: string) {
-    return await this.whatsappService.sendGroupMessage(id, message);
-  }
-
   @HttpCode(200)
   @Post()
   async createGroup(@Body() createGroupData: CreateWhatsAppGroupDTO) {
