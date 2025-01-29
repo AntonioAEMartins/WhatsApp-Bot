@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConversationService } from "src/conversation/conversation.service";
-import { ConversationDto } from "src/conversation/dto/conversation.dto";
+import { ConversationDto, ParticipantDTO } from "src/conversation/dto/conversation.dto";
 import { LangchainService } from "src/langchain/langchain.service";
 import { OrderService } from "src/order/order.service";
 import { TableService } from "src/table/table.service";
@@ -157,10 +157,10 @@ export class WhatsAppUtils {
         remainingContactsNeeded: number;
         totalContactsExpected: number;
     } {
-        const contactsReceivedSoFar = state.conversationContext.splitInfo.contacts.length;
+        const contactsReceivedSoFar = state.conversationContext.splitInfo.participants.length;
         const totalContactsExpected = state.conversationContext.splitInfo.numberOfPeople - 1;
         const remainingContactsNeeded = totalContactsExpected - contactsReceivedSoFar;
-    
+
         return {
             contactsNeeded: totalContactsExpected,
             remainingContactsNeeded,
@@ -186,24 +186,23 @@ export class WhatsAppUtils {
      * - Sanitizes phone numbers by removing non-numeric characters.
      */
 
-    public extractContactsFromVcards(message: Message, remainingContactsNeeded: number): {
-        name: string;
-        phone: string;
-        individualAmount: number;
-    }[] {
+    public extractContactsFromVcards(message: Message, remainingContactsNeeded: number): ParticipantDTO[] {
         const vcardDataArray = message.vCards;
         const vcardDataArrayLimited = vcardDataArray.slice(0, remainingContactsNeeded);
-    
+
         return vcardDataArrayLimited.map((vcardData) => {
             const vcardName = vcardData.split('FN:')[1]?.split('\n')[0] || 'Nome não informado';
             let vcardPhone = vcardData.split('waid=')[1]?.split(':')[1]?.split('\n')[0] || '';
             vcardPhone = vcardPhone.replace(/\D/g, '');
-    
-            return {
+
+            const participant: ParticipantDTO = {
                 name: vcardName,
                 phone: vcardPhone,
-                individualAmount: 0,
-            };
+                expectedAmount: 0,
+                paidAmount: 0
+            }
+
+            return participant;
         });
     }
 
@@ -225,9 +224,9 @@ export class WhatsAppUtils {
 
     public addExtractedContactsToState(
         state: ConversationDto,
-        contacts: { name: string; phone: string; individualAmount: number }[]
+        contacts: ParticipantDTO[]
     ): void {
-        state.conversationContext.splitInfo.contacts.push(...contacts);
+        state.conversationContext.splitInfo.participants.push(...contacts);
     }
 
     /**
@@ -245,6 +244,6 @@ export class WhatsAppUtils {
      */
 
     public haveAllContacts(state: ConversationDto, totalContactsExpected: number): boolean {
-        return state.conversationContext.splitInfo.contacts.length >= totalContactsExpected;
+        return state.conversationContext.splitInfo.participants.length >= totalContactsExpected;
     }
 }
