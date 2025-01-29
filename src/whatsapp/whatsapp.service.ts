@@ -548,7 +548,7 @@ export class WhatsAppService implements OnModuleInit {
             this.notifyWaiterTableStartedPayment(table_id_int); // There is not need to wait for this to finish, as we don't want to block the user
 
             const messages = [
-                '👍 Você gostaria de dividir a conta?\n\n1- Sim, em partes iguais\n2- Não',
+                '👍 Você gostaria de dividir a conta?\n\n1- Não\n2- Sim, em partes iguais',
             ];
             sentMessages.push(...(await this.sendMessageWithDelay({
                 from: from,
@@ -615,36 +615,13 @@ export class WhatsAppService implements OnModuleInit {
         state: ConversationDto,
     ): Promise<string[]> {
         const sentMessages = [];
-        const positiveResponses = [
-            '1',
-            'sim',
-            'quero dividir',
-            'dividir',
-            'sim dividir',
-            'partes iguais',
-        ];
-        const negativeResponses = ['2', 'não', 'nao', 'não quero dividir', 'não dividir'];
 
-        if (positiveResponses.some((response) => userMessage.includes(response))) {
-            const messages = [
-                'Ok, gostaria de dividir entre quantas pessoas?\n\nLembrando que apenas suportamos a divisão em partes iguais.',
-            ];
-            sentMessages.push(...(await this.sendMessageWithDelay({
-                from: from,
-                messages: messages,
-                state: state,
-            })));
+        // Ajuste na lógica: Agora 2 = Sim (Dividir) e 1 = Não (Não dividir)
+        const positiveResponses = ['2', 'sim', 'quero dividir', 'dividir', 'sim dividir', 'partes iguais'];
+        const negativeResponses = ['1', 'não', 'nao', 'não quero dividir', 'não dividir'];
 
-            const updatedContext: ConversationContextDTO = {
-                ...state.conversationContext,
-                currentStep: ConversationStep.SplitBillNumber,
-            };
-
-            await this.conversationService.updateConversation(state._id.toString(), {
-                userId: state.userId,
-                conversationContext: updatedContext,
-            });
-        } else if (negativeResponses.some((response) => userMessage.includes(response))) {
+        if (negativeResponses.some((response) => userMessage.includes(response))) {
+            // Agora "1" significa "Não quero dividir"
             const messages = [
                 'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
             ];
@@ -665,8 +642,30 @@ export class WhatsAppService implements OnModuleInit {
                 conversationContext: updatedContext,
             });
 
+        } else if (positiveResponses.some((response) => userMessage.includes(response))) {
+            // Agora "2" significa "Sim, quero dividir"
+            const messages = [
+                'Ok, gostaria de dividir entre quantas pessoas?\n\nLembrando que apenas suportamos a divisão em partes iguais.',
+            ];
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
+
+            const updatedContext: ConversationContextDTO = {
+                ...state.conversationContext,
+                currentStep: ConversationStep.SplitBillNumber,
+            };
+
+            await this.conversationService.updateConversation(state._id.toString(), {
+                userId: state.userId,
+                conversationContext: updatedContext,
+            });
+
         } else {
-            const messages = ['Por favor, responda com 1 para Sim ou 2 para Não.'];
+            // Caso a resposta seja inválida
+            const messages = ['Por favor, responda com *2 para Sim* ou *1 para Não*.'];
             sentMessages.push(...(await this.sendMessageWithDelay({
                 from: from,
                 messages: messages,
@@ -676,6 +675,7 @@ export class WhatsAppService implements OnModuleInit {
 
         return sentMessages;
     }
+
 
     /**
      * Step 4: Split Bill Number
@@ -1968,9 +1968,10 @@ export class WhatsAppService implements OnModuleInit {
 
         const messages = [
             '👋  Coti Pagamentos - Pagamento Finalizado ✅\n\nEsperamos que sua experiência tenha sido excelente.',
-            'De 0 (nada provável) a 10 (muito provável):\n\nQuanto você recomendaria a Coti para amigos ou colegas?',
-            'Em quais outros restaurantes você gostaria de pagar na mesa com *Coti*?'
+            'Como você se sentiria se não pudesse mais usar o nosso serviço?\n\nEscolha uma das opções abaixo',
+            'a) Muito decepcionado\nb) Um pouco decepcionado\nc) Não faria diferença'
         ];
+
         sentMessages.push(...(await this.sendMessageWithDelay({
             from: from,
             messages: messages,
@@ -2009,7 +2010,6 @@ export class WhatsAppService implements OnModuleInit {
         const sentMessages: string[] = [];
         const conversationId = state._id.toString();
 
-        // Garantir que o feedback exista no contexto.
         if (!state.conversationContext.feedback) {
             state.conversationContext.feedback = new FeedbackDTO();
         }
@@ -2017,130 +2017,55 @@ export class WhatsAppService implements OnModuleInit {
         const feedback = state.conversationContext.feedback;
         let updatedContext: ConversationContextDTO = { ...state.conversationContext };
 
-        // ----------------------------------------------------------
-        // 1) Se ainda não temos um NPS, tentamos interpretá-lo agora
-        // ----------------------------------------------------------
-        if (typeof feedback.npsScore === 'undefined') {
-            const npsScore = parseInt(userMessage, 10);
+        // Se o MHS (mustHaveScore) ainda não foi definido, interpretamos a escolha do usuário
+        if (typeof feedback.mustHaveScore === 'undefined') {
+            const userResponse = userMessage.trim().toLowerCase();
+            const validOptions: Record<string, string> = {
+                'a': 'Muito decepcionado',
+                'b': 'Um pouco decepcionado',
+                'c': 'Não faria diferença',
+            };
 
-            if (isNaN(npsScore) || npsScore < 0 || npsScore > 10) {
-                // Resposta inválida para NPS
-                const messages = ['Por favor, avalie de 0 a 10.'];
-                sentMessages.push(...(await this.sendMessageWithDelay({
-                    from: from,
-                    messages: messages,
-                    state: state,
-                })));
-            } else {
-                // Armazena o NPS no feedback
-                feedback.npsScore = npsScore;
-
-                if (npsScore < 10) {
-                    // Se NPS < 10, perguntar detalhes do feedback
-                    const messages = [
-                        'Agradecemos muito pelo Feedback! O que você sente que faltou para o 10?'
-                    ];
-                    sentMessages.push(...(await this.sendMessageWithDelay({
-                        from: from,
-                        messages: messages,
-                        state: state,
-                    })));
-
-                    updatedContext.currentStep = ConversationStep.FeedbackDetail;
-                } else {
-                    // Se NPS = 10, precisamos pedir sobre restaurantes
-                    // (Mas pode ser que o usuário já tenha escrito algo)
-                    if (!feedback.recommendedRestaurants || feedback.recommendedRestaurants.trim() === '') {
-                        // Pedir ao usuário:
-                        const messages = [
-                            'Muito obrigado pelo seu feedback! 😊',
-                            'Em quais outros restaurantes você gostaria de pagar na mesa com *Coti*?'
-                        ];
-                        sentMessages.push(...(await this.sendMessageWithDelay({
-                            from: from,
-                            messages: messages,
-                            state: state,
-                        })));
-
-                        // Continuamos no mesmo Step = Feedback
-                        // até recebermos as recomendações
-                        updatedContext.currentStep = ConversationStep.Feedback;
-                    } else {
-                        // Se por algum motivo já estiver preenchido, finalizamos
-                        const messages = [
-                            'Muito obrigado pelo seu feedback e indicação de restaurantes! 😊'
-                        ];
-                        sentMessages.push(...(await this.sendMessageWithDelay({
-                            from: from,
-                            messages: messages,
-                            state: state,
-                        })));
-
-                        updatedContext.currentStep = ConversationStep.Completed;
-                    }
-                }
-            }
-
-            // -----------------------------------------------------------------
-            // 2) Se já temos NPS, mas ainda não temos a lista de restaurantes,
-            //    significa que estamos aguardando a resposta do usuário agora.
-            // -----------------------------------------------------------------
-        } else if (
-            (!feedback.recommendedRestaurants || feedback.recommendedRestaurants.trim() === '')
-            && feedback.npsScore === 10
-        ) {
-            // Tentar usar a mensagem como lista de restaurantes
-            const recommended = userMessage.trim();
-            if (!recommended) {
-                // Usuário não respondeu nada, pedir novamente
+            if (!Object.keys(validOptions).includes(userResponse)) {
                 const messages = [
-                    'Por favor, conte em quais outros restaurantes você gostaria de usar a Coti. 😄'
+                    'Por favor, escolha uma das opções abaixo e envie apenas a letra correspondente:',
+                    'a) Muito decepcionado\nb) Um pouco decepcionado\nc) Não faria diferença',
                 ];
                 sentMessages.push(...(await this.sendMessageWithDelay({
-                    from: from,
-                    messages: messages,
-                    state: state,
+                    from,
+                    messages,
+                    state,
                 })));
-                updatedContext.currentStep = ConversationStep.Feedback; // Continuamos no feedback
             } else {
-                // Armazena os restaurantes indicados
-                feedback.recommendedRestaurants = recommended;
+                feedback.mustHaveScore = validOptions[userResponse];
 
-                // Finaliza
+                // Independente da opção (a, b ou c), sempre perguntamos o motivo da escolha
                 const messages = [
-                    'Muito obrigado pelas indicações! 🤩',
-                    'Se precisar de mais alguma coisa, estamos aqui para ajudar. 😄'
+                    'Entendemos. Pode nos contar um pouco mais sobre o motivo da sua escolha?',
                 ];
                 sentMessages.push(...(await this.sendMessageWithDelay({
-                    from: from,
-                    messages: messages,
-                    state: state,
+                    from,
+                    messages,
+                    state,
                 })));
 
-                updatedContext.currentStep = ConversationStep.Completed;
+                updatedContext.currentStep = ConversationStep.FeedbackDetail;
             }
 
-            // ----------------------------------------------------------------
-            // 3) Se já temos NPS e, caso seja <10, não fazemos nada aqui,
-            //    pois o fluxo deve seguir para FeedbackDetail.
-            //    Se for 10 e já temos recommendedRestaurants, já finalizamos.
-            //    Então, se cair aqui, provavelmente o usuário digitou algo irrelevante.
-            // ----------------------------------------------------------------
+            // Caso o mustHaveScore já esteja definido, significa que o usuário voltou aqui fora de contexto
         } else {
-            // Caso o usuário mande algo no handleFeedback fora de contexto:
             const messages = [
                 'Parece que já registramos sua avaliação. Obrigado!',
             ];
             sentMessages.push(...(await this.sendMessageWithDelay({
-                from: from,
-                messages: messages,
-                state: state,
+                from,
+                messages,
+                state,
             })));
-            // Dependendo da sua preferência, você pode finalizar ou manter no mesmo step
+
             updatedContext.currentStep = ConversationStep.Completed;
         }
 
-        // Salvar alterações
         await this.conversationService.updateConversation(conversationId, {
             userId: state.userId,
             conversationContext: updatedContext,
@@ -2148,6 +2073,7 @@ export class WhatsAppService implements OnModuleInit {
 
         return sentMessages;
     }
+
 
 
     /**
@@ -2178,44 +2104,23 @@ export class WhatsAppService implements OnModuleInit {
         if (!state.conversationContext.feedback) {
             state.conversationContext.feedback = new FeedbackDTO();
         }
+
         const feedback = state.conversationContext.feedback;
 
-        // Verificamos se já existe detailedFeedback
-        // ou se ainda estamos esperando a "indicação de restaurantes".
+        // Se ainda não temos o feedback detalhado, significa que o usuário acabou de responder "por quê?"
         if (!feedback.detailedFeedback) {
-            // 1) Salva o feedback detalhado
             feedback.detailedFeedback = userMessage.trim();
 
-            // 2) Pedimos a indicação de restaurantes
-            const messages = [
-                'Obrigado pelo seu feedback detalhado! 😊',
-                'Agora, em quais outros restaurantes você gostaria de pagar na mesa com *Coti*?'
-            ];
-            sentMessages.push(...(await this.sendMessageWithDelay({
-                from: from,
-                messages: messages,
-                state: state,
-            })));
-
-            // Mantemos o step
-            await this.conversationService.updateConversation(conversationId, {
-                userId: state.userId,
-                conversationContext: {
-                    ...state.conversationContext,
-                    currentStep: ConversationStep.FeedbackDetail,
-                },
-            });
-        } else if (!feedback.recommendedRestaurants) {
-            // Aqui, tentamos usar a mensagem como indicação de restaurantes
-            const recommended = userMessage.trim();
-            if (!recommended) {
+            // Verificamos o MHS escolhido (a, b ou c)
+            if (feedback.mustHaveScore === 'Muito decepcionado' || feedback.mustHaveScore === 'Um pouco decepcionado') {
                 const messages = [
-                    'Por favor, conte em quais outros restaurantes você gostaria de usar a Coti. 😄'
+                    'Obrigado pelo seu feedback detalhado!',
+                    'Em quais outros restaurantes você gostaria de pagar na mesa com a Coti?',
                 ];
                 sentMessages.push(...(await this.sendMessageWithDelay({
-                    from: from,
-                    messages: messages,
-                    state: state,
+                    from,
+                    messages,
+                    state,
                 })));
 
                 await this.conversationService.updateConversation(conversationId, {
@@ -2226,17 +2131,15 @@ export class WhatsAppService implements OnModuleInit {
                     },
                 });
             } else {
-                // Armazena a indicação
-                feedback.recommendedRestaurants = recommended;
-
-                // Finaliza
+                // Se o usuário escolheu "Não faria diferença" (opção c), não perguntamos pelos restaurantes
                 const messages = [
-                    'Muito obrigado pelas suas indicações! 🤩',
+                    'Obrigado pelo seu feedback detalhado! 😄',
+                    'Se precisar de algo mais, estamos aqui para ajudar. Até breve!',
                 ];
                 sentMessages.push(...(await this.sendMessageWithDelay({
-                    from: from,
-                    messages: messages,
-                    state: state,
+                    from,
+                    messages,
+                    state,
                 })));
 
                 await this.conversationService.updateConversation(conversationId, {
@@ -2247,15 +2150,61 @@ export class WhatsAppService implements OnModuleInit {
                     },
                 });
             }
+
+            // Se já temos feedback detalhado, mas não temos ainda restaurantes, significa que o usuário escolheu a ou b
+        } else if (
+            !feedback.recommendedRestaurants &&
+            (feedback.mustHaveScore === 'Muito decepcionado' || feedback.mustHaveScore === 'Um pouco decepcionado')
+        ) {
+            const recommended = userMessage.trim();
+            if (!recommended) {
+                const messages = [
+                    'Por favor, conte em quais outros restaurantes você gostaria de usar a Coti.',
+                ];
+                sentMessages.push(...(await this.sendMessageWithDelay({
+                    from,
+                    messages,
+                    state,
+                })));
+
+                await this.conversationService.updateConversation(conversationId, {
+                    userId: state.userId,
+                    conversationContext: {
+                        ...state.conversationContext,
+                        currentStep: ConversationStep.FeedbackDetail,
+                    },
+                });
+            } else {
+                feedback.recommendedRestaurants = recommended;
+
+                const messages = [
+                    'Muito obrigado pelas suas indicações! 🤩',
+                    'Se precisar de mais alguma coisa, estamos aqui para ajudar. 😄',
+                ];
+                sentMessages.push(...(await this.sendMessageWithDelay({
+                    from,
+                    messages,
+                    state,
+                })));
+
+                await this.conversationService.updateConversation(conversationId, {
+                    userId: state.userId,
+                    conversationContext: {
+                        ...state.conversationContext,
+                        currentStep: ConversationStep.Completed,
+                    },
+                });
+            }
+
+            // Caso já tenhamos tanto o feedback detalhado quanto (opcionalmente) os restaurantes
         } else {
-            // Se já temos os dois campos (detailedFeedback e recommendedRestaurants), finalizamos
             const messages = [
                 'Tudo certo! Obrigado mais uma vez pelo feedback!',
             ];
             sentMessages.push(...(await this.sendMessageWithDelay({
-                from: from,
-                messages: messages,
-                state: state,
+                from,
+                messages,
+                state,
             })));
 
             await this.conversationService.updateConversation(conversationId, {

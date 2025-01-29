@@ -62,7 +62,7 @@ export class SplitInfoDTO {
 export class FeedbackDTO {
   @IsNumber()
   @IsOptional()
-  npsScore?: number;
+  mustHaveScore?: string;
 
   @IsString()
   @IsOptional()
