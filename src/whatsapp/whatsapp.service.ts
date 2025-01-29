@@ -9,6 +9,8 @@ import {
     CreateConversationDto,
     FeedbackDTO,
     MessageDTO,
+    ParticipantDTO,
+    SplitInfoDTO,
 } from '../conversation/dto/conversation.dto';
 import { formatToBRL } from './utils/currency.utils';
 import { ConversationService } from 'src/conversation/conversation.service';
@@ -28,6 +30,17 @@ import { CreateWhatsAppGroupDTO, WhatsAppGroupDTO, WhatsAppParticipantsDTO } fro
 import { Db, ObjectId } from 'mongodb';
 import { ClientProvider } from 'src/db/db.module';
 import { SimpleResponseDto } from 'src/request/request.dto';
+
+
+interface SendMessageParams {
+    from: string;
+    messages: string[];
+    state: ConversationDto;
+    delay?: number;
+    toAttendants?: boolean;
+    media?: MessageMedia;
+    caption?: string;
+}
 
 @Injectable()
 export class WhatsAppService implements OnModuleInit {
@@ -124,26 +137,6 @@ export class WhatsAppService implements OnModuleInit {
             msg: "Group created",
             data: groupData,
         };
-    }
-
-    public async sendGroupMessage(groupId: string, message: string): Promise<SimpleResponseDto<{ message: string }>> {
-
-        this.logger.log(`[sendGroupMessage] Sending message to group ${groupId}: ${message}`);
-
-        if (!groupId.includes('@g.us')) {
-            groupId = `${groupId}@g.us`;
-        }
-
-        try {
-            await this.client.sendMessage(groupId, message);
-            this.logger.log(`[sendGroupMessage] Message sent to group ${groupId}`);
-            return {
-                msg: 'Message sent',
-                data: { message: message },
-            };
-        } catch (error) {
-            this.logger.error(`[sendGroupMessage] Error sending message to group ${groupId}:`, error);
-        }
     }
 
     async onModuleInit() {
@@ -488,7 +481,11 @@ export class WhatsAppService implements OnModuleInit {
             const orderDetails = orderData.details;
 
             const messages = [orderMessage, '👍 A sua comanda está correta?\n\n1- Sim\n2- Não'];
-            const sentMessages = await this.sendMessageWithDelay(from, messages, state);
+            const sentMessages = await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            });
 
             const createOrderData: CreateOrderDTO = {
                 tableId: tableId,
@@ -543,17 +540,21 @@ export class WhatsAppService implements OnModuleInit {
         const positiveResponses = ['1', 'sim', 'correta', 'está correta', 'sim está correta'];
         const negativeResponses = ['2', 'não', 'nao', 'não está correta', 'incorreta', 'não correta'];
 
-        let updatedContext = { ...state.conversationContext };
+        let updatedContext: ConversationContextDTO = { ...state.conversationContext };
 
         if (positiveResponses.some((response) => userMessage.includes(response))) {
 
             const table_id_int = parseInt(state.tableId);
-            this.notifyAttendantsTableStartedPayment(table_id_int); // There is not need to wait for this to finish, as we don't want to block the user
+            this.notifyWaiterTableStartedPayment(table_id_int); // There is not need to wait for this to finish, as we don't want to block the user
 
             const messages = [
                 '👍 Você gostaria de dividir a conta?\n\n1- Sim, em partes iguais\n2- Não',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
 
             this.retryRequestWithNotification({
                 from: from,
@@ -568,12 +569,20 @@ export class WhatsAppService implements OnModuleInit {
             const messages = [
                 'Que pena! Lamentamos pelo ocorrido e o atendente responsável irá conversar com você.',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
-            this.notifyAttendantsWrongOrder(parseInt(state.tableId));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
+            this.notifyWaiterWrongOrder(parseInt(state.tableId));
             updatedContext.currentStep = ConversationStep.IncompleteOrder;
         } else {
             const messages = ['Por favor, responda com 1 para Sim ou 2 para Não.'];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
         }
 
         // Update the conversation in the database
@@ -620,9 +629,13 @@ export class WhatsAppService implements OnModuleInit {
             const messages = [
                 'Ok, gostaria de dividir entre quantas pessoas?\n\nLembrando que apenas suportamos a divisão em partes iguais.',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
 
-            const updatedContext = {
+            const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.SplitBillNumber,
             };
@@ -635,9 +648,13 @@ export class WhatsAppService implements OnModuleInit {
             const messages = [
                 'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
 
-            const updatedContext = {
+            const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.ExtraTip,
                 userAmount: this.calculateUserAmount(state),
@@ -650,7 +667,11 @@ export class WhatsAppService implements OnModuleInit {
 
         } else {
             const messages = ['Por favor, responda com 1 para Sim ou 2 para Não.'];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
         }
 
         return sentMessages;
@@ -684,12 +705,15 @@ export class WhatsAppService implements OnModuleInit {
         const numPeople = numPeopleMatch ? parseInt(numPeopleMatch[0]) : NaN;
 
         if (!isNaN(numPeople) && numPeople > 1) {
-            const updatedContext = {
+
+            const splitInfo: SplitInfoDTO = {
+                numberOfPeople: numPeople,
+                participants: [],
+            };
+
+            const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
-                splitInfo: {
-                    numberOfPeople: numPeople,
-                    contacts: [],
-                },
+                splitInfo: splitInfo,
                 currentStep: ConversationStep.WaitingForContacts,
             };
 
@@ -697,15 +721,27 @@ export class WhatsAppService implements OnModuleInit {
                 '😊 Perfeito! Agora, nos envie o contato das pessoas com quem deseja dividir a conta, ou peça para que elas escaneiem o QR Code da sua mesa. 📲',
                 'Assim que recebermos todos os contatos, daremos continuidade ao atendimento e deixaremos tudo prontinho para vocês! 🎉',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
 
             await this.conversationService.updateConversation(state._id.toString(), {
                 userId: state.userId,
                 conversationContext: updatedContext,
             });
+
+            await this.orderService.updateOrder(state.orderId, {
+                splitInfo: splitInfo,
+            });
         } else {
             const messages = ['Por favor, informe um número válido de pessoas (maior que 1).'];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
         }
 
         return sentMessages;
@@ -741,7 +777,7 @@ export class WhatsAppService implements OnModuleInit {
                     totalContactsExpected,
                     state
                 );
-                sentMessages.push(...(await this.sendMessageWithDelay(from, [responseMessage], state)));
+                sentMessages.push(...(await this.sendMessageWithDelay({ from: from, messages: [responseMessage], state: state })));
 
                 if (this.utilsService.haveAllContacts(state, totalContactsExpected)) {
                     await this.finalizeContactsReception(from, state, sentMessages);
@@ -766,9 +802,13 @@ export class WhatsAppService implements OnModuleInit {
             'Você já enviou todos os contatos necessários.',
             'Vamos prosseguir com seu atendimento. 😄',
         ];
-        sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+        sentMessages.push(...(await this.sendMessageWithDelay({
+            from: from,
+            messages: messages,
+            state: state,
+        })));
 
-        const updatedContext = {
+        const updatedContext: ConversationContextDTO = {
             ...state.conversationContext,
             currentStep: ConversationStep.ExtraTip,
         };
@@ -782,7 +822,7 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     private buildContactsReceivedMessage(
-        contacts: { name: string; phone: string; individualAmount: number }[],
+        contacts: ParticipantDTO[],
         totalVcardsSent: number,
         remainingContactsNeeded: number,
         totalContactsExpected: number,
@@ -798,7 +838,7 @@ export class WhatsAppService implements OnModuleInit {
             responseMessage += `\n⚠️ Você enviou mais contatos do que o necessário.\nApenas o${remainingContactsNeeded > 1 ? 's primeiros' : ''} ${remainingContactsNeeded} contato${remainingContactsNeeded > 1 ? 's' : ''} foi${remainingContactsNeeded > 1 ? 'ram' : ''} considerado${remainingContactsNeeded > 1 ? 's' : ''}.`;
         }
 
-        const totalContactsReceived = state.conversationContext.splitInfo.contacts.length;
+        const totalContactsReceived = state.conversationContext.splitInfo.participants.length;
         const remainingContacts = totalContactsExpected - totalContactsReceived;
 
         if (remainingContacts > 0) {
@@ -825,9 +865,12 @@ export class WhatsAppService implements OnModuleInit {
 
         await this.updateConversationAndCreateTransaction(state, individualAmount, totalAmount);
         await this.notifyIncludedContacts(state, totalAmount, individualAmount);
-        sentMessages.push(...(await this.sendMessageWithDelay(from, [
-            'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
-        ], state)));
+        // this.notifyWaiterTableSplit(state);
+        sentMessages.push(...(await this.sendMessageWithDelay({
+            from: from, messages: [
+                'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
+            ], state: state
+        })));
     }
 
     private async updateConversationAndCreateTransaction(
@@ -835,24 +878,45 @@ export class WhatsAppService implements OnModuleInit {
         individualAmount: number,
         totalAmount: number,
     ): Promise<void> {
-        const contacts = state.conversationContext.splitInfo.contacts.map((contact) => ({
+        const contacts = state.conversationContext.splitInfo.participants.map((contact) => ({
             ...contact,
-            individualAmount,
+            expectedAmount: individualAmount,
         }));
+
+        // add the contact of the user itself
+        contacts.push({
+            name: state.userId,
+            phone: state.userId,
+            expectedAmount: individualAmount,
+            paidAmount: 0,
+        });
+
+        const splitInfo: SplitInfoDTO = {
+            numberOfPeople: state.conversationContext.splitInfo.numberOfPeople,
+            participants: contacts.map((contact) => ({
+                name: contact.name,
+                phone: contact.phone,
+                expectedAmount: contact.expectedAmount,
+                paidAmount: 0,
+            }))
+        }
 
         const updatedConversationData: ConversationContextDTO = {
             ...state.conversationContext,
-            splitInfo: {
-                ...state.conversationContext.splitInfo,
-                contacts,
-            },
+            splitInfo: splitInfo,
             currentStep: ConversationStep.ExtraTip,
             userAmount: individualAmount,
         };
 
+
+
         await this.conversationService.updateConversation(state._id.toString(), {
             userId: state.userId,
             conversationContext: updatedConversationData,
+        });
+
+        await this.orderService.updateOrder(state.orderId, {
+            splitInfo: splitInfo,
         });
     }
 
@@ -861,7 +925,7 @@ export class WhatsAppService implements OnModuleInit {
         totalAmount: number,
         individualAmount: number
     ): Promise<void> {
-        const contacts = state.conversationContext.splitInfo.contacts;
+        const contacts = state.conversationContext.splitInfo.participants;
 
         for (const contact of contacts) {
             const contactId = `${contact.phone}@c.us`;
@@ -887,7 +951,7 @@ export class WhatsAppService implements OnModuleInit {
             const { data: createConversationRequest } = await this.conversationService.createConversation(contactConversationData);
             const createdConversationId = createConversationRequest._id;
 
-            await this.sendMessageWithDelay(contactId, messages, state);
+            await this.sendMessageWithDelay({ from: contactId, messages: messages, state: state });
         }
     }
 
@@ -901,7 +965,7 @@ export class WhatsAppService implements OnModuleInit {
         const errorMessages = [
             '❌ Ocorreu um erro ao processar o contato. Por favor, tente novamente enviando o contato.',
         ];
-        sentMessages.push(...(await this.sendMessageWithDelay(from, errorMessages, state)));
+        sentMessages.push(...(await this.sendMessageWithDelay({ from: from, messages: errorMessages, state: state })));
     }
 
     private async promptForContact(
@@ -912,7 +976,7 @@ export class WhatsAppService implements OnModuleInit {
         const promptMessages = [
             '📲 Por favor, envie o contato da pessoa com quem deseja dividir a conta.',
         ];
-        sentMessages.push(...(await this.sendMessageWithDelay(from, promptMessages, state)));
+        sentMessages.push(...(await this.sendMessageWithDelay({ from: from, messages: promptMessages, state: state })));
     }
 
     /**
@@ -964,10 +1028,14 @@ export class WhatsAppService implements OnModuleInit {
             'Por favor, nos informe o seu CPF para a emissão da nota fiscal. 😊'
         ];
 
-        sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+        sentMessages.push(...(await this.sendMessageWithDelay({
+            from: from,
+            messages: messages,
+            state: state,
+        })));
 
         // Agora definimos o passo para CollectCPF, sem enviar PIX ainda.
-        const updatedContext = {
+        const updatedContext: ConversationContextDTO = {
             ...state.conversationContext,
             currentStep: ConversationStep.CollectCPF,
         };
@@ -1000,7 +1068,7 @@ export class WhatsAppService implements OnModuleInit {
         const collectCpfMessage = [
             'Por favor, nos informe o seu CPF para a emissão da nota fiscal. 😊'
         ];
-        sentMessages.push(...(await this.sendMessageWithDelay(from, collectCpfMessage, state)));
+        sentMessages.push(...(await this.sendMessageWithDelay({ from, messages: collectCpfMessage, state })));
 
         // Atualiza o contexto para coletar o CPF em seguida
         const updatedContext: ConversationContextDTO = {
@@ -1028,7 +1096,11 @@ export class WhatsAppService implements OnModuleInit {
         const messages = [
             'Por favor, escolha uma das opções de gorjeta: 3%, 5% ou 7%, ou diga que não deseja dar gorjeta.',
         ];
-        sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+        sentMessages.push(...(await this.sendMessageWithDelay({
+            from: from,
+            messages: messages,
+            state: state,
+        })));
     }
 
     private getTipResponse(tipPercent: number): string {
@@ -1058,16 +1130,20 @@ export class WhatsAppService implements OnModuleInit {
             const messages = [
                 'Por favor, informe um CPF válido com 11 dígitos. 🧐',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
             return sentMessages;
         }
 
         // Armazena o CPF no contexto, caso desejado
-        const updatedContext = {
+        const updatedContext: ConversationContextDTO = {
             ...state.conversationContext,
             currentStep: ConversationStep.WaitingForPayment, // Depois do CPF, vamos para pagamento
             paymentStartTime: Date.now(),
-            userCPF: cpfLimpo,  // Salva o CPF no contexto, se for útil posteriormente
+            cpf: cpfLimpo,  // Salva o CPF no contexto, se for útil posteriormente
         };
 
         await this.conversationService.updateConversation(conversationId, {
@@ -1084,7 +1160,11 @@ export class WhatsAppService implements OnModuleInit {
             'Por favor, envie o comprovante! 📄✅'
         ];
 
-        sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+        sentMessages.push(...(await this.sendMessageWithDelay({
+            from: from,
+            messages: messages,
+            state: state,
+        })));
 
         return sentMessages;
     }
@@ -1250,7 +1330,7 @@ export class WhatsAppService implements OnModuleInit {
         catch (error) {
             this.logger.error('Error processing payment proof:', error);
             const errorMessage = ['Desculpe, não conseguimos processar o comprovante de pagamento. Por favor, envie novamente.'];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, errorMessage, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({ from, messages: errorMessage, state })));
         }
         return sentMessages;
     }
@@ -1312,6 +1392,8 @@ export class WhatsAppService implements OnModuleInit {
             return sentMessages;
         }
 
+        console.log('isAmountCorrect', isAmountCorrect);
+
         if (isAmountCorrect) {
             await this.handleCorrectPayment(from, state, sentMessages, updateTransactionData);
         } else if (isOverpayment) {
@@ -1320,19 +1402,28 @@ export class WhatsAppService implements OnModuleInit {
             await this.handleUnderpayment(from, state, sentMessages, updateTransactionData, amountPaid);
         }
 
+        console.log('mediaData',);
+
         if (mediaData && mediaType) {
-            this.sendProofToGroup(mediaData, mediaType);
+            this.sendProofToGroup(mediaData, mediaType, state);
         }
 
-        this.notifyAttendantsPaymentMade(state);
+        console.log('sentMessages');
 
         // In this region the payment made by the user has already been processed.
         // As a result, it is the right time to check if the paid amount is greater or equal to the expected amount.
 
-        if (await this.orderService.updateAmountPaidAndCheckOrderStatus(state.orderId, amountPaid)) {
+        const updateAmountResponse = await this.orderService.updateAmountPaidAndCheckOrderStatus(state.orderId, amountPaid, state.userId)
+        const isFullPaymentAmountPaid = updateAmountResponse.data.isPaid
+
+
+        if (isFullPaymentAmountPaid) {
             const tableId = parseInt(state.tableId);
             await this.tableService.finishPayment(tableId);
-            this.notifyAttendantsTableFinishedPayment(tableId);
+            this.notifyWaiterTablePaymentComplete(state);
+        } else {
+            console.log('not yet');
+            this.notifyWaiterPaymentMade(state);
         }
 
         return sentMessages;
@@ -1361,7 +1452,7 @@ export class WhatsAppService implements OnModuleInit {
         const duplicateMessage = [
             '❌ Este comprovante de pagamento já foi recebido anteriormente.\n\n Por favor, verifique seu comprovante.',
         ];
-        sentMessages.push(...(await this.sendMessageWithDelay(from, duplicateMessage, state)));
+        sentMessages.push(...(await this.sendMessageWithDelay({ from, messages: duplicateMessage, state })));
     }
 
     /**
@@ -1389,9 +1480,13 @@ export class WhatsAppService implements OnModuleInit {
             const messages = [
                 'Notamos que ainda não recebemos seu comprovante. Se precisar de ajuda ou tiver algum problema, estamos aqui para ajudar! 👍',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
 
-            const updatedContext = {
+            const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.PaymentReminder,
             };
@@ -1425,9 +1520,9 @@ export class WhatsAppService implements OnModuleInit {
         const errorMessage = [
             '❌ O comprovante enviado apresenta inconsistências.\n👨‍💼 Um de nossos atendentes está a caminho para te ajudar!',
         ];
-        sentMessages.push(...(await this.sendMessageWithDelay(from, errorMessage, state)));
+        sentMessages.push(...(await this.sendMessageWithDelay({ from, messages: errorMessage, state })));
 
-        const updatedContext = {
+        const updatedContext: ConversationContextDTO = {
             ...state.conversationContext,
             currentStep: ConversationStep.PaymentInvalid,
         };
@@ -1465,7 +1560,11 @@ export class WhatsAppService implements OnModuleInit {
             '*👋  Coti Pagamentos* - Pagamento Confirmado ✅\n\nEsperamos que sua experiência tenha sido excelente.',
             'Por favor, informe o seu número de telefone com DDD para enviarmos o comprovante de pagamento.\n\n💡 Exemplo: (11) 91234-5678',
         ];
-        sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+        sentMessages.push(...(await this.sendMessageWithDelay({
+            from: from,
+            messages: messages,
+            state: state,
+        })));
 
         // Em vez de ir para Feedback, vamos agora para CollectPhoneNumber
         const updatedContext: ConversationContextDTO = {
@@ -1517,7 +1616,11 @@ export class WhatsAppService implements OnModuleInit {
             `❌ Você pagou um valor superior ao necessário: *${formatToBRL(amountPaid)}* ao invés de *${formatToBRL(state.conversationContext.userAmount)}*.`,
             `Você deseja:\n\n1- Adicionar o valor excedente de *${formatToBRL(excessAmount)}* como gorjeta.\n2- Solicitar o estorno do valor extra.`,
         ];
-        sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+        sentMessages.push(...(await this.sendMessageWithDelay({
+            from: from,
+            messages: messages,
+            state: state,
+        })));
 
         const updatedContext: ConversationContextDTO = {
             ...state.conversationContext,
@@ -1567,7 +1670,7 @@ export class WhatsAppService implements OnModuleInit {
             `❌ O valor pago foi de ${formatToBRL(amountPaid)} enquanto deveria ser ${formatToBRL(state.conversationContext.userAmount)}.`,
             `💰 Você ainda tem um saldo de ${formatToBRL(remainingAmount)} a pagar.\n\nEscolha uma das opções abaixo:\n1- Pagar valor restante.\n2- Chamar um atendente.`,
         ];
-        sentMessages.push(...(await this.sendMessageWithDelay(from, errorMessage, state)));
+        sentMessages.push(...(await this.sendMessageWithDelay({ from, messages: errorMessage, state })));
 
         const updatedContext: ConversationContextDTO = {
             ...state.conversationContext,
@@ -1625,7 +1728,11 @@ export class WhatsAppService implements OnModuleInit {
                 `🎉 Muito obrigado pela sua generosidade! O valor de *${formatToBRL(excessAmount)}* foi adicionado como gorjeta. 😊`,
                 'Por favor, informe o seu número de telefone com DDD para enviarmos o comprovante de pagamento.\n\n💡 Exemplo: (11) 91234-5678',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
 
             const alreadyPaidTip = state.conversationContext.tipAmount || 0;
 
@@ -1647,9 +1754,13 @@ export class WhatsAppService implements OnModuleInit {
                 `Entendido! Vamos providenciar o estorno do valor excedente de *${formatToBRL(excessAmount)}* o mais rápido possível. 💸`,
                 'Por favor, informe o seu número de telefone com DDD para enviarmos o comprovante de pagamento.\n\n💡 Exemplo: (11) 91234-5678',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
 
-            const updatedContext = {
+            const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.CollectPhoneNumber, // Em vez de Feedback
             };
@@ -1666,7 +1777,11 @@ export class WhatsAppService implements OnModuleInit {
                 'Desculpe, não entendi sua resposta.',
                 `Por favor, escolha uma das opções abaixo:\n1- Adicionar o valor excedente como gorjeta.\n2- Solicitar o estorno do valor extra.`,
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
         }
 
         return sentMessages;
@@ -1715,10 +1830,14 @@ export class WhatsAppService implements OnModuleInit {
                 '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
                 'Por favor, envie o comprovante! 📄✅',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
 
             // Atualizar o estado no banco de dados
-            const updatedContext = {
+            const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.WaitingForPayment,
             };
@@ -1747,10 +1866,14 @@ export class WhatsAppService implements OnModuleInit {
             const messages = [
                 '👨‍💼 Um de nossos atendentes já está a caminho para te ajudar!',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
 
             // Atualizar o estado no banco de dados
-            const updatedContext = {
+            const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.PaymentAssistance,
             };
@@ -1766,7 +1889,11 @@ export class WhatsAppService implements OnModuleInit {
                 '1- Pagar valor restante.\n' +
                 '2- Chamar um atendente.',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
         }
 
         return sentMessages;
@@ -1819,14 +1946,18 @@ export class WhatsAppService implements OnModuleInit {
             const messages = [
                 'Por favor, informe um número de telefone com DDD (mínimo 10 dígitos). 🧐',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
             return sentMessages;
         }
 
         // Se o telefone for "válido" (de acordo com nossa checagem simples), podemos salvar no contexto ou no banco
-        const updatedContext = {
+        const updatedContext: ConversationContextDTO = {
             ...state.conversationContext,
-            userPhone: phoneClean, // Armazenamos como quiser, ex.: 
+            phone: phoneClean, // Armazenamos como quiser, ex.: 
             currentStep: ConversationStep.Feedback,
         };
 
@@ -1840,7 +1971,11 @@ export class WhatsAppService implements OnModuleInit {
             'De 0 (nada provável) a 10 (muito provável):\n\nQuanto você recomendaria a Coti para amigos ou colegas?',
             'Em quais outros restaurantes você gostaria de pagar na mesa com *Coti*?'
         ];
-        sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+        sentMessages.push(...(await this.sendMessageWithDelay({
+            from: from,
+            messages: messages,
+            state: state,
+        })));
 
         return sentMessages;
     }
@@ -1880,7 +2015,7 @@ export class WhatsAppService implements OnModuleInit {
         }
 
         const feedback = state.conversationContext.feedback;
-        let updatedContext = { ...state.conversationContext };
+        let updatedContext: ConversationContextDTO = { ...state.conversationContext };
 
         // ----------------------------------------------------------
         // 1) Se ainda não temos um NPS, tentamos interpretá-lo agora
@@ -1891,7 +2026,11 @@ export class WhatsAppService implements OnModuleInit {
             if (isNaN(npsScore) || npsScore < 0 || npsScore > 10) {
                 // Resposta inválida para NPS
                 const messages = ['Por favor, avalie de 0 a 10.'];
-                sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+                sentMessages.push(...(await this.sendMessageWithDelay({
+                    from: from,
+                    messages: messages,
+                    state: state,
+                })));
             } else {
                 // Armazena o NPS no feedback
                 feedback.npsScore = npsScore;
@@ -1901,7 +2040,11 @@ export class WhatsAppService implements OnModuleInit {
                     const messages = [
                         'Agradecemos muito pelo Feedback! O que você sente que faltou para o 10?'
                     ];
-                    sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+                    sentMessages.push(...(await this.sendMessageWithDelay({
+                        from: from,
+                        messages: messages,
+                        state: state,
+                    })));
 
                     updatedContext.currentStep = ConversationStep.FeedbackDetail;
                 } else {
@@ -1913,7 +2056,11 @@ export class WhatsAppService implements OnModuleInit {
                             'Muito obrigado pelo seu feedback! 😊',
                             'Em quais outros restaurantes você gostaria de pagar na mesa com *Coti*?'
                         ];
-                        sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+                        sentMessages.push(...(await this.sendMessageWithDelay({
+                            from: from,
+                            messages: messages,
+                            state: state,
+                        })));
 
                         // Continuamos no mesmo Step = Feedback
                         // até recebermos as recomendações
@@ -1923,7 +2070,11 @@ export class WhatsAppService implements OnModuleInit {
                         const messages = [
                             'Muito obrigado pelo seu feedback e indicação de restaurantes! 😊'
                         ];
-                        sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+                        sentMessages.push(...(await this.sendMessageWithDelay({
+                            from: from,
+                            messages: messages,
+                            state: state,
+                        })));
 
                         updatedContext.currentStep = ConversationStep.Completed;
                     }
@@ -1945,7 +2096,11 @@ export class WhatsAppService implements OnModuleInit {
                 const messages = [
                     'Por favor, conte em quais outros restaurantes você gostaria de usar a Coti. 😄'
                 ];
-                sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+                sentMessages.push(...(await this.sendMessageWithDelay({
+                    from: from,
+                    messages: messages,
+                    state: state,
+                })));
                 updatedContext.currentStep = ConversationStep.Feedback; // Continuamos no feedback
             } else {
                 // Armazena os restaurantes indicados
@@ -1956,7 +2111,11 @@ export class WhatsAppService implements OnModuleInit {
                     'Muito obrigado pelas indicações! 🤩',
                     'Se precisar de mais alguma coisa, estamos aqui para ajudar. 😄'
                 ];
-                sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+                sentMessages.push(...(await this.sendMessageWithDelay({
+                    from: from,
+                    messages: messages,
+                    state: state,
+                })));
 
                 updatedContext.currentStep = ConversationStep.Completed;
             }
@@ -1972,7 +2131,11 @@ export class WhatsAppService implements OnModuleInit {
             const messages = [
                 'Parece que já registramos sua avaliação. Obrigado!',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
             // Dependendo da sua preferência, você pode finalizar ou manter no mesmo step
             updatedContext.currentStep = ConversationStep.Completed;
         }
@@ -2028,7 +2191,11 @@ export class WhatsAppService implements OnModuleInit {
                 'Obrigado pelo seu feedback detalhado! 😊',
                 'Agora, em quais outros restaurantes você gostaria de pagar na mesa com *Coti*?'
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
 
             // Mantemos o step
             await this.conversationService.updateConversation(conversationId, {
@@ -2045,7 +2212,11 @@ export class WhatsAppService implements OnModuleInit {
                 const messages = [
                     'Por favor, conte em quais outros restaurantes você gostaria de usar a Coti. 😄'
                 ];
-                sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+                sentMessages.push(...(await this.sendMessageWithDelay({
+                    from: from,
+                    messages: messages,
+                    state: state,
+                })));
 
                 await this.conversationService.updateConversation(conversationId, {
                     userId: state.userId,
@@ -2062,7 +2233,11 @@ export class WhatsAppService implements OnModuleInit {
                 const messages = [
                     'Muito obrigado pelas suas indicações! 🤩',
                 ];
-                sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+                sentMessages.push(...(await this.sendMessageWithDelay({
+                    from: from,
+                    messages: messages,
+                    state: state,
+                })));
 
                 await this.conversationService.updateConversation(conversationId, {
                     userId: state.userId,
@@ -2077,7 +2252,11 @@ export class WhatsAppService implements OnModuleInit {
             const messages = [
                 'Tudo certo! Obrigado mais uma vez pelo feedback!',
             ];
-            sentMessages.push(...(await this.sendMessageWithDelay(from, messages, state)));
+            sentMessages.push(...(await this.sendMessageWithDelay({
+                from: from,
+                messages: messages,
+                state: state,
+            })));
 
             await this.conversationService.updateConversation(conversationId, {
                 userId: state.userId,
@@ -2091,6 +2270,40 @@ export class WhatsAppService implements OnModuleInit {
         return sentMessages;
     }
 
+    private async notifyWaiterTableSplit(state: ConversationDto): Promise<void> {
+        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
+        const message = `👋 Coti Pagamentos - Mesa ${state.tableId} irá compartilhar o pagamento`;
+        // await this.sendMessageWithDelay({ from: groupId, messages: [message], state: null, toAttendants: true });
+        await this.sendMessageWithDelay({ from: groupId, messages: [message], state, toAttendants: true });
+    }
+
+    private async notifyWaiterTablePaymentComplete(state: ConversationDto): Promise<void> {
+        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
+
+        try {
+            const { orderId, tableId } = state;
+
+            const { data: orderData } = await this.orderService.getOrder(orderId);
+            const { totalAmount, amountPaidSoFar = 0 } = orderData;
+
+            const extraTip = amountPaidSoFar - totalAmount;
+            let tipMessage = '';
+
+            if (extraTip > 0) {
+                tipMessage = extraTip > 15
+                    ? `MAIS R$ ${extraTip.toFixed(2)} de Gorjeta 🎉`
+                    : `MAIS ${((extraTip / totalAmount) * 100).toFixed(2)}% de Gorjeta 🎉`;
+            }
+
+            const message = tipMessage
+                ? `*👋 Coti Pagamentos* - ${tipMessage}\n\nA mesa ${tableId} pagou com sucesso 🚀`
+                : `*👋 Coti Pagamentos* - Mesa ${tableId} pagou com sucesso 🚀`;
+
+            await this.sendMessageWithDelay({ from: groupId, messages: [message], state, toAttendants: true });
+        } catch (error) {
+            this.logger.error(`[notifyWaiterTablePaymentComplete] Error: ${error}`);
+        }
+    }
 
 
     /**
@@ -2109,100 +2322,79 @@ export class WhatsAppService implements OnModuleInit {
      * - Logs the status of the message delivery or errors in case of failure.
      */
 
-    private async notifyAttendantsPaymentMade(state: ConversationDto): Promise<void> {
+    private async notifyWaiterPaymentMade(state: ConversationDto): Promise<void> {
         const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
 
         try {
-            let message = '';
-
-            const orderId = state.orderId;
-            const tableId = state.tableId;
+            const { orderId, tableId, conversationContext: { userAmount }, userId } = state;
 
             const { data: orderData } = await this.orderService.getOrder(orderId);
+            const isThereManyParticipants = orderData.splitInfo && orderData.splitInfo.numberOfPeople > 1;
+
             const totalAmount = orderData.totalAmount;
+            const amountPaidSoFar = orderData.amountPaidSoFar || 0;
+            const remainingAmount = totalAmount - amountPaidSoFar;
 
-            if (state.conversationContext.splitInfo && state.conversationContext.splitInfo.numberOfPeople > 1) {
-                const splitInfo = state.conversationContext.splitInfo;
-                const numberOfPeople = splitInfo.numberOfPeople;
-                const contacts = splitInfo.contacts;
+            let message = "";
 
-                message += `🧾 *Comanda ${tableId}* está sendo paga de forma compartilhada.\n`;
-                message += `Total a ser pago: ${formatToBRL(totalAmount)}\n\n`;
-                message += `👥 *Divisão entre ${numberOfPeople} pessoas:*\n`;
-
-                const currentUserName = 'Cliente';
-                const userAmount = state.conversationContext.userAmount;
-
-                const { data: totalPaid } = await this.transactionService.getTotalPaidByUserAndOrderId(state.userId, orderId);
+            if (!isThereManyParticipants) {
+                const { data: totalPaid } = await this.transactionService.getTotalPaidByUserAndOrderId(userId, orderId);
                 const totalPaidByUser = totalPaid.totalPaid || 0;
-                const remainingAmount = userAmount - totalPaidByUser;
+                const userRemainingAmount = userAmount - totalPaidByUser;
 
-                if (remainingAmount > 0) {
-                    message += `• ${currentUserName} - deveria pagar: ${formatToBRL(userAmount)}, pagou: ${formatToBRL(totalPaidByUser)}, restante: ${formatToBRL(remainingAmount)} - Pendente\n`;
-                } else if (remainingAmount < 0) {
-                    message += `• ${currentUserName} - deveria pagar: ${formatToBRL(userAmount)}, pagou: ${formatToBRL(totalPaidByUser)}, excedente: ${formatToBRL(-remainingAmount)} - Pago\n`;
-                } else {
-                    message += `• ${currentUserName} - pagou: ${formatToBRL(totalPaidByUser)} - Pago\n`;
+                message += `*👋 Coti Pagamentos* - STATUS Mesa ${tableId}\n\n`;
+                message += `Divisão de pagamento: Não\n`;
+                message += `Deveria pagar: R$ ${totalAmount.toFixed(2)}\n`;
+                message += `Pagou: R$ ${totalPaidByUser.toFixed(2)}`;
+
+                if (userRemainingAmount > 0) {
+                    message += `\nRestante: R$ ${userRemainingAmount.toFixed(2)}`;
+                } else if (userRemainingAmount < 0) {
+                    message += `\nExcedente: R$ ${Math.abs(userRemainingAmount).toFixed(2)}`;
                 }
 
-                for (const contact of contacts) {
-                    const name = contact.name || 'Cliente';
-                    const contactId = `${contact.phone}@c.us`;
-                    const contactState = this.clientStates.get(contactId);
-
-                    let contactUserAmount = contact.individualAmount;
-                    let totalPaidByContact = 0;
-                    let contactRemainingAmount = contactUserAmount;
-
-                    if (contactState) {
-                        contactUserAmount = contactState.conversationContext.userAmount;
-                        const { data: contactTotalPaid } = await this.transactionService.getTotalPaidByUserAndOrderId(contactId, orderId);
-                        totalPaidByContact = contactTotalPaid.totalPaid || 0;
-                        contactRemainingAmount = contactUserAmount - totalPaidByContact;
-
-                        if (contactRemainingAmount > 0) {
-                            message += `• ${name} - deveria pagar: ${formatToBRL(contactUserAmount)}, pagou: ${formatToBRL(totalPaidByContact)}, restante: ${formatToBRL(contactRemainingAmount)} - Pendente\n`;
-                        } else if (contactRemainingAmount < 0) {
-                            message += `• ${name} - deveria pagar: ${formatToBRL(contactUserAmount)}, pagou: ${formatToBRL(totalPaidByContact)}, excedente: ${formatToBRL(-contactRemainingAmount)} - Pago\n`;
-                        } else {
-                            message += `• ${name} - pagou: ${formatToBRL(totalPaidByContact)} - Pago\n`;
-                        }
-                    } else {
-                        message += `• ${name} - deveria pagar: ${formatToBRL(contactUserAmount)} - Pendente\n`;
-                    }
-                }
-
-            } else {
-                const currentUserName = 'Cliente';
-                const userAmount = state.conversationContext.userAmount;
-
-                const { data: totalPaid } = await this.transactionService.getTotalPaidByUserAndOrderId(state.userId, orderId);
-                const totalPaidByUser = totalPaid.totalPaid || 0;
-
-                const remainingAmount = userAmount - totalPaidByUser;
-
-                if (remainingAmount > 0) {
-                    message += `⚠️ *Comanda ${tableId}* paga parcialmente\n`;
-                    message += `• ${currentUserName} deveria pagar: ${formatToBRL(userAmount)}\n`;
-                    message += `• Pagou: ${formatToBRL(totalPaidByUser)}\n`;
-                    message += `• Restante a pagar: ${formatToBRL(remainingAmount)}\n\n`;
-                } else if (remainingAmount < 0) {
-                    message += `⚠️ *Comanda ${tableId}* paga com valor excedente\n`;
-                    message += `• ${currentUserName} deveria pagar: ${formatToBRL(userAmount)}\n`;
-                    message += `• Pagou: ${formatToBRL(totalPaidByUser)}\n`;
-                    message += `• Excedente: ${formatToBRL(-remainingAmount)}\n\n`;
-                } else {
-                    message += `✅ *Comanda ${tableId}* paga em totalidade\n`;
-                    message += `• ${currentUserName} pagou: ${formatToBRL(totalPaidByUser)}\n\n`;
-                }
-
-                // message += `🔹 *Total da Comanda:* ${formatToBRL(totalAmount)}`;
+                await this.sendMessageWithDelay({ from: groupId, messages: [message], state, toAttendants: true });
+                return;
             }
 
-            await this.client.sendMessage(groupId, message);
-            this.logger.log(`[sendPaymentConfirmationToAttendants] Mensagem de confirmação de pagamento enviada para o grupo: ${groupId}`);
+            // Handling multiple participants
+            const splitInfo = orderData.splitInfo;
+            const numberOfPeople = splitInfo.numberOfPeople;
+            const participants: ParticipantDTO[] = splitInfo.participants;
+
+            message += `*👋 Coti Pagamentos* - STATUS Mesa ${tableId}\n\n`;
+            message += `Total: R$ ${totalAmount.toFixed(2)}\n\n`;
+            message += `👥 Divisão entre ${numberOfPeople} pessoa${numberOfPeople > 1 ? 's' : ''}:\n\n`;
+
+            participants.forEach(participant => {
+                const { expectedAmount, paidAmount } = participant;
+                let name = participant.name || 'Cliente';
+
+                if (name.includes('@c.us')) {
+                    name = 'Cliente';
+                }
+
+                let participantMessage = `*${name} - `;
+
+                // if (paidAmount > expectedAmount) {
+                //     // const excess = paidAmount - expectedAmount;
+                //     // participantMessage += `Pago 🟢\nExcedente: R$ ${excess.toFixed(2)}\n\n`;
+                // } 
+                if (paidAmount >= expectedAmount) {
+                    participantMessage += `Pago 🟢*\n\n`;
+                } else {
+                    const remaining = expectedAmount - paidAmount;
+                    participantMessage += `Pendente 🟡*\nDeveria pagar: R$ ${expectedAmount.toFixed(2)}\nRestante: R$ ${remaining.toFixed(2)}\n\n`;
+                }
+
+                message += participantMessage;
+            });
+
+            message = message.trimEnd();
+
+            await this.sendMessageWithDelay({ from: groupId, messages: [message], state, toAttendants: true });
         } catch (error) {
-            this.logger.error(`[sendPaymentConfirmationToAttendants] Erro ao enviar mensagem para o grupo ${groupId}: ${error}`);
+            this.logger.error(`[notifyWaiterPaymentMade] Error: ${error}`);
         }
     }
 
@@ -2220,16 +2412,16 @@ export class WhatsAppService implements OnModuleInit {
      * - Handles and logs any errors that occur during the message-sending process.
      */
 
-    private async notifyAttendantsAuthenticationStatus(message: string): Promise<void> {
+    private async notifyWaiterAuthenticationStatus(message: string, state: ConversationDto): Promise<void> {
         const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
 
-        this.logger.log(`[notifyAttendantsAuthenticationStatus] Notificação de status de autenticação: ${message}`);
+        this.logger.log(`[notifyWaiterAuthenticationStatus] Notificação de status de autenticação: ${message}`);
 
         try {
-            await this.client.sendMessage(groupId, message);
-            this.logger.log(`[notifyAttendantsAuthenticationStatus] Mensagem de status de autenticação enviada para o grupo: ${groupId}`);
+            await this.sendMessageWithDelay({ from: groupId, messages: [message], state, toAttendants: true });
+            this.logger.log(`[notifyWaiterAuthenticationStatus] Mensagem de status de autenticação enviada para o grupo: ${groupId}`);
         } catch (error) {
-            this.logger.error(`[notifyAttendantsAuthenticationStatus] Erro ao enviar mensagem para o grupo ${groupId}: ${error}`);
+            this.logger.error(`[notifyWaiterAuthenticationStatus] Erro ao enviar mensagem para o grupo ${groupId}: ${error}`);
         }
     }
 
@@ -2246,7 +2438,7 @@ export class WhatsAppService implements OnModuleInit {
      * - Handles and logs any errors encountered during the forwarding process.
      */
 
-    private async sendProofToGroup(mediaData: string, mediaType: string): Promise<void> {
+    private async sendProofToGroup(mediaData: string, mediaType: string, state: ConversationDto): Promise<void> {
         const groupId = '120363379784971558@g.us'; // [HOM][Comprovantes] Cris Parrilla
 
         this.logger.log(`[sendProofToGroup] Enviando comprovante para o grupo: ${groupId}`);
@@ -2268,7 +2460,8 @@ export class WhatsAppService implements OnModuleInit {
             }
 
             const media = new MessageMedia(mediaType, mediaData, fileName);
-            await this.client.sendMessage(groupId, media, { caption });
+            // await this.client.sendMessage(groupId, media, { caption });
+            await this.sendMessageWithDelay({ from: groupId, caption: caption, state, media: media, toAttendants: true, messages: [] });
 
             this.logger.log(`[sendProofToGroup] Mensagem de comprovante enviada para o grupo: ${groupId}`);
         } catch (error) {
@@ -2289,60 +2482,45 @@ export class WhatsAppService implements OnModuleInit {
      * - Handles and logs any errors that occur during the message-sending process.
      */
 
-    private async notifyAttendantsTableStartedPayment(tableNumber: number): Promise<void> {
+    private async notifyWaiterTableStartedPayment(tableNumber: number): Promise<void> {
         const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
 
-        this.logger.log(`[notifyAttendantsTableStartedPayment] Notificação de início de pagamentos para a mesa ${tableNumber}`);
+        this.logger.log(`[notifyWaiterTableStartedPayment] Notificação de início de pagamentos para a mesa ${tableNumber}`);
 
         try {
             const message = `👋 *Coti Pagamentos* - A mesa ${tableNumber} iniciou o processo de pagamentos.`;
-            await this.client.sendMessage(groupId, message);
-            this.logger.log(`[notifyAttendantsTableStartedPayment] Notificação de início de pagamentos enviada para o grupo: ${groupId}`);
+            await this.sendMessageWithDelay({ from: groupId, messages: [message], state: null, toAttendants: true });
+            this.logger.log(`[notifyWaiterTableStartedPayment] Notificação de início de pagamentos enviada para o grupo: ${groupId}`);
         } catch (error) {
-            this.logger.error(`[notifyAttendantsTableStartedPayment] Erro ao enviar notificação de início de pagamentos para o grupo ${groupId}: ${error}`);
-        }
-    }
-
-    private async notifyAttendantsTableFinishedPayment(tableNumber: number): Promise<void> {
-        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
-
-        this.logger.log(`[notifyAttendantsTableFinishedPayment] Notificação de finalização de pagamentos para a mesa ${tableNumber}`);
-
-        try {
-            const message = `👋 *Coti Pagamentos* - Comanda ${tableNumber} Finalizada ✅`;
-            await this.client.sendMessage(groupId, message);
-            this.logger.log(`[notifyAttendantsTableFinishedPayment] Notificação de finalização de pagamentos enviada para o grupo: ${groupId}`);
-
-        } catch (error) {
-            this.logger.error(`[notifyAttendantsTableFinishedPayment] Erro ao enviar notificação de finalização de pagamentos para o grupo ${groupId}: ${error}`);
+            this.logger.error(`[notifyWaiterTableStartedPayment] Erro ao enviar notificação de início de pagamentos para o grupo ${groupId}: ${error}`);
         }
     }
 
     private async notifyRefundRequest(tableNumber: number, refundAmount: number): Promise<void> {
         const groupId = '120363360992675621@g.us'; // [HOM][Reembolso] Cris Parrilla
 
-        this.logger.log(`[notifyRefundRequestToAttendants] Notificação de estorno para a mesa ${tableNumber}`);
+        this.logger.log(`[notifyRefundRequestToWaiter] Notificação de estorno para a mesa ${tableNumber}`);
 
         try {
             const message = `👋 *Coti Pagamentos* - A mesa ${tableNumber} solicitou um estorno de *${formatToBRL(refundAmount)}*.`;
-            await this.client.sendMessage(groupId, message);
-            this.logger.log(`[notifyRefundRequestToAttendants] Notificação de estorno enviada para o grupo: ${groupId}`);
+            await this.sendMessageWithDelay({ from: groupId, messages: [message], state: null, toAttendants: true });
+            this.logger.log(`[notifyRefundRequestToWaiter] Notificação de estorno enviada para o grupo: ${groupId}`);
         } catch (error) {
-            this.logger.error(`[notifyRefundRequestToAttendants] Erro ao enviar notificação de estorno para o grupo ${groupId}: ${error}`);
+            this.logger.error(`[notifyRefundRequestToWaiter] Erro ao enviar notificação de estorno para o grupo ${groupId}: ${error}`);
         }
     }
 
-    private async notifyAttendantsWrongOrder(tableNumber: number): Promise<void> {
+    private async notifyWaiterWrongOrder(tableNumber: number): Promise<void> {
         const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
 
-        this.logger.log(`[notifyAttendantsWrongOrder] Notificação de pedido errado para a mesa ${tableNumber}`);
+        this.logger.log(`[notifyWaiterWrongOrder] Notificação de pedido errado para a mesa ${tableNumber}`);
 
         try {
             const message = `👋 *Coti Pagamentos* - A Mesa ${tableNumber} relatou um problema com os pedidos da comanda.\n\nPor favor, dirija-se à mesa para verificar.`;
-            await this.client.sendMessage(groupId, message);
-            this.logger.log(`[notifyAttendantsWrongOrder] Notificação de pedido errado enviada para o grupo: ${groupId}`);
+            await this.sendMessageWithDelay({ from: groupId, messages: [message], state: null, toAttendants: true });
+            this.logger.log(`[notifyWaiterWrongOrder] Notificação de pedido errado enviada para o grupo: ${groupId}`);
         } catch (error) {
-            this.logger.error(`[notifyAttendantsWrongOrder] Erro ao enviar notificação de pedido errado para o grupo ${groupId}: ${error}`);
+            this.logger.error(`[notifyWaiterWrongOrder] Erro ao enviar notificação de pedido errado para o grupo ${groupId}: ${error}`);
         }
 
     }
@@ -2461,19 +2639,19 @@ export class WhatsAppService implements OnModuleInit {
 
                 if (attempts === delayNotificationThreshold && sendDelayNotification) {
                     const delayMessage = this.getDelayMessage(state.conversationContext.currentStep);
-                    await this.sendMessageWithDelay(from, [delayMessage], state);
+                    await this.sendMessageWithDelay({ from, messages: [delayMessage], state });
                 }
 
                 if (attempts < maxRetries) {
                     await new Promise((resolve) => setTimeout(resolve, delayBetweenRetries));
                 }
 
-                this.notifyAttendantsAuthenticationStatus(groupMessage);
+                this.notifyWaiterAuthenticationStatus(groupMessage, state);
             }
         }
 
         const errorMessage = this.generateStageErrorMessage(state);
-        await this.sendMessageWithDelay(from, [errorMessage], state);
+        await this.sendMessageWithDelay({ from, messages: [errorMessage], state });
 
         throw new Error("Max retries reached");
     }
@@ -2531,43 +2709,90 @@ export class WhatsAppService implements OnModuleInit {
      * - Ensures that all sent messages are recorded in the conversation's history.
      */
 
-    private async sendMessageWithDelay(
-        from: string,
-        messages: string[],
-        state: ConversationDto,
-        delay: number = 2000,
-    ): Promise<string[]> {
-        const sentMessages = [];
-        const messageLogs: MessageDTO[] = []; // Lista para registrar mensagens no banco
+
+    private async sendMessageWithDelay(params: SendMessageParams): Promise<string[]> {
+
+        const {
+            from,
+            messages,
+            state,
+            delay = 2000,
+            toAttendants = false,
+            media,
+            caption,
+        } = params;
+
+        const sentMessages: string[] = [];
+        const messageLogs: MessageDTO[] = [];
+
+
 
         for (const msg of messages) {
+            const formattedMessage = toAttendants
+                ? `${this.getCurrentTime()}\n${msg}`
+                : msg;
+
             if (!this.debugMode) {
-                await this.client.sendMessage(from, msg);
+                await this.client.sendMessage(from, formattedMessage);
             } else {
-                this.logger.debug(`DEBUG mode ON: Simulating sending message to ${from}: ${msg}`);
+                this.logger.debug(`DEBUG mode ON: Simulando envio de mensagem para ${from}: ${formattedMessage}`);
             }
 
-            sentMessages.push(msg); // Registra a mensagem enviada
+            sentMessages.push(msg);
 
-            // Adiciona a mensagem ao log
             messageLogs.push({
-                messageId: `msg-${Date.now()}`, // Gerar um ID fictício
-                content: msg,
+                messageId: `msg-${Date.now()}`, // Considerar uma geração de IDs mais robusta
+                content: formattedMessage,
                 type: MessageType.Bot,
                 timestamp: new Date(),
                 senderId: from,
             });
 
-            await new Promise((resolve) => setTimeout(resolve, delay));
+            await this.delay(delay);
         }
 
-        // Salva as mensagens no banco
-        if (messageLogs.length > 0) {
-            await this.conversationService.addMessages(state._id.toString(), messageLogs);
+        if (media) {
+            try {
+
+                await this.client.sendMessage(from, media, { caption });
+
+                messageLogs.push({
+                    messageId: `media-${Date.now()}`,
+                    content: caption,
+                    type: MessageType.Bot,
+                    timestamp: new Date(),
+                    senderId: from,
+                });
+
+                this.logger.log(`Mídia enviada para: ${from}`);
+            } catch (error) {
+                this.logger.error(`Erro ao enviar mídia para ${from}: ${error}`);
+            }
         }
 
-        return sentMessages; // Retorna as mensagens enviadas
+        // Salvar logs no banco, se necessário
+        // if (messageLogs.length > 0) {
+        //     await this.conversationService.addMessages(state._id.toString(), messageLogs);
+        // }
+
+        return sentMessages;
     }
+
+    // Função auxiliar para implementar delay
+    private delay(ms: number): Promise<void> {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    /**
+     * Retorna o timestamp atual no formato HORA:MINUTO (24 horas).
+     */
+    private getCurrentTime(): string {
+        const now = new Date();
+        const hours = now.getHours().toString().padStart(2, '0');
+        const minutes = now.getMinutes().toString().padStart(2, '0');
+        return `${hours}:${minutes}`;
+    }
+
 
     /**
      * Generates an error message for a specific stage of the conversation workflow.
@@ -2585,7 +2810,7 @@ export class WhatsAppService implements OnModuleInit {
         const currentStep = conversation.conversationContext.currentStep;
         switch (currentStep) {
             case ConversationStep.ProcessingOrder:
-                this.notifyAttendantsAuthenticationStatus(GroupMessages[GroupMessageKeys.ORDER_PROCESSING_ERROR](conversation.tableId));
+                this.notifyWaiterAuthenticationStatus(GroupMessages[GroupMessageKeys.ORDER_PROCESSING_ERROR](conversation.tableId), conversation);
                 return `Um erro ocorreu ao processar sua comanda.\n\n👨‍💼 Um de nossos atendentes está a caminho para te ajudar!`;
 
             case ConversationStep.ConfirmOrder:
@@ -2622,7 +2847,7 @@ export class WhatsAppService implements OnModuleInit {
         const totalAmount = state.conversationContext.totalOrderAmount;
 
         if (!state.conversationContext.splitInfo) {
-            state.conversationContext.splitInfo = { numberOfPeople: 1, contacts: [] };
+            state.conversationContext.splitInfo = { numberOfPeople: 1, participants: [] };
         }
 
         const numPeople = state.conversationContext.splitInfo.numberOfPeople || 1;
