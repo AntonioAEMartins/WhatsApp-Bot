@@ -3,7 +3,7 @@
 import { IsString, IsNumber, IsArray, IsOptional, ValidateNested, IsEnum, IsDate, IsNotEmpty, IsObject } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ObjectId } from 'mongodb';
-
+import { SplitInfoDTO } from 'src/conversation/dto/conversation.dto';
 
 export class OrderItemDTO {
     @IsString()
@@ -16,6 +16,8 @@ export class OrderItemDTO {
     @IsNumber()
     quantity: number;
 }
+
+
 
 export class BaseOrderDTO {
     @IsObject()
@@ -39,6 +41,12 @@ export class BaseOrderDTO {
     @IsNumber()
     @IsOptional()
     amountPaidSoFar?: number;
+
+    // Informações sobre divisão de conta
+    @ValidateNested()
+    @Type(() => SplitInfoDTO)
+    @IsOptional()
+    splitInfo?: SplitInfoDTO;
 
     @IsOptional()
     @IsDate()

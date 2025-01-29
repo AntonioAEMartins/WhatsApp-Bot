@@ -29,7 +29,7 @@ export class MessageDTO {
   senderId?: string;
 }
 
-export class ContactDTO {
+export class ParticipantDTO {
   @IsString()
   name: string;
 
@@ -37,7 +37,10 @@ export class ContactDTO {
   phone: string;
 
   @IsNumber()
-  individualAmount: number;
+  expectedAmount: number;
+
+  @IsNumber()
+  paidAmount: number;
 }
 
 export class SplitInfoDTO {
@@ -46,13 +49,15 @@ export class SplitInfoDTO {
 
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => ContactDTO)
-  contacts: ContactDTO[];
+  @Type(() => ParticipantDTO)
+  participants: ParticipantDTO[];
 
   @IsOptional()
   @IsNumber()
   receivedContacts?: number;
 }
+
+
 
 export class FeedbackDTO {
   @IsNumber()
@@ -96,6 +101,10 @@ export class ConversationContextDTO {
   @IsString()
   @Matches(/^\d+$/, { message: 'cpf deve conter apenas números.' })
   cpf?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
 
   @IsOptional()
   @IsNumber()
