@@ -11,12 +11,11 @@ export class TableService {
 
     async orderTable(id: number): Promise<any> {
 
-        const response = await fetch(`${this.url}/order`, {
-            method: 'POST',
+        const response = await fetch(`${this.url}/tables/${id}`, {
+            method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ table_id: id }),
         });
 
 
@@ -29,12 +28,11 @@ export class TableService {
 
     async startPayment(id: number): Promise<any> {
 
-        const response = await fetch(`${this.url}/payment`, {
-            method: 'POST',
+        const response = await fetch(`${this.url}/tables/${id}/payment`, {
+            method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ table_id: id }),
         });
 
         console.log("Start Payment Response: ", response);
@@ -48,12 +46,11 @@ export class TableService {
 
     async finishPayment(id: number): Promise<any> {
 
-        const response = await fetch(`${this.url}/close`, {
-            method: 'POST',
+        const response = await fetch(`${this.url}/tables/${id}/close`, {
+            method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ table_id: id }),
         });
 
         if (!response.ok) {
@@ -65,12 +62,11 @@ export class TableService {
 
     async orderMessage(id: number): Promise<any> {
 
-        const response = await fetch(`${this.url}/message`, {
-            method: 'POST',
+        const response = await fetch(`${this.url}/tables/${id}/message`, {
+            method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ table_id: id }),
         });
 
 
