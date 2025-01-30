@@ -1,7 +1,7 @@
 // src/whatsapp/whatsapp.controller.ts
 
 import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
-import { WhatsAppService } from './whatsapp.service';
+import { RequestStructure, WhatsAppService } from './whatsapp.service';
 import { Message } from 'whatsapp-web.js';
 import { CreateWhatsAppGroupDTO } from './dto/whatsapp.dto';
 
@@ -12,8 +12,8 @@ export class WhatsAppController {
 
   @HttpCode(200)
   @Post()
-  async createGroup(@Body() createGroupData: CreateWhatsAppGroupDTO) {
-    return await this.whatsappService.createGroup(createGroupData);
+  async receiveMessage(@Body() request: RequestStructure) {
+    return await this.whatsappService.handleProcessMessage(request);
   }
 
 }
