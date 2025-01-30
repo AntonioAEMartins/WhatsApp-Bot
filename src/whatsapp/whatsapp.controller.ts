@@ -11,7 +11,7 @@ export class WhatsAppController {
   constructor(private readonly whatsappService: WhatsAppService) { }
 
   @HttpCode(200)
-  @Post()
+  @Post('message')
   async receiveMessage(@Body() request: RequestStructure) {
     return await this.whatsappService.handleProcessMessage(request);
   }
