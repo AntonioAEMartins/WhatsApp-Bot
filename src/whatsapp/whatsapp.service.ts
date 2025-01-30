@@ -167,6 +167,8 @@ export class WhatsAppService {
     public async handleProcessMessage(request: RequestStructure): Promise<void> {
         const fromPerson = request.from;
 
+        this.logger.debug(`Received message from ${fromPerson}: ${request.content}`);
+
         const message: RequestMessage = {
             from: fromPerson,
             body: request.content,
