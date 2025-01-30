@@ -64,7 +64,7 @@ export interface RequestStructure {
     content: string;
 }
 
-interface ResponseStructure {
+export interface ResponseStructure {
     type: "image" | "text";
     content: string;
     caption: string;

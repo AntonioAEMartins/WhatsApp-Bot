@@ -1,9 +1,7 @@
 // src/whatsapp/whatsapp.controller.ts
 
 import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
-import { RequestStructure, WhatsAppService } from './whatsapp.service';
-import { Message } from 'whatsapp-web.js';
-import { CreateWhatsAppGroupDTO } from './dto/whatsapp.dto';
+import { RequestStructure, ResponseStructure, WhatsAppService } from './whatsapp.service';
 
 
 @Controller('whatsapp')
@@ -12,7 +10,7 @@ export class WhatsAppController {
 
   @HttpCode(200)
   @Post('message')
-  async receiveMessage(@Body() request: RequestStructure) {
+  async receiveMessage(@Body() request: RequestStructure) : Promise<ResponseStructure[]> {
     return await this.whatsappService.handleProcessMessage(request);
   }
 
