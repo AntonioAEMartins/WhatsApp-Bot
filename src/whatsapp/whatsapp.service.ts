@@ -164,7 +164,7 @@ export class WhatsAppService {
     //     };
     // }
 
-    public async handleProcessMessage(request: RequestStructure): Promise<void> {
+    public async handleProcessMessage(request: RequestStructure): Promise<ResponseStructure[]> {
         const fromPerson = request.from;
 
         this.logger.debug(`Received message from ${fromPerson}: ${request.content}`);
@@ -177,9 +177,10 @@ export class WhatsAppService {
         };
 
         // Ignore messages sent by the bot itself
-        if (fromPerson === "551132803247@s.whatsapp.net") {
-            return;
-        }
+        // if (fromPerson === "551132803247@s.whatsapp.net") {
+        //     this.logger.debug(`Ignoring message from bot: ${message.body}`);
+        //     return [];
+        // }
 
         // Ignore messages from groups
         // if (message.from.includes('@g.us')) {
@@ -197,7 +198,7 @@ export class WhatsAppService {
         ];
         if (!allowedNumbers.includes(message.from)) {
             this.logger.debug(`Ignoring message from ${message.from}: ${message.body}`);
-            return;
+            return [];
         }
 
         // Calculate message age to avoid processing old messages
@@ -323,6 +324,8 @@ export class WhatsAppService {
                 }
                 break;
         }
+
+        return requestResponse;
     };
 
 
