@@ -46,8 +46,6 @@ import { SimpleResponseDto } from 'src/request/request.dto';
 // "reply": boolean, (always the same as array and to the same as from)
 // }] 
 
-
-
 interface SendMessageParams {
     from: string;
     messages: string[];
@@ -1351,10 +1349,11 @@ export class WhatsAppService {
         userMessage: string,
         state: ConversationDto,
         message: RequestMessage,
-        base64Media?: string
     ): Promise<any> {
         let mediaData: string | null = null;
         let mediaType: string | null = null;
+
+        const base64Media = message.body;
 
         if (message.type === 'image' && base64Media) {
             mediaData = base64Media;
