@@ -524,14 +524,17 @@ export class WhatsAppService {
  * - Sends appropriate follow-up messages based on the user's response.
  */
 
-    private mapTextMessages(messages: string[], to: string, reply: boolean = false): ResponseStructure[] {
-        return messages.map((message) => ({
-            type: 'text' as 'text',
-            content: message,
-            caption: '',
-            to,
-            reply: reply,
-        }));
+    private mapTextMessages(messages: string[], to: string, reply: boolean = false, toGroup: boolean = false): ResponseStructure[] {
+        return messages.map((message) => {
+            const content = toGroup ? `${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}\n${message}` : message;
+            return {
+                type: 'text' as 'text',
+                content,
+                caption: '',
+                to,
+                reply: reply,
+            };
+        });
     }
 
 
