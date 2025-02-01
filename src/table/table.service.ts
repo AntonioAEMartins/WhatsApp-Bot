@@ -35,8 +35,6 @@ export class TableService {
             },
         });
 
-        console.log("Start Payment Response: ", response);
-
         if (!response.ok) {
             throw new Error('Failed to start payment');
         }

@@ -210,8 +210,6 @@ export class TransactionService {
             }
         )
 
-        console.log(transactions);
-
         return {
             msg: "Last underpaid transaction found",
             data: transactions as TransactionDTO,

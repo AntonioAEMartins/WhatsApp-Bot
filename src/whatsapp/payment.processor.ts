@@ -1,5 +1,5 @@
 import { Process, Processor } from '@nestjs/bull';
-import { RequestMessage, WhatsAppService } from './whatsapp.service';
+import { RequestMessage, ResponseStructure, WhatsAppService } from './whatsapp.service';
 import { ConversationDto } from 'src/conversation/dto/conversation.dto';
 import { Job } from 'bull';
 
@@ -15,19 +15,16 @@ export class PaymentProcessorDTO {
 
 @Processor('payment')
 export class PaymentProcessor {
-  constructor(private readonly whatsAppService: WhatsAppService) {
-
-  }
+  constructor(private readonly whatsAppService: WhatsAppService) { }
 
   @Process()
-  async process(job: Job<PaymentProcessorDTO>): Promise<void> {
+  async process(job: Job<PaymentProcessorDTO>): Promise<ResponseStructure[]> {
     try {
-      // console.log('Processing job:', job.id, job.data);
-      await this.whatsAppService.processPayment(job.data);
-      // console.log('Job completed successfully');
+      // Aqui, pegue o retorno que você quer de fato
+      const result = await this.whatsAppService.processPayment(job.data);
+      return result;
     } catch (error) {
-      // console.error('Job processing failed:', error);
-      throw error; // Rejeita o job para o BullMQ lidar
+      throw error;
     }
   }
 }

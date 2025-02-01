@@ -77,6 +77,11 @@ export interface RequestMessage {
     type: string;
 }
 
+interface retryRequestResponse {
+    sentMessages: ResponseStructure[];
+    response: any;
+}
+
 @Injectable()
 export class WhatsAppService {
     private readonly logger = new Logger(WhatsAppService.name);
@@ -96,7 +101,7 @@ export class WhatsAppService {
     public async handleProcessMessage(request: RequestStructure): Promise<ResponseStructure[]> {
         const fromPerson = request.from;
 
-        this.logger.debug(`Received message from ${fromPerson}: ${request.content}`);
+        // this.logger.debug(`Received message from ${fromPerson}: ${request.content}`);
 
         const message: RequestMessage = {
             from: fromPerson,
@@ -173,9 +178,9 @@ export class WhatsAppService {
         const userMessage = message.body.trim().toLowerCase();
 
         // Log current state for debugging
-        this.logger.debug(
-            `User: ${from}, State: ${state.conversationContext.currentStep}, Message: "${userMessage}"`,
-        );
+        // this.logger.debug(
+        //     `User: ${from}, State: ${state.conversationContext.currentStep}, Message: "${userMessage}"`,
+        // );
 
         // Handle conversation steps
         switch (state.conversationContext.currentStep) {
@@ -456,11 +461,17 @@ export class WhatsAppService {
 
         try {
             // Obtém os dados do pedido
-            const orderData = await this.retryRequestWithNotification({
+            const retryResponse = await this.retryRequestWithNotification({
                 from,
                 requestFunction: () => this.tableService.orderMessage(tableId),
                 state,
             });
+
+            if (!retryResponse.response) {
+                return sentMessages;
+            }
+
+            const orderData = retryResponse.response;
 
             const orderMessage = orderData.message;
             const orderDetails = orderData.details;
@@ -553,7 +564,7 @@ export class WhatsAppService {
 
         if (positiveResponses.some((response) => userMessage.includes(response))) {
 
-            this.notifyWaiterTableStartedPayment(tableId);
+            const notifyWaiterMessages = this.notifyWaiterTableStartedPayment(tableId);
 
             sentMessages.push(
                 ...this.mapTextMessages(
@@ -562,6 +573,7 @@ export class WhatsAppService {
                     ],
                     from,
                 ),
+                ...notifyWaiterMessages,
             );
             this.retryRequestWithNotification({
                 from,
@@ -584,7 +596,9 @@ export class WhatsAppService {
                 ),
             );
 
-            this.notifyWaiterWrongOrder(tableId);
+            const notifyWaiterMessages = this.notifyWaiterWrongOrder(tableId);
+
+            sentMessages.push(...notifyWaiterMessages);
 
             updatedContext.currentStep = ConversationStep.IncompleteOrder;
 
@@ -870,25 +884,26 @@ export class WhatsAppService {
 
     private async finalizeContactsReception(
         from: string,
-        state: ConversationDto,
+        state: ConversationDto
     ): Promise<ResponseStructure[]> {
-        const sentMessages: ResponseStructure[] = [];
+        let sentMessages: ResponseStructure[] = [];
         const { data: orderData } = await this.orderService.getOrder(state.orderId);
         const totalAmount = orderData.totalAmount;
         const numPeople = state.conversationContext.splitInfo.numberOfPeople;
         const individualAmount = parseFloat((totalAmount / numPeople).toFixed(2));
 
         await this.updateConversationAndCreateTransaction(state, individualAmount, totalAmount);
-        await this.notifyIncludedContacts(state, totalAmount, individualAmount);
-        // this.notifyWaiterTableSplit(state);
+
+        const notificationMessages = await this.notifyIncludedContacts(state, totalAmount, individualAmount);
+        sentMessages.push(...notificationMessages);
 
         sentMessages.push(
             ...this.mapTextMessages(
                 [
                     'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
                 ],
-                from,
-            ),
+                from
+            )
         );
 
         return sentMessages;
@@ -951,7 +966,7 @@ export class WhatsAppService {
         const contacts = state.conversationContext.splitInfo.participants;
 
         for (const contact of contacts) {
-            const contactId = `${contact.phone}@c.us`;
+            const contactId = `${contact.phone}@s.whatsapp.net`;
             const messages = [
                 `👋 Coti Pagamentos - Olá! Você foi incluído na divisão do pagamento da comanda *${state.tableId}* no restaurante Cris Parrilla. Aguarde para receber mais informações sobre o pagamento.`,
                 `Sua parte na conta é de *${formatToBRL(individualAmount)}*.`,
@@ -1303,19 +1318,43 @@ export class WhatsAppService {
             mediaType
         };
 
-        await this.paymentQueue.add(paymentMessageData);
+        const job = await this.paymentQueue.add(paymentMessageData);
+        const result = await job.finished();
+        return result;
     }
 
     private extractMimeType(base64: string): string | null {
-        const match = base64.match(/^data:(.*?);base64,/);
-        return match ? match[1] : null;
+        // Tenta extrair do Data URI primeiro
+        const dataUriMatch = base64.match(/^data:([a-zA-Z]+\/[a-zA-Z0-9-.+]+);base64,/);
+        if (dataUriMatch) return dataUriMatch[1];
+
+        // Se não for Data URI, decodifica e detecta via assinatura
+        try {
+            const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+
+            // Assinaturas conhecidas (exemplos)
+            const signatures = {
+                'application/pdf': [0x25, 0x50, 0x44, 0x46], // %PDF
+                'image/png': [0x89, 0x50, 0x4E, 0x47],       // ‰PNG
+                'image/jpeg': [0xFF, 0xD8, 0xFF]              // ÿØÿ
+            };
+
+            for (const [mime, sig] of Object.entries(signatures)) {
+                if (sig.every((byte, i) => bytes[i] === byte)) return mime;
+            }
+
+            return 'application/octet-stream'; // Tipo genérico
+        } catch {
+            return null; // Falha na decodificação
+        }
     }
-
-
 
 
     public async processPayment(paymentData: PaymentProcessorDTO): Promise<ResponseStructure[]> {
         const { from, userMessage, message, mediaData, mediaType, state } = paymentData;
+
+        this.logger.debug(`[processPayment] Processing payment, has media: ${!!mediaData}, media type: ${mediaType}`);
+
         let sentMessages: ResponseStructure[] = [];
 
         if (this.utilsService.userSentProof(userMessage, message)) {
@@ -1440,7 +1479,9 @@ export class WhatsAppService {
         }
 
         if (mediaData && mediaType) {
-            this.sendProofToGroup(mediaData, mediaType, state);
+            const notifyProofMessages = this.sendProofToGroup(mediaData, mediaType, state);
+
+            sentMessages.push(...notifyProofMessages);
         }
 
         const updateAmountResponse = await this.orderService.updateAmountPaidAndCheckOrderStatus(
@@ -1453,9 +1494,11 @@ export class WhatsAppService {
         if (isFullPaymentAmountPaid) {
             const tableId = parseInt(state.tableId);
             await this.tableService.finishPayment(tableId);
-            this.notifyWaiterTablePaymentComplete(state);
+            const notifyWaiterMessages = await this.notifyWaiterTablePaymentComplete(state);
+            sentMessages.push(...notifyWaiterMessages);
         } else {
-            this.notifyWaiterPaymentMade(state);
+            const notifyWaiterMessages = await this.notifyWaiterPaymentMade(state);
+            sentMessages.push(...notifyWaiterMessages);
         }
 
         return sentMessages;
@@ -1795,7 +1838,9 @@ export class WhatsAppService {
                 currentStep: ConversationStep.CollectPhoneNumber,
             };
 
-            this.notifyRefundRequest(parseInt(state.tableId), excessAmount);
+            const notifyRefundMessages = this.notifyRefundRequest(parseInt(state.tableId), excessAmount);
+
+            sentMessages.push(...notifyRefundMessages);
 
             await this.conversationService.updateConversation(state._id.toString(), {
                 userId: state.userId,
@@ -2288,7 +2333,7 @@ export class WhatsAppService {
                 const { expectedAmount, paidAmount } = participant;
                 let name = participant.name || 'Cliente';
 
-                if (name.includes('@c.us')) {
+                if (name.includes('@s.whatsapp.net')) {
                     name = 'Cliente';
                 }
 
@@ -2328,17 +2373,12 @@ export class WhatsAppService {
      * - Handles and logs any errors that occur during the message-sending process.
      */
 
-    private async notifyWaiterAuthenticationStatus(message: string, state: ConversationDto): Promise<ResponseStructure[]> {
+    private notifyWaiterAuthenticationStatus(message: string, state: ConversationDto): ResponseStructure[] {
         const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
 
         this.logger.log(`[notifyWaiterAuthenticationStatus] Notificação de status de autenticação: ${message}`);
 
-        try {
-            return this.mapTextMessages([message], groupId);
-        } catch (error) {
-            this.logger.error(`[notifyWaiterAuthenticationStatus] Erro ao enviar mensagem para o grupo ${groupId}: ${error}`);
-            return [];
-        }
+        return this.mapTextMessages([message], groupId);
     }
 
     /**
@@ -2354,36 +2394,31 @@ export class WhatsAppService {
      * - Handles and logs any errors encountered during the forwarding process.
      */
 
-    private async sendProofToGroup(mediaData: string, mediaType: string, state: ConversationDto): Promise<ResponseStructure[]> {
+    private sendProofToGroup(mediaData: string, mediaType: string, state: ConversationDto): ResponseStructure[] {
         const groupId = '120363379784971558@g.us'; // [HOM][Comprovantes] Cris Parrilla
 
         this.logger.log(`[sendProofToGroup] Enviando comprovante para o grupo: ${groupId}`);
 
-        try {
-            let fileName: string;
-            let caption = 'Comprovante de pagamento';
+        let fileName: string;
+        let caption = 'Comprovante de pagamento';
 
-            if (mediaType === 'application/pdf') {
-                fileName = 'comprovante.pdf';
-            } else if (mediaType.startsWith('image/')) {
-                fileName = 'comprovante.jpg';
-            } else {
-                fileName = 'comprovante.bin';
-            }
-
-            return [
-                {
-                    type: 'image',
-                    content: mediaData,
-                    caption: caption,
-                    to: groupId,
-                    reply: false,
-                }
-            ];
-        } catch (error) {
-            this.logger.error(`[sendProofToGroup] Erro ao enviar mensagem para o grupo ${groupId}: ${error}`);
-            return [];
+        if (mediaType === 'application/pdf') {
+            fileName = 'comprovante.pdf';
+        } else if (mediaType.startsWith('image/')) {
+            fileName = 'comprovante.jpg';
+        } else {
+            fileName = 'comprovante.bin';
         }
+
+        return [
+            {
+                type: 'image',
+                content: mediaData,
+                caption: caption,
+                to: groupId,
+                reply: false,
+            }
+        ];
     }
 
 
@@ -2400,46 +2435,32 @@ export class WhatsAppService {
      * - Handles and logs any errors that occur during the message-sending process.
      */
 
-    private async notifyWaiterTableStartedPayment(tableNumber: number): Promise<ResponseStructure[]> {
+    private notifyWaiterTableStartedPayment(tableNumber: number): ResponseStructure[] {
         const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
 
         this.logger.log(`[notifyWaiterTableStartedPayment] Notificação de início de pagamentos para a mesa ${tableNumber}`);
 
-        try {
-            const message = `👋 *Coti Pagamentos* - A mesa ${tableNumber} iniciou o processo de pagamentos.`;
-            return this.mapTextMessages([message], groupId);
-        } catch (error) {
-            this.logger.error(`[notifyWaiterTableStartedPayment] Erro ao enviar notificação de início de pagamentos para o grupo ${groupId}: ${error}`);
-            return [];
-        }
+        const message = `👋 *Coti Pagamentos* - A mesa ${tableNumber} iniciou o processo de pagamentos.`;
+        return this.mapTextMessages([message], groupId);
+
     }
 
-    private async notifyRefundRequest(tableNumber: number, refundAmount: number): Promise<ResponseStructure[]> {
+    private notifyRefundRequest(tableNumber: number, refundAmount: number): ResponseStructure[] {
         const groupId = '120363360992675621@g.us'; // [HOM][Reembolso] Cris Parrilla
 
         this.logger.log(`[notifyRefundRequestToWaiter] Notificação de estorno para a mesa ${tableNumber}`);
 
-        try {
-            const message = `👋 *Coti Pagamentos* - A mesa ${tableNumber} solicitou um estorno de *${formatToBRL(refundAmount)}*.`;
-            return this.mapTextMessages([message], groupId);
-        } catch (error) {
-            this.logger.error(`[notifyRefundRequestToWaiter] Erro ao enviar notificação de estorno para o grupo ${groupId}: ${error}`);
-            return [];
-        }
+        const message = `👋 *Coti Pagamentos* - A mesa ${tableNumber} solicitou um estorno de *${formatToBRL(refundAmount)}*.`;
+        return this.mapTextMessages([message], groupId);
     }
 
-    private async notifyWaiterWrongOrder(tableNumber: number): Promise<ResponseStructure[]> {
+    private notifyWaiterWrongOrder(tableNumber: number): ResponseStructure[] {
         const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
 
         this.logger.log(`[notifyWaiterWrongOrder] Notificação de pedido errado para a mesa ${tableNumber}`);
 
-        try {
-            const message = `👋 *Coti Pagamentos* - A Mesa ${tableNumber} relatou um problema com os pedidos da comanda.\n\nPor favor, dirija-se à mesa para verificar.`;
-            return this.mapTextMessages([message], groupId);
-        } catch (error) {
-            this.logger.error(`[notifyWaiterWrongOrder] Erro ao enviar notificação de pedido errado para o grupo ${groupId}: ${error}`);
-            return [];
-        }
+        const message = `👋 *Coti Pagamentos* - A Mesa ${tableNumber} relatou um problema com os pedidos da comanda.\n\nPor favor, dirija-se à mesa para verificar.`;
+        return this.mapTextMessages([message], groupId);
     }
 
 
@@ -2525,6 +2546,8 @@ export class WhatsAppService {
      * - Sends an error message to the user if all retries are exhausted and throws a "Max retries reached" error.
      */
 
+
+
     private async retryRequestWithNotification({
         from,
         requestFunction,
@@ -2543,35 +2566,49 @@ export class WhatsAppService {
         delayNotificationThreshold?: number;
         delayBetweenRetries?: number;
         maxRetries?: number;
-    }): Promise<any> {
+    }): Promise<retryRequestResponse> {
         let attempts = 0;
+        let sentMessages: ResponseStructure[] = [];
 
         while (attempts < maxRetries) {
             try {
-                return await requestFunction();
+                const retryResponse = await requestFunction();
+
+                const response: retryRequestResponse = {
+                    response: retryResponse,
+                    sentMessages: []
+                };
+
+                return response;
             } catch (error) {
                 attempts++;
                 this.logger.error(
                     `Attempt ${attempts} failed for user ${from} at stage ${state.conversationContext.currentStep}. Error: ${error}`
                 );
 
-                if (attempts === delayNotificationThreshold && sendDelayNotification) {
-                    const delayMessage = this.getDelayMessage(state.conversationContext.currentStep);
-                    // await this.sendMessageWithDelay({ from, messages: [delayMessage], state });
-                }
+                // if (attempts === delayNotificationThreshold && sendDelayNotification) {
+                //     const delayMessage = this.getDelayMessage(state.conversationContext.currentStep);
+                //     sentMessages.push(...this.mapTextMessages([delayMessage], from));
+                // }
 
                 if (attempts < maxRetries) {
                     await new Promise((resolve) => setTimeout(resolve, delayBetweenRetries));
                 }
 
-                this.notifyWaiterAuthenticationStatus(groupMessage, state);
+                // const notifyAuthMessages = await this.notifyWaiterAuthenticationStatus(groupMessage, state);
+                // sentMessages.push(...notifyAuthMessages);
             }
         }
 
         const errorMessage = this.generateStageErrorMessage(state);
-        // await this.sendMessageWithDelay({ from, messages: [errorMessage], state });
+        sentMessages.push(...this.mapTextMessages([errorMessage], from));
 
-        throw new Error("Max retries reached");
+        const response: retryRequestResponse = {
+            response: null,
+            sentMessages,
+        };
+
+        return response;
     }
 
 

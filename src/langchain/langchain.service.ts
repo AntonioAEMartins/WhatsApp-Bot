@@ -67,7 +67,6 @@ export class LangchainService {
 
 
     async extractTextFromPDF(base64Data: string): Promise<any> {
-        console.log("URL: ", this.url);
         const response = await fetch(`${this.url}/extract_text_from_image`, {
             method: 'POST',
             headers: {
