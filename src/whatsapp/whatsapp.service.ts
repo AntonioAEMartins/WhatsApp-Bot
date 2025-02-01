@@ -123,17 +123,17 @@ export class WhatsAppService {
         // }
 
         // Only respond if the number is in the allowed list
-        const allowedNumbers = [
-            '551132803247@s.whatsapp.net',
-            '5511947246803@s.whatsapp.net',
-            '5511964681711@s.whatsapp.net',
-            '5511974407410@s.whatsapp.net',
-            '5511991879750@s.whatsapp.net'
-        ];
-        if (!allowedNumbers.includes(message.from)) {
-            this.logger.debug(`Ignoring message from ${message.from}: ${message.body}`);
-            return [];
-        }
+        // const allowedNumbers = [
+        //     '551132803247@s.whatsapp.net',
+        //     '5511947246803@s.whatsapp.net',
+        //     '5511964681711@s.whatsapp.net',
+        //     '5511974407410@s.whatsapp.net',
+        //     '5511991879750@s.whatsapp.net'
+        // ];
+        // if (!allowedNumbers.includes(message.from)) {
+        //     this.logger.debug(`Ignoring message from ${message.from}: ${message.body}`);
+        //     return [];
+        // }
 
         // Calculate message age to avoid processing old messages
         const currentTime = Math.floor(Date.now() / 1000); // current time in seconds
