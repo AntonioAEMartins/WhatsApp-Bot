@@ -454,6 +454,8 @@ export class WhatsAppService {
                 state,
             });
 
+            this.logger.log(`[handleProcessingOrder] Retry response: ${JSON.stringify(retryResponse.response)}`);
+
             if (!retryResponse.response) {
                 this.logger.error(`[handleProcessingOrder] Error getting order details for table ${tableId}. User: ${from}`);
 
@@ -462,15 +464,23 @@ export class WhatsAppService {
                 }
 
                 return sentMessages;
-            } else if (!retryResponse.response.content) {
+            } else if (
+                !retryResponse.response.details ||
+                Object.keys(retryResponse.response.details).length === 0
+            ) {
+                this.logger.error(`[handleProcessingOrder] No content found for table ${tableId}. User: ${from}`);
                 sentMessages.push(
                     ...this.mapTextMessages(
                         ['👋 Coti Pagamentos - Não há pedidos cadastrados em sua comanda. Por favor, tente novamente mais tarde.'],
                         from,
+                        true,
+                        false,
+                        true,
                     ),
                 );
                 return sentMessages;
             }
+
 
             const orderData = retryResponse.response;
 
