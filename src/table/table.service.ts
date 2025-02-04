@@ -6,7 +6,8 @@ export class TableService {
     private readonly url: string;
 
     constructor() {
-        this.url = process.env.POS_BACKEND_URL;
+        const posBackendUrl = process.env.ENVIRONMENT === 'homologation' ? process.env.POS_HOM_BACKEND_URL : process.env.ENVIRONMENT === 'production' ? process.env.POS_PROD_BACKEND_URL : process.env.POS_DEV_BACKEND_URL;
+        this.url = posBackendUrl;
     }
 
     async orderTable(id: number): Promise<any> {

@@ -85,7 +85,6 @@ interface retryRequestResponse {
 @Injectable()
 export class WhatsAppService {
     private readonly logger = new Logger(WhatsAppService.name);
-    private debugMode = process.env.DEBUG === 'true';
 
     constructor(
         private readonly tableService: TableService,
@@ -2648,92 +2647,6 @@ export class WhatsAppService {
         }
     }
 
-    /**
-     * Sends multiple messages to a user with a delay between each message.
-     *
-     * @param from - The unique identifier (WhatsApp ID) of the recipient.
-     * @param messages - An array of strings containing the messages to be sent.
-     * @param state - The current state of the user's conversation.
-     * @param delay - The delay in milliseconds between sending each message (default: 2000ms).
-     * @returns A Promise that resolves to an array of the sent messages.
-     *
-     * Functionality:
-     * - Iterates through the `messages` array, sending each message with a specified delay.
-     * - In `DEBUG` mode, simulates sending messages by logging them instead of actually sending.
-     * - Logs each message in the database using `MessageDTO`.
-     * - Ensures that all sent messages are recorded in the conversation's history.
-     */
-
-
-    // private async sendMessageWithDelay(params: SendMessageParams): Promise<string[]> {
-
-    //     const {
-    //         from,
-    //         messages,
-    //         state,
-    //         delay = 2000,
-    //         toAttendants = false,
-    //         media,
-    //         caption,
-    //     } = params;
-
-    //     const sentMessages: string[] = [];
-    //     const messageLogs: MessageDTO[] = [];
-
-
-
-    //     for (const msg of messages) {
-    //         const formattedMessage = toAttendants
-    //             ? `${this.getCurrentTime()}\n${msg}`
-    //             : msg;
-
-    //         if (!this.debugMode) {
-    //             await this.client.sendMessage(from, formattedMessage);
-    //         } else {
-    //             this.logger.debug(`DEBUG mode ON: Simulando envio de mensagem para ${from}: ${formattedMessage}`);
-    //         }
-
-    //         sentMessages.push(msg);
-
-    //         messageLogs.push({
-    //             messageId: `msg-${Date.now()}`, // Considerar uma geração de IDs mais robusta
-    //             content: formattedMessage,
-    //             type: MessageType.Bot,
-    //             timestamp: new Date(),
-    //             senderId: from,
-    //         });
-
-    //         await this.delay(delay);
-    //     }
-
-    //     if (media) {
-    //         try {
-
-    //             await this.client.sendMessage(from, media, { caption });
-
-    //             messageLogs.push({
-    //                 messageId: `media-${Date.now()}`,
-    //                 content: caption,
-    //                 type: MessageType.Bot,
-    //                 timestamp: new Date(),
-    //                 senderId: from,
-    //             });
-
-    //             this.logger.log(`Mídia enviada para: ${from}`);
-    //         } catch (error) {
-    //             this.logger.error(`Erro ao enviar mídia para ${from}: ${error}`);
-    //         }
-    //     }
-
-    //     // Salvar logs no banco, se necessário
-    //     // if (messageLogs.length > 0) {
-    //     //     await this.conversationService.addMessages(state._id.toString(), messageLogs);
-    //     // }
-
-    //     return sentMessages;
-    // }
-
-    // Função auxiliar para implementar delay
     private delay(ms: number): Promise<void> {
         return new Promise(resolve => setTimeout(resolve, ms));
     }

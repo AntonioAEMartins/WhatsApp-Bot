@@ -18,7 +18,8 @@ export class LangchainService {
             modelName: 'gpt-4o-mini-2024-07-18',
             temperature: 0.0,
         });
-        this.url = process.env.OCR_BACKEND_URL;
+        const ocrBackendUrl = process.env.ENVIRONMENT === 'homologation' ? process.env.CS_HOM_BACKEND_URL : process.env.ENVIRONMENT === 'production' ? process.env.CS_PROD_BACKEND_URL : process.env.CS_DEV_BACKEND_URL;
+        this.url = ocrBackendUrl;
     }
 
     public async analyzeDocument(
