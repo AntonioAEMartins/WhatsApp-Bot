@@ -30,6 +30,7 @@ import { CreateWhatsAppGroupDTO, WhatsAppGroupDTO, WhatsAppParticipantsDTO } fro
 import { Db, ObjectId } from 'mongodb';
 import { ClientProvider } from 'src/db/db.module';
 import { SimpleResponseDto } from 'src/request/request.dto';
+import { isError } from 'util';
 
 // Resposta para um Request do GO
 //[{
@@ -70,6 +71,10 @@ export interface ResponseStructure {
     reply: boolean;
 }
 
+export interface ResponseStructureExtended extends ResponseStructure {
+    isError: boolean;
+}
+
 export interface RequestMessage {
     from: string;
     body: string;
@@ -78,13 +83,17 @@ export interface RequestMessage {
 }
 
 interface retryRequestResponse {
-    sentMessages: ResponseStructure[];
+    sentMessages: ResponseStructureExtended[];
     response: any;
 }
 
 @Injectable()
 export class WhatsAppService {
     private readonly logger = new Logger(WhatsAppService.name);
+
+    private readonly waiterGroupId = process.env.ENVIRONMENT === 'homologation' ? process.env.WAITER_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.WAITER_PROD_GROUP_ID : process.env.WAITER_DEV_GROUP_ID;
+    private readonly paymentProofGroupId = process.env.ENVIRONMENT === 'homologation' ? process.env.PAYMENT_PROOF_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.PAYMENT_PROOF_PROD_GROUP_ID : process.env.PAYMENT_PROOF_DEV_GROUP_ID;
+    private readonly refundGroupId = process.env.ENVIRONMENT === 'homologation' ? process.env.REFUND_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.REFUND_PROD_GROUP_ID : process.env.REFUND_DEV_GROUP_ID;
 
     constructor(
         private readonly tableService: TableService,
@@ -97,10 +106,8 @@ export class WhatsAppService {
         @Inject('DATABASE_CONNECTION') private db: Db, clientProvider: ClientProvider
     ) { }
 
-    public async handleProcessMessage(request: RequestStructure): Promise<ResponseStructure[]> {
+    public async handleProcessMessage(request: RequestStructure): Promise<ResponseStructureExtended[]> {
         const fromPerson = request.from;
-
-        // this.logger.debug(`Received message from ${fromPerson}: ${request.content}`);
 
         const message: RequestMessage = {
             from: fromPerson,
@@ -108,31 +115,6 @@ export class WhatsAppService {
             timestamp: Math.floor(Date.now() / 1000),
             type: request.type,
         };
-
-        // Ignore messages sent by the bot itself
-        // if (fromPerson === "551132803247@s.whatsapp.net") {
-        //     this.logger.debug(`Ignoring message from bot: ${message.body}`);
-        //     return [];
-        // }
-
-        // Ignore messages from groups
-        // if (message.from.includes('@g.us')) {
-        //     this.logger.debug(`Ignoring message from group: ${message.from}`);
-        //     return;
-        // }
-
-        // Only respond if the number is in the allowed list
-        // const allowedNumbers = [
-        //     '551132803247@s.whatsapp.net',
-        //     '5511947246803@s.whatsapp.net',
-        //     '5511964681711@s.whatsapp.net',
-        //     '5511974407410@s.whatsapp.net',
-        //     '5511991879750@s.whatsapp.net'
-        // ];
-        // if (!allowedNumbers.includes(message.from)) {
-        //     this.logger.debug(`Ignoring message from ${message.from}: ${message.body}`);
-        //     return [];
-        // }
 
         // Calculate message age to avoid processing old messages
         const currentTime = Math.floor(Date.now() / 1000); // current time in seconds
@@ -160,7 +142,7 @@ export class WhatsAppService {
         const activeConversationResponse = await this.conversationService.getActiveConversation(from);
         const state = activeConversationResponse.data;
 
-        let requestResponse: ResponseStructure[] = [];
+        let requestResponse: ResponseStructureExtended[] = [];
 
         if (!state) {
             this.logger.debug(`No active conversation for user ${from}`);
@@ -170,6 +152,7 @@ export class WhatsAppService {
                 caption: "",
                 to: from,
                 reply: true,
+                isError: false,
             });
             return;
         }
@@ -184,7 +167,10 @@ export class WhatsAppService {
         // Handle conversation steps
         switch (state.conversationContext.currentStep) {
             case ConversationStep.ProcessingOrder:
-                // No action needed in this case
+                if (userMessage.toLowerCase().includes('pagar a comanda')) {
+                    state.conversationContext.currentStep = ConversationStep.Initial;
+                    requestResponse = await this.handleOrderProcessing(from, userMessage, state, message);
+                }
                 break;
 
             case ConversationStep.ConfirmOrder:
@@ -247,12 +233,14 @@ export class WhatsAppService {
                 if (userMessage.includes('pagar a comanda')) {
                     requestResponse = await this.handleOrderProcessing(from, userMessage, state, message);
                 } else {
+                    this.logger.debug(`No action for user ${from}: ${userMessage}`);
                     requestResponse.push({
                         type: "text",
                         content: "Desculpe, não entendi sua solicitação. Se você gostaria de pagar uma comanda, por favor, use a frase 'Gostaria de pagar a comanda X'.",
                         caption: "",
                         to: from,
                         reply: true,
+                        isError: false,
                     });
                 }
                 break;
@@ -305,8 +293,8 @@ export class WhatsAppService {
         userMessage: string,
         state: ConversationDto,
         message: RequestMessage,
-    ): Promise<ResponseStructure[]> {
-        const sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        const sentMessages: ResponseStructureExtended[] = [];
         const tableId = this.extractOrderId(userMessage);
 
         if (!tableId) {
@@ -454,8 +442,8 @@ export class WhatsAppService {
         from: string,
         state: ConversationDto,
         tableId: number,
-    ): Promise<ResponseStructure[]> {
-        const sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        const sentMessages: ResponseStructureExtended[] = [];
         const conversationId = state._id.toString();
 
         try {
@@ -467,6 +455,20 @@ export class WhatsAppService {
             });
 
             if (!retryResponse.response) {
+                this.logger.error(`[handleProcessingOrder] Error getting order details for table ${tableId}. User: ${from}`);
+
+                if (retryResponse.sentMessages) {
+                    sentMessages.push(...retryResponse.sentMessages);
+                }
+
+                return sentMessages;
+            } else if (!retryResponse.response.content) {
+                sentMessages.push(
+                    ...this.mapTextMessages(
+                        ['👋 Coti Pagamentos - Não há pedidos cadastrados em sua comanda. Por favor, tente novamente mais tarde.'],
+                        from,
+                    ),
+                );
                 return sentMessages;
             }
 
@@ -534,7 +536,7 @@ export class WhatsAppService {
  * - Sends appropriate follow-up messages based on the user's response.
  */
 
-    private mapTextMessages(messages: string[], to: string, reply: boolean = false, toGroup: boolean = false): ResponseStructure[] {
+    private mapTextMessages(messages: string[], to: string, reply: boolean = false, toGroup: boolean = false, isError: boolean = false): ResponseStructureExtended[] {
         return messages.map((message) => {
             const content = toGroup ? `${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}\n${message}` : message;
             return {
@@ -543,6 +545,7 @@ export class WhatsAppService {
                 caption: '',
                 to,
                 reply: reply,
+                isError: isError,
             };
         });
     }
@@ -552,8 +555,8 @@ export class WhatsAppService {
         from: string,
         userMessage: string,
         state: ConversationDto,
-    ): Promise<ResponseStructure[]> {
-        const sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        const sentMessages: ResponseStructureExtended[] = [];
         const positiveResponses = ['1', 'sim', 'correta', 'está correta', 'sim está correta'];
         const negativeResponses = ['2', 'não', 'nao', 'não está correta', 'incorreta', 'não correta'];
 
@@ -637,8 +640,8 @@ export class WhatsAppService {
         from: string,
         userMessage: string,
         state: ConversationDto,
-    ): Promise<ResponseStructure[]> {
-        const sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        const sentMessages: ResponseStructureExtended[] = [];
 
         // Ajuste na lógica: Agora 2 = Sim (Dividir) e 1 = Não (Não dividir)
         const positiveResponses = ['2', 'sim', 'quero dividir', 'dividir', 'sim dividir', 'partes iguais'];
@@ -722,8 +725,8 @@ export class WhatsAppService {
         from: string,
         userMessage: string,
         state: ConversationDto,
-    ): Promise<ResponseStructure[]> {
-        const sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        const sentMessages: ResponseStructureExtended[] = [];
 
         const numPeopleMatch = userMessage.match(/\d+/);
         const numPeople = numPeopleMatch ? parseInt(numPeopleMatch[0]) : NaN;
@@ -775,8 +778,8 @@ export class WhatsAppService {
         from: string,
         state: ConversationDto,
         message: RequestMessage
-    ): Promise<ResponseStructure[]> {
-        let sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
 
         if (this.utilsService.isVcardMessage(message)) {
             try {
@@ -824,8 +827,8 @@ export class WhatsAppService {
     private async handleAllContactsAlreadyReceived(
         from: string,
         state: ConversationDto,
-    ): Promise<ResponseStructure[]> {
-        const sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        const sentMessages: ResponseStructureExtended[] = [];
         const messages = [
             'Você já enviou todos os contatos necessários.',
             'Vamos prosseguir com seu atendimento. 😄',
@@ -884,8 +887,8 @@ export class WhatsAppService {
     private async finalizeContactsReception(
         from: string,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
-        let sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
         const { data: orderData } = await this.orderService.getOrder(state.orderId);
         const totalAmount = orderData.totalAmount;
         const numPeople = state.conversationContext.splitInfo.numberOfPeople;
@@ -960,8 +963,8 @@ export class WhatsAppService {
         state: ConversationDto,
         totalAmount: number,
         individualAmount: number
-    ): Promise<ResponseStructure[]> {
-        const sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        const sentMessages: ResponseStructureExtended[] = [];
         const contacts = state.conversationContext.splitInfo.participants;
 
         for (const contact of contacts) {
@@ -1001,7 +1004,7 @@ export class WhatsAppService {
         from: string,
         state: ConversationDto,
         error: any
-    ): Promise<ResponseStructure[]> {
+    ): Promise<ResponseStructureExtended[]> {
         this.logger.error('Erro ao processar o(s) vCard(s):', error);
 
         const errorMessages = [
@@ -1014,7 +1017,7 @@ export class WhatsAppService {
     private async promptForContact(
         from: string,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
+    ): Promise<ResponseStructureExtended[]> {
         const promptMessages = [
             '📲 Por favor, envie o contato da pessoa com quem deseja dividir a conta.',
         ];
@@ -1032,8 +1035,8 @@ export class WhatsAppService {
         from: string,
         userMessage: string,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
-        let sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
         const noTipKeywords = ['não', 'nao', 'n quero', 'não quero', 'nao quero'];
         const tipPercent = parseFloat(userMessage.replace('%', '').replace(',', '.'));
 
@@ -1063,7 +1066,7 @@ export class WhatsAppService {
     private async handleNoTip(
         from: string,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
+    ): Promise<ResponseStructureExtended[]> {
         // Mensagem de confirmação de "sem problemas".
         const messages = [
             'Sem problemas!',
@@ -1095,8 +1098,8 @@ export class WhatsAppService {
         from: string,
         state: ConversationDto,
         tipPercent: number
-    ): Promise<ResponseStructure[]> {
-        const sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        const sentMessages: ResponseStructureExtended[] = [];
         const userAmount = state.conversationContext.userAmount;
         const totalAmountWithTip = userAmount * (1 + tipPercent / 100);
         const tipResponse = this.getTipResponse(tipPercent);
@@ -1134,7 +1137,7 @@ export class WhatsAppService {
     private async handleInvalidTip(
         from: string,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
+    ): Promise<ResponseStructureExtended[]> {
         const messages = [
             'Por favor, escolha uma das opções de gorjeta: 3%, 5% ou 7%, ou diga que não deseja dar gorjeta.',
         ];
@@ -1158,8 +1161,8 @@ export class WhatsAppService {
         from: string,
         userMessage: string,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
-        let sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
         const conversationId = state._id.toString();
 
         // Remove todos os caracteres que não são dígitos
@@ -1194,7 +1197,7 @@ export class WhatsAppService {
     /**
      * Função para lidar com CPF inválido.
      */
-    private async handleInvalidCPF(from: string, state: ConversationDto): Promise<ResponseStructure[]> {
+    private async handleInvalidCPF(from: string, state: ConversationDto): Promise<ResponseStructureExtended[]> {
         const messages = ['Por favor, informe um CPF válido com 11 dígitos. 🧐'];
         return this.mapTextMessages(messages, from);
     }
@@ -1202,7 +1205,7 @@ export class WhatsAppService {
     /**
      * Função para lidar com as instruções de pagamento após a coleta do CPF.
      */
-    private async handlePaymentInstructions(from: string, state: ConversationDto): Promise<ResponseStructure[]> {
+    private async handlePaymentInstructions(from: string, state: ConversationDto): Promise<ResponseStructureExtended[]> {
         const finalAmount = state.conversationContext.userAmount.toFixed(2);
         const messages = [
             `O valor final da sua conta é: *${formatToBRL(finalAmount)}*`,
@@ -1349,21 +1352,126 @@ export class WhatsAppService {
     }
 
 
-    public async processPayment(paymentData: PaymentProcessorDTO): Promise<ResponseStructure[]> {
+    public async processPayment(paymentData: PaymentProcessorDTO): Promise<ResponseStructureExtended[]> {
         const { from, userMessage, message, mediaData, mediaType, state } = paymentData;
+        this.logger.debug(
+            `[processPayment] Processing payment, has media: ${!!mediaData}, media type: ${mediaType}`
+        );
+        let sentMessages: ResponseStructureExtended[] = [];
 
-        this.logger.debug(`[processPayment] Processing payment, has media: ${!!mediaData}, media type: ${mediaType}`);
-
-        let sentMessages: ResponseStructure[] = [];
-
-        if (this.utilsService.userSentProof(userMessage, message)) {
-            sentMessages = await this.processPaymentProof(from, message, mediaData, mediaType, state);
+        if (process.env.ENVIRONMENT === 'homologation') {
+            // In homologation mode, use predefined comprovante strings instead of PDF proof analysis.
+            sentMessages = await this.processPaymentHomologation(from, userMessage, state);
         } else {
-            sentMessages = await this.remindIfNoProof(from, state);
+            if (this.utilsService.userSentProof(userMessage, message)) {
+                sentMessages = await this.processPaymentProof(from, message, mediaData, mediaType, state);
+            } else {
+                sentMessages = await this.remindIfNoProof(from, state);
+            }
         }
 
         return sentMessages;
     }
+
+    private async processPaymentHomologation(
+        from: string,
+        userMessage: string,
+        state: ConversationDto
+    ): Promise<ResponseStructureExtended[]> {
+        let processedMessages: ResponseStructureExtended[] = [];
+        const messageLower = userMessage.toLowerCase();
+        const expectedAmount = state.conversationContext.userAmount;
+        let amountPaid: number;
+
+        if (messageLower.includes('comprovante-total')) {
+            // Full payment: the paid amount equals the expected amount.
+            amountPaid = expectedAmount;
+        } else if (messageLower.includes('abaixo')) {
+            // Expect a string like "R$ 30-abaixo" or "30-abaixo" indicating an underpayment.
+            const match = userMessage.match(/(?:r\$?\s*)?([\d.,]+)\s*-\s*abaixo/i);
+            if (match && match[1]) {
+                const valueStr = match[1].replace(/[^\d.,]/g, '').replace(',', '.');
+                const difference = parseFloat(valueStr);
+                if (isNaN(difference)) {
+                    return this.mapTextMessages(
+                        ['Valor de diferença inválido para comprovante abaixo.'],
+                        from
+                    );
+                }
+                amountPaid = expectedAmount - difference;
+            } else {
+                return this.mapTextMessages(
+                    ['Formato inválido para comprovante abaixo. Use, por exemplo, "30-abaixo".'],
+                    from
+                );
+            }
+        } else if (messageLower.includes('acima')) {
+            // Expect a string like "R$ 30-acima" or "30-acima" indicating an overpayment.
+            const match = userMessage.match(/(?:r\$?\s*)?([\d.,]+)\s*-\s*acima/i);
+            if (match && match[1]) {
+                const valueStr = match[1].replace(/[^\d.,]/g, '').replace(',', '.');
+                const difference = parseFloat(valueStr);
+                if (isNaN(difference)) {
+                    return this.mapTextMessages(
+                        ['Valor de diferença inválido para comprovante acima.'],
+                        from
+                    );
+                }
+                amountPaid = expectedAmount + difference;
+            } else {
+                return this.mapTextMessages(
+                    ['Formato inválido para comprovante acima. Use, por exemplo, "30-acima".'],
+                    from
+                );
+            }
+        } else {
+            return this.mapTextMessages(
+                ['Comprovante inválido. Envie "comprovante-total", "valor-abaixo" ou "valor-acima".'],
+                from
+            );
+        }
+
+        // Determine the payment scenario based on the calculated amount.
+        const isAmountCorrect = amountPaid === expectedAmount;
+        const isOverpayment = amountPaid > expectedAmount;
+        // For homologation, assume the beneficiary is correct.
+        // Retrieve a dummy active transaction using buildPaymentData with an empty PaymentProofDTO.
+        const { activeTransaction } = await this.utilsService.buildPaymentData(state, {} as PaymentProofDTO);
+        const updateTransactionData: TransactionDTO = {
+            ...activeTransaction,
+            amountPaid: amountPaid,
+            paymentProofs: [] // No actual proof media in homologation.
+        };
+
+        if (isAmountCorrect) {
+            processedMessages = await this.handleCorrectPayment(from, state, updateTransactionData);
+        } else if (isOverpayment) {
+            processedMessages = await this.handleOverpayment(from, state, updateTransactionData, amountPaid);
+        } else {
+            processedMessages = await this.handleUnderpayment(from, state, updateTransactionData, amountPaid);
+        }
+
+        // Update the order with the new payment amount and notify waiters accordingly.
+        const updateAmountResponse = await this.orderService.updateAmountPaidAndCheckOrderStatus(
+            state.orderId,
+            amountPaid,
+            state.userId
+        );
+        const isFullPaymentAmountPaid = updateAmountResponse.data.isPaid;
+
+        if (isFullPaymentAmountPaid) {
+            const tableId = parseInt(state.tableId, 10);
+            await this.tableService.finishPayment(tableId);
+            const notifyWaiterMessages = await this.notifyWaiterTablePaymentComplete(state);
+            processedMessages.push(...notifyWaiterMessages);
+        } else {
+            const notifyWaiterMessages = await this.notifyWaiterPaymentMade(state);
+            processedMessages.push(...notifyWaiterMessages);
+        }
+
+        return processedMessages;
+    }
+
 
 
     /**
@@ -1389,8 +1497,8 @@ export class WhatsAppService {
         mediaData: string | null,
         mediaType: string | null,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
-        let sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
 
         try {
             const analysisResult = await this.utilsService.extractAndAnalyzePaymentProof(
@@ -1406,7 +1514,7 @@ export class WhatsAppService {
         return sentMessages;
     }
 
-    private async handlePaymentProofError(from: string, state: ConversationDto): Promise<ResponseStructure[]> {
+    private async handlePaymentProofError(from: string, state: ConversationDto): Promise<ResponseStructureExtended[]> {
         const errorMessage = [
             'Desculpe, não conseguimos processar o comprovante de pagamento. Por favor, envie novamente.',
         ];
@@ -1437,8 +1545,8 @@ export class WhatsAppService {
         paymentData: PaymentProofDTO,
         mediaData: string | null,
         mediaType: string | null
-    ): Promise<ResponseStructure[]> {
-        let sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
 
         const isDuplicate = await this.transactionService.isPaymentProofTransactionIdDuplicate(
             state.userId,
@@ -1522,7 +1630,7 @@ export class WhatsAppService {
     private async handleDuplicateProof(
         from: string,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
+    ): Promise<ResponseStructureExtended[]> {
         const duplicateMessage = [
             '❌ Este comprovante de pagamento já foi recebido anteriormente.\n\n Por favor, verifique seu comprovante.',
         ];
@@ -1548,7 +1656,7 @@ export class WhatsAppService {
     private async remindIfNoProof(
         from: string,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
+    ): Promise<ResponseStructureExtended[]> {
         const timeSincePaymentStart = Date.now() - state.conversationContext.paymentStartTime;
 
         if (timeSincePaymentStart > 5 * 60 * 1000) {
@@ -1592,7 +1700,7 @@ export class WhatsAppService {
     private async handleInvalidBeneficiary(
         from: string,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
+    ): Promise<ResponseStructureExtended[]> {
         const errorMessage = [
             '❌ O comprovante enviado apresenta inconsistências.\n👨‍💼 Um de nossos atendentes está a caminho para te ajudar!',
         ];
@@ -1634,7 +1742,7 @@ export class WhatsAppService {
         from: string,
         state: ConversationDto,
         updateTransactionData: TransactionDTO
-    ): Promise<ResponseStructure[]> {
+    ): Promise<ResponseStructureExtended[]> {
         const messages = [
             '*👋  Coti Pagamentos* - Pagamento Confirmado ✅\n\nEsperamos que sua experiência tenha sido excelente.',
             'Por favor, informe o seu número de telefone com DDD para enviarmos o comprovante de pagamento.\n\n💡 Exemplo: (11) 91234-5678',
@@ -1686,7 +1794,7 @@ export class WhatsAppService {
         state: ConversationDto,
         updateTransactionData: TransactionDTO,
         amountPaid: number
-    ): Promise<ResponseStructure[]> {
+    ): Promise<ResponseStructureExtended[]> {
         const excessAmount = amountPaid - state.conversationContext.userAmount;
         const messages = [
             `❌ Você pagou um valor superior ao necessário: *${formatToBRL(amountPaid)}* ao invés de *${formatToBRL(state.conversationContext.userAmount)}*.`,
@@ -1739,7 +1847,7 @@ export class WhatsAppService {
         state: ConversationDto,
         updateTransactionData: TransactionDTO,
         amountPaid: number
-    ): Promise<ResponseStructure[]> {
+    ): Promise<ResponseStructureExtended[]> {
         const remainingAmount = state.conversationContext.userAmount - amountPaid;
         const errorMessage = [
             `❌ O valor pago foi de ${formatToBRL(amountPaid)} enquanto deveria ser ${formatToBRL(state.conversationContext.userAmount)}.`,
@@ -1791,8 +1899,8 @@ export class WhatsAppService {
         from: string,
         userMessage: string,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
-        let sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
         const { data: transactionData } = await this.transactionService.getLastOverpaidTransactionByUserAndOrder(
             state.userId,
             state.orderId
@@ -1878,8 +1986,8 @@ export class WhatsAppService {
         from: string,
         userMessage: string,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
-        let sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
         const conversationId = state._id.toString();
 
         const positiveResponses = ['1', 'nova transação', 'realizar nova transação', 'pagar valor restante'];
@@ -1993,8 +2101,8 @@ export class WhatsAppService {
         from: string,
         userMessage: string,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
-        let sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
         const conversationId = state._id.toString();
 
         const phoneClean = userMessage.replace(/\D/g, '');
@@ -2056,8 +2164,8 @@ export class WhatsAppService {
         from: string,
         userMessage: string,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
-        let sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
         const conversationId = state._id.toString();
 
         if (!state.conversationContext.feedback) {
@@ -2131,8 +2239,8 @@ export class WhatsAppService {
         from: string,
         userMessage: string,
         state: ConversationDto
-    ): Promise<ResponseStructure[]> {
-        let sentMessages: ResponseStructure[] = [];
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
         const conversationId = state._id.toString();
 
         if (!state.conversationContext.feedback) {
@@ -2233,15 +2341,15 @@ export class WhatsAppService {
     }
 
 
-    private async notifyWaiterTableSplit(state: ConversationDto): Promise<ResponseStructure[]> {
-        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
+    private async notifyWaiterTableSplit(state: ConversationDto): Promise<ResponseStructureExtended[]> {
+        const groupId = this.waiterGroupId;
         const message = `👋 Coti Pagamentos - Mesa ${state.tableId} irá compartilhar o pagamento`;
 
         return this.mapTextMessages([message], groupId);
     }
 
-    private async notifyWaiterTablePaymentComplete(state: ConversationDto): Promise<ResponseStructure[]> {
-        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
+    private async notifyWaiterTablePaymentComplete(state: ConversationDto): Promise<ResponseStructureExtended[]> {
+        const groupId = this.waiterGroupId;
 
         try {
             const { orderId, tableId } = state;
@@ -2285,8 +2393,8 @@ export class WhatsAppService {
      * - Logs the status of the message delivery or errors in case of failure.
      */
 
-    private async notifyWaiterPaymentMade(state: ConversationDto): Promise<ResponseStructure[]> {
-        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
+    private async notifyWaiterPaymentMade(state: ConversationDto): Promise<ResponseStructureExtended[]> {
+        const groupId = this.waiterGroupId;
 
         try {
             const { orderId, tableId, conversationContext: { userAmount }, userId } = state;
@@ -2372,8 +2480,8 @@ export class WhatsAppService {
      * - Handles and logs any errors that occur during the message-sending process.
      */
 
-    private notifyWaiterAuthenticationStatus(message: string, state: ConversationDto): ResponseStructure[] {
-        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
+    private notifyWaiterAuthenticationStatus(message: string, state: ConversationDto): ResponseStructureExtended[] {
+        const groupId = this.waiterGroupId;
 
         this.logger.log(`[notifyWaiterAuthenticationStatus] Notificação de status de autenticação: ${message}`);
 
@@ -2393,8 +2501,8 @@ export class WhatsAppService {
      * - Handles and logs any errors encountered during the forwarding process.
      */
 
-    private sendProofToGroup(mediaData: string, mediaType: string, state: ConversationDto): ResponseStructure[] {
-        const groupId = '120363379784971558@g.us'; // [HOM][Comprovantes] Cris Parrilla
+    private sendProofToGroup(mediaData: string, mediaType: string, state: ConversationDto): ResponseStructureExtended[] {
+        const groupId = this.paymentProofGroupId;
 
         this.logger.log(`[sendProofToGroup] Enviando comprovante para o grupo: ${groupId}`);
 
@@ -2416,6 +2524,7 @@ export class WhatsAppService {
                 caption: caption,
                 to: groupId,
                 reply: false,
+                isError: false,
             }
         ];
     }
@@ -2434,8 +2543,8 @@ export class WhatsAppService {
      * - Handles and logs any errors that occur during the message-sending process.
      */
 
-    private notifyWaiterTableStartedPayment(tableNumber: number): ResponseStructure[] {
-        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
+    private notifyWaiterTableStartedPayment(tableNumber: number): ResponseStructureExtended[] {
+        const groupId = this.waiterGroupId;
 
         this.logger.log(`[notifyWaiterTableStartedPayment] Notificação de início de pagamentos para a mesa ${tableNumber}`);
 
@@ -2444,8 +2553,8 @@ export class WhatsAppService {
 
     }
 
-    private notifyRefundRequest(tableNumber: number, refundAmount: number): ResponseStructure[] {
-        const groupId = '120363360992675621@g.us'; // [HOM][Reembolso] Cris Parrilla
+    private notifyRefundRequest(tableNumber: number, refundAmount: number): ResponseStructureExtended[] {
+        const groupId = this.refundGroupId;
 
         this.logger.log(`[notifyRefundRequestToWaiter] Notificação de estorno para a mesa ${tableNumber}`);
 
@@ -2453,8 +2562,8 @@ export class WhatsAppService {
         return this.mapTextMessages([message], groupId);
     }
 
-    private notifyWaiterWrongOrder(tableNumber: number): ResponseStructure[] {
-        const groupId = '120363379149730361@g.us'; // [HOM][Atendentes] Cris Parrilla
+    private notifyWaiterWrongOrder(tableNumber: number): ResponseStructureExtended[] {
+        const groupId = this.waiterGroupId;
 
         this.logger.log(`[notifyWaiterWrongOrder] Notificação de pedido errado para a mesa ${tableNumber}`);
 
@@ -2567,7 +2676,7 @@ export class WhatsAppService {
         maxRetries?: number;
     }): Promise<retryRequestResponse> {
         let attempts = 0;
-        let sentMessages: ResponseStructure[] = [];
+        let sentMessages: ResponseStructureExtended[] = [];
 
         while (attempts < maxRetries) {
             try {
@@ -2600,13 +2709,17 @@ export class WhatsAppService {
         }
 
         const errorMessage = this.generateStageErrorMessage(state);
-        sentMessages.push(...this.mapTextMessages([errorMessage], from));
+        sentMessages.push(...this.mapTextMessages([errorMessage], from, true, false, true));
+
+        const waiterErrorMessage = `👋 *Coti Pagamentos* - Erro ao processar a Mesa ${state.tableId}.\n\nSe direcione para a mesa para verificar o problema.`;
+        sentMessages.push(...this.mapTextMessages([waiterErrorMessage], this.waiterGroupId));
 
         const response: retryRequestResponse = {
             response: null,
             sentMessages,
         };
 
+        this.logger.error(`[retryRequestWithNotification] Max retries reached for user ${from} at stage ${state.conversationContext.currentStep}. Error: ${errorMessage}`);
         return response;
     }
 
