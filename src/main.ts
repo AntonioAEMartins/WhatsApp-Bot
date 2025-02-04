@@ -2,11 +2,14 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import * as dotenv from 'dotenv';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
+import { printConfig } from './print.config';
 
 dotenv.config()
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
+
   const app = await NestFactory.create(AppModule);
 
   app.useGlobalPipes(
@@ -16,9 +19,6 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
-
-  // app.enableShutdownHooks();
-
 
   // Swagger setup
   const config = new DocumentBuilder()
@@ -32,5 +32,7 @@ async function bootstrap() {
   SwaggerModule.setup('api', app, document);
 
   await app.listen(3005);
+
+  printConfig();
 }
 bootstrap();
