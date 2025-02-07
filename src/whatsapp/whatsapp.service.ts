@@ -902,7 +902,7 @@ export class WhatsAppService {
         const { data: orderData } = await this.orderService.getOrder(state.orderId);
         const totalAmount = orderData.totalAmount;
         const numPeople = state.conversationContext.splitInfo.numberOfPeople;
-        const individualAmount = parseFloat((totalAmount / numPeople).toFixed(2));
+        const individualAmount = this.formatToTwoDecimalPlaces(totalAmount / numPeople);
 
         await this.updateConversationAndCreateTransaction(state, individualAmount, totalAmount);
 
@@ -1110,8 +1110,8 @@ export class WhatsAppService {
         tipPercent: number
     ): Promise<ResponseStructureExtended[]> {
         const sentMessages: ResponseStructureExtended[] = [];
-        const userAmount = state.conversationContext.userAmount;
-        const totalAmountWithTip = userAmount * (1 + tipPercent / 100);
+        const userAmount = this.formatToTwoDecimalPlaces(state.conversationContext.userAmount);
+        const totalAmountWithTip = this.formatToTwoDecimalPlaces(userAmount * (1 + tipPercent / 100));
         const tipResponse = this.getTipResponse(tipPercent);
 
         // Mantém a mensagem de agradecimento ou destaque da gorjeta
@@ -1139,7 +1139,7 @@ export class WhatsAppService {
         });
 
         // Ajusta o valor direto no estado (caso seja usado em outras partes do fluxo)
-        state.conversationContext.userAmount = totalAmountWithTip;
+        state.conversationContext.userAmount = this.formatToTwoDecimalPlaces(totalAmountWithTip);
 
         return sentMessages;
     }
@@ -1216,7 +1216,7 @@ export class WhatsAppService {
      * Função para lidar com as instruções de pagamento após a coleta do CPF.
      */
     private async handlePaymentInstructions(from: string, state: ConversationDto): Promise<ResponseStructureExtended[]> {
-        const finalAmount = state.conversationContext.userAmount.toFixed(2);
+        const finalAmount = this.formatToTwoDecimalPlaces(state.conversationContext.userAmount);
         const messages = [
             `O valor final da sua conta é: *${formatToBRL(finalAmount)}*`,
             'Segue abaixo a chave PIX para pagamento 👇',
@@ -1277,7 +1277,7 @@ export class WhatsAppService {
             conversationId: state._id.toString(),
             userId: state.userId,
             amountPaid: 0,
-            expectedAmount: state.conversationContext.userAmount,
+            expectedAmount: this.formatToTwoDecimalPlaces(state.conversationContext.userAmount),
             status: PaymentStatus.Pending,
             initiatedAt: new Date(),
         };
@@ -1390,7 +1390,7 @@ export class WhatsAppService {
     ): Promise<ResponseStructureExtended[]> {
         let processedMessages: ResponseStructureExtended[] = [];
         const messageLower = userMessage.toLowerCase();
-        const expectedAmount = state.conversationContext.userAmount;
+        const expectedAmount = this.formatToTwoDecimalPlaces(state.conversationContext.userAmount);
         let amountPaid: number;
 
         if (messageLower.includes('comprovante-total')) {
@@ -1401,7 +1401,7 @@ export class WhatsAppService {
             const match = userMessage.match(/(?:r\$?\s*)?([\d.,]+)\s*-\s*abaixo/i);
             if (match && match[1]) {
                 const valueStr = match[1].replace(/[^\d.,]/g, '').replace(',', '.');
-                const difference = parseFloat(valueStr);
+                const difference = this.formatToTwoDecimalPlaces(parseFloat(valueStr));
                 if (isNaN(difference)) {
                     return this.mapTextMessages(
                         ['Valor de diferença inválido para comprovante abaixo.'],
@@ -1420,7 +1420,7 @@ export class WhatsAppService {
             const match = userMessage.match(/(?:r\$?\s*)?([\d.,]+)\s*-\s*acima/i);
             if (match && match[1]) {
                 const valueStr = match[1].replace(/[^\d.,]/g, '').replace(',', '.');
-                const difference = parseFloat(valueStr);
+                const difference = this.formatToTwoDecimalPlaces(parseFloat(valueStr));
                 if (isNaN(difference)) {
                     return this.mapTextMessages(
                         ['Valor de diferença inválido para comprovante acima.'],
@@ -1442,8 +1442,8 @@ export class WhatsAppService {
         }
 
         // Determine the payment scenario based on the calculated amount.
-        const isAmountCorrect = amountPaid === expectedAmount;
-        const isOverpayment = amountPaid > expectedAmount;
+        const isAmountCorrect = this.formatToTwoDecimalPlaces(amountPaid) === expectedAmount;
+        const isOverpayment = this.formatToTwoDecimalPlaces(amountPaid) > expectedAmount;
         // For homologation, assume the beneficiary is correct.
         // Retrieve a dummy active transaction using buildPaymentData with an empty PaymentProofDTO.
         const { activeTransaction } = await this.utilsService.buildPaymentData(state, {} as PaymentProofDTO);
@@ -1573,8 +1573,8 @@ export class WhatsAppService {
             paymentData
         );
         const isBeneficiaryCorrect = this.utilsService.validateBeneficiary(paymentData);
-        const isAmountCorrect = amountPaid === activeTransaction.expectedAmount;
-        const isOverpayment = amountPaid > activeTransaction.expectedAmount;
+        const isAmountCorrect = this.formatToTwoDecimalPlaces(amountPaid) === this.formatToTwoDecimalPlaces(activeTransaction.expectedAmount);
+        const isOverpayment = this.formatToTwoDecimalPlaces(amountPaid) > this.formatToTwoDecimalPlaces(activeTransaction.expectedAmount);
 
         const updateTransactionData: TransactionDTO = {
             ...activeTransaction,
@@ -2842,7 +2842,11 @@ export class WhatsAppService {
         }
 
         const numPeople = state.conversationContext.splitInfo.numberOfPeople || 1;
-        return parseFloat((totalAmount / numPeople).toFixed(2));
+        return this.formatToTwoDecimalPlaces(totalAmount / numPeople);
+    }
+
+    private formatToTwoDecimalPlaces(value: number): number {
+        return Math.floor(value * 100) / 100;
     }
 
 }
