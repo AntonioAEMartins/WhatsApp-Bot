@@ -1522,6 +1522,7 @@ export class WhatsAppService {
                 mediaData,
                 state,
             );
+            this.logger.debug(`[processPaymentProof] Analysis result: ${JSON.stringify(analysisResult)}`);
             sentMessages = await this.handleProofAnalysisResult(from, state, analysisResult, mediaData, mediaType);
         } catch (error) {
             this.logger.error('Error processing payment proof:', error);
@@ -1590,6 +1591,7 @@ export class WhatsAppService {
         };
 
         if (!isBeneficiaryCorrect) {
+            this.logger.debug(`[handleProofAnalysisResult] Beneficiary is not correct: ${JSON.stringify(paymentData)}`);
             sentMessages = await this.handleInvalidBeneficiary(from, state);
             return sentMessages;
         }
