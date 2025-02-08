@@ -1348,7 +1348,14 @@ export class WhatsAppService {
             const signatures = {
                 'application/pdf': [0x25, 0x50, 0x44, 0x46], // %PDF
                 'image/png': [0x89, 0x50, 0x4E, 0x47],       // ‰PNG
-                'image/jpeg': [0xFF, 0xD8, 0xFF]              // ÿØÿ
+                'image/jpeg': [0xFF, 0xD8, 0xFF],              // ÿØÿ
+                'image/jpg': [0xFF, 0xD8, 0xFF],               // ÿØÿ
+                'image/webp': [0x52, 0x49, 0x46, 0x46],           // RIFF
+                'image/gif': [0x47, 0x49, 0x46, 0x38],           // GIF87a
+                'image/bmp': [0x42, 0x4D],                       // BM
+                'image/tiff': [0x49, 0x49, 0x2A, 0x00],          // II*
+                'image/heic': [0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63], // ftypheic
+                'image/heif': [0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x66] // ftypheif
             };
 
             for (const [mime, sig] of Object.entries(signatures)) {
