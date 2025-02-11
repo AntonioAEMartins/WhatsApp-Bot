@@ -1,15 +1,21 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { CreatePaymentDto, PaymentMethodCard, PaymentType, UserPaymentInfoDto } from './dto/ipag-pagamentos.dto';
 import { IPagTransactionResponse } from './types/ipag-response.types';
 import { CreateEstablishmentDto, CreateSellerDto } from './dto/ipag-marketplace.dto';
 import { CreateCheckoutDto } from './dto/ipag-checkout.dto';
+import { Db } from 'mongodb';
+import { ClientProvider } from 'src/db/db.module';
+import { TransactionService } from 'src/transaction/transaction.service';
+import { PaymentStatus } from 'src/conversation/dto/conversation.enums';
 @Injectable()
 export class IPagService {
     private readonly baseURL: string;
     private readonly apiId: string;
     private readonly apiKey: string;
 
-    constructor() {
+    constructor(
+        private readonly transactionService: TransactionService,
+    ) {
         // You can set these values using environment variables for security
 
         const ipagBaseUrl = process.env.ENVIRONMENT === 'development' ? process.env.IPAG_BASE_DEV_URL : process.env.IPAG_BASE_PROD_URL;
@@ -63,8 +69,18 @@ export class IPagService {
         transaction_id: string,
     ): Promise<IPagTransactionResponse> {
 
+        const transaction = await this.transactionService.getTransaction(transaction_id);
+
+        if (!transaction) {
+            throw new HttpException('Transaction not found', HttpStatus.NOT_FOUND);
+        }
+
+        if (transaction.data.status !== PaymentStatus.Pending) {
+            throw new HttpException('Transaction not pending', HttpStatus.BAD_REQUEST);
+        }
+
         const paymentData: CreatePaymentDto = {
-            amount: userPaymentInfo.amount,
+            amount: transaction.data.expectedAmount,
             payment: {
                 type: PaymentType.card,
                 method: this.getCardMethod(userPaymentInfo.cardInfo.number),
