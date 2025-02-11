@@ -12,7 +12,7 @@ import { UserModule } from './user/user.module';
 import { TransactionModule } from './transaction/transaction.module';
 import { OrderModule } from './order/order.module';
 import { BullModule } from '@nestjs/bull';
-
+import { IPagModule } from './payment-gateway/ipag.module';
 @Module({
   imports: [
     WhatsAppModule,
@@ -23,7 +23,7 @@ import { BullModule } from '@nestjs/bull';
     UserModule,
     TransactionModule,
     OrderModule,
-    
+    IPagModule,
   ],
   controllers: [AppController],
   providers: [AppService],
