@@ -41,6 +41,21 @@ export function printConfig(): void {
     }
     logger.log(`🌐 Cloud Service URL: ${cloudServiceUrl}`);
 
+    // iPag URL
+    let iPagUrl = "⚠️ Undefined Environment";
+    switch (process.env.ENVIRONMENT) {
+        case 'development':
+            iPagUrl = process.env.IPAG_BASE_DEV_URL;
+            break;
+        case 'homologation':
+            iPagUrl = process.env.IPAG_BASE_DEV_URL;
+            break;
+        case 'production':
+            iPagUrl = process.env.IPAG_BASE_PROD_URL;
+            break;
+    }
+    logger.log(`💳 iPag URL: ${iPagUrl}`);
+
     // MongoDB Configuration
     logger.log('=================================');
     logger.log('📦 MongoDB Configuration:');
