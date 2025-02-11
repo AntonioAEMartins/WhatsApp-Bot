@@ -197,6 +197,10 @@ export class WhatsAppService {
                 requestResponse = await this.handleCollectCPF(from, userMessage, state);
                 break;
 
+            case ConversationStep.PaymentMethodSelection:
+                requestResponse = await this.handlePaymentMethodSelection(from, userMessage, state);
+                break;
+
             case ConversationStep.WaitingForPayment:
                 requestResponse = await this.handleWaitingForPayment(from, userMessage, state, message);
                 break;
@@ -1175,31 +1179,48 @@ export class WhatsAppService {
         let sentMessages: ResponseStructureExtended[] = [];
         const conversationId = state._id.toString();
 
-        // Remove todos os caracteres que não são dígitos
+        // Validação do CPF (mesmo código que você já tem)
         const cpfLimpo = userMessage.replace(/\D/g, '');
-
-        // Verifica se o CPF possui 11 dígitos e é válido matematicamente
         if (cpfLimpo.length !== 11 || !this.isValidCPF(cpfLimpo)) {
             sentMessages = await this.handleInvalidCPF(from, state);
             return sentMessages;
         }
 
-        // Armazena o CPF no contexto e avança para a etapa de pagamento
-        const updatedContext: ConversationContextDTO = {
-            ...state.conversationContext,
-            currentStep: ConversationStep.WaitingForPayment,
-            paymentStartTime: Date.now(),
-            cpf: cpfLimpo,
-        };
+        // Se estivermos em homologação, vamos para a seleção do método de pagamento
+        if (process.env.ENVIRONMENT === 'homologation') {
+            const updatedContext: ConversationContextDTO = {
+                ...state.conversationContext,
+                currentStep: ConversationStep.PaymentMethodSelection, // novo passo
+                paymentStartTime: Date.now(),
+                cpf: cpfLimpo,
+            };
 
-        await this.conversationService.updateConversation(conversationId, {
-            userId: state.userId,
-            conversationContext: updatedContext,
-        });
+            await this.conversationService.updateConversation(conversationId, {
+                userId: state.userId,
+                conversationContext: updatedContext,
+            });
 
-        // Obtém as mensagens para a etapa de pagamento
-        const paymentMessages = await this.handlePaymentInstructions(from, state);
-        sentMessages.push(...paymentMessages);
+            sentMessages.push(...this.mapTextMessages(
+                ['Por favor, escolha a forma de pagamento:\n1- PIX\n2- Cartão de Crédito'],
+                from
+            ));
+        } else {
+            // Fluxo normal (produção, homologação não se aplica)
+            const updatedContext: ConversationContextDTO = {
+                ...state.conversationContext,
+                currentStep: ConversationStep.WaitingForPayment,
+                paymentStartTime: Date.now(),
+                cpf: cpfLimpo,
+            };
+
+            await this.conversationService.updateConversation(conversationId, {
+                userId: state.userId,
+                conversationContext: updatedContext,
+            });
+
+            const paymentMessages = await this.handlePaymentInstructions(from, state);
+            sentMessages.push(...paymentMessages);
+        }
 
         return sentMessages;
     }
@@ -1283,6 +1304,89 @@ export class WhatsAppService {
         };
 
         await this.transactionService.createTransaction(transactionData);
+    }
+
+    private async handlePaymentMethodSelection(
+        from: string,
+        userMessage: string,
+        state: ConversationDto
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
+        const conversationId = state._id.toString();
+        const userChoice = userMessage.trim().toLowerCase();
+
+        if (userChoice === '1' || userChoice.includes('pix')) {
+            // Usuário escolheu PIX: atualiza para o passo WaitingForPayment e envia as instruções PIX
+            const updatedContext: ConversationContextDTO = {
+                ...state.conversationContext,
+                currentStep: ConversationStep.WaitingForPayment, // segue para pagamento PIX
+                // opcionalmente, pode gravar o método escolhido:
+                // paymentMethod: 'pix'
+            };
+
+            await this.conversationService.updateConversation(conversationId, {
+                userId: state.userId,
+                conversationContext: updatedContext,
+            });
+
+            const paymentMessages = await this.handlePaymentInstructions(from, state);
+            sentMessages.push(...paymentMessages);
+        } else if (userChoice === '2' || userChoice.includes('cartão') || userChoice.includes('crédito')) {
+            // Usuário escolheu Cartão de Crédito: atualiza e chama o tratamento do cartão
+            const updatedContext: ConversationContextDTO = {
+                ...state.conversationContext,
+                currentStep: ConversationStep.WaitingForPayment, // ou outro passo se preferir
+                // opcional: paymentMethod: 'credit_card'
+            };
+
+            await this.conversationService.updateConversation(conversationId, {
+                userId: state.userId,
+                conversationContext: updatedContext,
+            });
+
+            sentMessages = await this.handleCreditCardPayment(from, state);
+        } else {
+            // Resposta inválida; pede novamente a opção
+            sentMessages.push(...this.mapTextMessages(
+                ['Opção inválida. Por favor, escolha:\n1- PIX\n2- Cartão de Crédito'],
+                from
+            ));
+        }
+
+        return sentMessages;
+    }
+
+    private async handleCreditCardPayment(
+        from: string,
+        state: ConversationDto
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
+        // Aqui você pode obter o link de pagamento do gateway (por exemplo, de uma variável de ambiente)
+        const paymentLink = process.env.CREDIT_CARD_PAYMENT_LINK || 'http://example.com/pagamento-cartao';
+
+        // Envia uma mensagem com o link de pagamento
+        sentMessages.push(...this.mapTextMessages(
+            [
+                'Você escolheu pagar com Cartão de Crédito.',
+                `Efetue o pagamento através do link:`,
+                paymentLink,
+            ],
+            from
+        ));
+
+        // Atualiza o estado da conversa, se necessário (ex.: permanecer no WaitingForPayment aguardando o comprovante)
+        const conversationId = state._id.toString();
+        const updatedContext: ConversationContextDTO = {
+            ...state.conversationContext,
+            currentStep: ConversationStep.WaitingForPayment,
+        };
+
+        await this.conversationService.updateConversation(conversationId, {
+            userId: state.userId,
+            conversationContext: updatedContext,
+        });
+
+        return sentMessages;
     }
 
 
