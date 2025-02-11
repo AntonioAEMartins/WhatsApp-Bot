@@ -31,6 +31,7 @@ export enum ConversationStep {
   WaitingForContacts = 'waiting_for_contacts',
   ExtraTip = 'extra_tip',
   CollectCPF = 'collect_cpf',
+  PaymentMethodSelection = 'payment_method_selection',
   WaitingForPayment = 'waiting_for_payment',
   AwaitingUserDecision = 'awaiting_user_decision',
   PaymentReminder = 'payment_reminder',
