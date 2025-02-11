@@ -47,26 +47,26 @@ export type PaymentMethodMethod =
 export class CardDto {
 
     @MaxLength(50)
-    @IsNotEmpty()
+    @IsNotEmpty({ message: "holder is required" })
     @IsString()
     holder: string
 
-    @IsNotEmpty()
+    @IsNotEmpty({ message: "number is required" })
     @MaxLength(19)
     @IsString()
     number: string
 
-    @IsNotEmpty()
+    @IsNotEmpty({ message: "expiry_month is required" })
     @MaxLength(2)
     @IsString()
     expiry_month: string
 
-    @IsNotEmpty()
+    @IsNotEmpty({ message: "expiry_year is required" })
     @MaxLength(4)
     @IsString()
     expiry_year: string
 
-    @IsNotEmpty()
+    @IsNotEmpty({ message: "cvv is required" })
     @MaxLength(4)
     @IsString()
     cvv: string
@@ -181,12 +181,12 @@ export class BillingAddressDto {
 }
 
 export class CustomerDto {
-    @IsNotEmpty()
+    @IsNotEmpty({ message: "name is required" })
     @IsString()
     @MaxLength(80)
-        name: string
+    name: string
 
-    @IsNotEmpty()
+    @IsNotEmpty({ message: "cpf_cnpj is required" })
     @IsString()
     @MaxLength(14)
     cpf_cnpj: string
@@ -288,36 +288,33 @@ export class CreatePaymentDto {
 }
 
 export class UserPaymentInfoDto {
-    @IsNotEmpty()
-    @IsEnum(PaymentType)
-    paymentType: PaymentType;
 
-    @IsNotEmpty()
-    @IsNumber()
-    amount: number;
-
-    @IsOptional()
+    @IsNotEmpty({ message: "cardInfo is required" })
     @ValidateNested()
     @Type(() => CardDto)
-    cardInfo?: CardDto;
+    cardInfo: CardDto;
 
-    @IsOptional()
+    @IsNotEmpty({ message: "customerInfo is required" })
     @ValidateNested()
     @Type(() => CustomerDto)
-    customerInfo?: CustomerDto;
+    customerInfo: CustomerDto;
 
     @IsOptional()
     @ValidateNested()
     @Type(() => BillingAddressDto)
     billingAddress?: BillingAddressDto;
 
-    @IsOptional()
+    @IsNotEmpty({ message: "saveCard is required" })
     @IsBoolean()
-    saveCard?: boolean;
+    saveCard: boolean;
+
+    @IsNotEmpty({ message: "transactionId is required" })
+    @IsString()
+    transactionId: string;
 }
 
 export class CardInfoDto {
     @IsNotEmpty()
     @IsString()
     number: string;
-  }
+}
