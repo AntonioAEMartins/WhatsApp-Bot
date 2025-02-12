@@ -1264,7 +1264,7 @@ export class WhatsAppService {
     }
 
 
-    private async createTransaction(state: ConversationDto, paymentMethod: PaymentMethod, userName: string): Promise<string | void> {
+    private async createTransaction(state: ConversationDto, paymentMethod: PaymentMethod, userName: string): Promise<{ transactionResponse: TransactionDTO, pixKey: string }> {
 
         this.logger.log(`[createTransaction] userId: ${state.userId} paymentMethod: ${paymentMethod}`);
 
@@ -1281,11 +1281,12 @@ export class WhatsAppService {
         };
 
         const transactionResponse = await this.transactionService.createTransaction(transactionData);
+        const transactionId = transactionResponse.data._id.toString();
 
         if (paymentMethod === PaymentMethod.PIX) {
             const userPaymentInfo: UserPaymentPixInfoDto = {
-                transactionId: transactionResponse.data._id.toString(),
-                pixExpiresIn: 60 * 10, // 10 minutos
+                transactionId: transactionId,
+                pixExpiresIn: 600, // 10 minutes in seconds
                 customerInfo: {
                     name: userName,
                     cpf_cnpj: state.conversationContext.cpf,
@@ -1293,16 +1294,15 @@ export class WhatsAppService {
             };
 
             const ipagResponse = await this.ipagService.createPIXPayment(userPaymentInfo);
+            const ipagTransactionId = ipagResponse.uuid;
+            const pixKey = ipagResponse.attributes.pix.qrcode;
 
-            await this.transactionService.updateTransaction(
-                transactionResponse.data._id.toString(),
-                { ipagTransactionId: ipagResponse.uuid }
-            );
+            await this.transactionService.updateTransaction(transactionId, { ipagTransactionId });
 
-            return ipagResponse.attributes.pix.qrcode;
-        } else {
-            return;
+            return { transactionResponse: transactionResponse.data, pixKey };
         }
+
+        return { transactionResponse: transactionResponse.data, pixKey: null };
     }
 
 
@@ -1350,9 +1350,12 @@ export class WhatsAppService {
             });
 
             // Cria a transação utilizando o método Cartão de Crédito
-            await this.createTransaction(state, PaymentMethod.CREDIT_CARD, state.conversationContext.userName);
+            const transactionResponse = await this.createTransaction(state, PaymentMethod.CREDIT_CARD, state.conversationContext.userName);
 
-            sentMessages = await this.handleCreditCardPayment(from, state);
+
+            this.logger.log(`[handlePaymentMethodSelection] transactionResponse: ${transactionResponse.transactionResponse._id}`);
+            sentMessages = await this.handleCreditCardPayment(from, state, transactionResponse.transactionResponse);
+
         } else {
             // Resposta inválida; solicita nova escolha
             sentMessages.push(
@@ -1397,11 +1400,11 @@ export class WhatsAppService {
         });
 
         // Cria a transação utilizando o método PIX agora que temos o nome e captura o PIX key
-        const pixKey = await this.createTransaction(state, PaymentMethod.PIX, name);
+        const transactionResponse = await this.createTransaction(state, PaymentMethod.PIX, name);
 
         // Envia as instruções de pagamento via PIX utilizando o PIX key retornado
-        if (pixKey) {
-            const paymentMessages = await this.handlePIXPaymentInstructions(from, state, pixKey);
+        if (transactionResponse.pixKey) {
+            const paymentMessages = await this.handlePIXPaymentInstructions(from, state, transactionResponse.pixKey);
             sentMessages.push(...paymentMessages);
         }
 
@@ -1411,21 +1414,26 @@ export class WhatsAppService {
 
     private async handleCreditCardPayment(
         from: string,
-        state: ConversationDto
+        state: ConversationDto,
+        transactionResponse: TransactionDTO
     ): Promise<ResponseStructureExtended[]> {
         let sentMessages: ResponseStructureExtended[] = [];
         // Aqui você pode obter o link de pagamento do gateway (por exemplo, de uma variável de ambiente)
-        const paymentLink = process.env.CREDIT_CARD_PAYMENT_LINK || 'http://example.com/pagamento-cartao';
+        const paymentLink = `${process.env.CREDIT_CARD_PAYMENT_LINK}?transactionId=${transactionResponse._id}`;
+        this.logger.log(`[handleCreditCardPayment] paymentLink: ${paymentLink}`);
 
         // Envia uma mensagem com o link de pagamento
         sentMessages.push(...this.mapTextMessages(
             [
-                'Você escolheu pagar com Cartão de Crédito.',
-                `Efetue o pagamento através do link:`,
+                `O valor final da conta é de ${formatToBRL(state.conversationContext.userAmount)}*.`,
+                `*Clique no link abaixo* para realizar o pagamento com Cartão de Crédito:`,
                 paymentLink,
+                `*Importante:* Não consegue clicar no link?\n\n*Salve* nosso contato na agenda.\nOu copie e cole em seu navegador.`
             ],
             from
         ));
+
+
 
         // Atualiza o estado da conversa, se necessário (ex.: permanecer no WaitingForPayment aguardando o comprovante)
         const conversationId = state._id.toString();
