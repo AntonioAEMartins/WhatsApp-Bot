@@ -90,6 +90,10 @@ export class BaseTransactionDTO {
     @IsOptional()
     @IsEnum(PaymentDescription)
     description?: PaymentDescription;
+
+    @IsOptional()
+    @IsString()
+    ipagTransactionId?: string;
 }
 
 export class CreateTransactionDTO extends BaseTransactionDTO {
