@@ -5,6 +5,7 @@ import * as dotenv from 'dotenv';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { printConfig } from './print.config';
 import * as bodyParser from 'body-parser';
+import * as cors from 'cors';
 dotenv.config()
 
 async function bootstrap() {
@@ -19,6 +20,11 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
+
+  // Enable CORS for https://pay.astra1.com.br/
+  app.use(cors({
+    origin: 'https://pay.astra1.com.br',
+  }));
 
   // Swagger setup
   const config = new DocumentBuilder()
