@@ -24,6 +24,7 @@ export enum MessageType {
 
 export enum ConversationStep {
   Initial = 'initial',
+  CollectName = 'collect_name',
   ProcessingOrder = 'processing_order',
   ConfirmOrder = 'confirm_order',
   SplitBill = 'split_bill',
