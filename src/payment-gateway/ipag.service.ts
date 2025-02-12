@@ -138,6 +138,7 @@ export class IPagService {
 
         const paymentData: CreatePaymentDto = {
             amount: transaction.data.expectedAmount,
+            callback_url: "https://webhook.astra1.com.br/ipag/callback",
             payment: {
                 type: PaymentType.card,
                 method: this.getCardMethod(userPaymentInfo.cardInfo.number),
@@ -308,9 +309,8 @@ export class IPagService {
             const result = this.processTransactionResponse(callbackData);
 
             console.log("[processCallback] Result", result);
-            // Se o processamento indicar sucesso, retorna a resposta de sucesso
+
             if (result.type === "success") {
-                // console.log("Callback data", callbackData);
                 console.log("[processCallback] Callback data is a transaction response");
                 if (this.isTransactionResponse(callbackData)) { // usa a type guard
                     const transaction = await this.transactionService.getTransactionByipagTransactionId(callbackData.uuid);
@@ -318,7 +318,8 @@ export class IPagService {
                     const conversation = await this.conversationService.getConversation(transaction.data.conversationId);
 
                     if (transaction.data.status !== PaymentStatus.Pending) {
-                        throw new HttpException('Transaction not pending', HttpStatus.BAD_REQUEST);
+                        console.warn('[processCallback] Transaction not pending, ignoring callback');
+                        return { type: "error", errors: ["Transaction not pending."] };
                     }
 
                     await this.transactionService.updateTransaction(transaction.data._id.toString(), {
@@ -330,13 +331,14 @@ export class IPagService {
                         transactionId: transaction.data._id.toString(),
                         from: conversation.data.userId,
                         state: conversation.data,
-                    }
+                    };
 
                     this.paymentQueue.add(paymentProcessorDTO);
                     return { type: "success", errors: [] };
                 } else {
-                    // Se não for uma transação de sucesso, retorne um erro
-                    return { type: "error", errors: ["Callback não contém dados de transação válidos."] };
+                    // Se não for uma transação de sucesso, retorne um erro genérico
+                    console.error("[processCallback] Invalid transaction data in callback.");
+                    return { type: "error", errors: ["Callback does not contain valid transaction data."] };
                 }
             } else {
                 console.error('[processCallback] Transaction error:', result.erros);
@@ -344,12 +346,11 @@ export class IPagService {
             }
         } catch (error) {
             console.error('Error handling callback:', error);
-            if (error instanceof HttpException) {
-                throw error;
-            }
-            throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+            // Retorna um erro genérico para garantir o retorno de 200
+            return { type: "error", errors: [error.message || "Unexpected error occurred."] };
         }
     }
+
 
 
     isTransactionResponse(
@@ -393,37 +394,31 @@ export class IPagService {
             return null;
         }
 
-        const firstDigit = cardNumber.charAt(0);
-        const firstTwoDigits = cardNumber.substring(0, 2);
-        const firstFourDigits = cardNumber.substring(0, 4);
+        // Remover espaços e traços do número do cartão
+        cardNumber = cardNumber.replace(/[\s-]/g, '');
 
-        if (/^4/.test(cardNumber)) {
-            return PaymentMethodCard.visa;
-        } else if (/^5[1-5]/.test(cardNumber)) {
-            return PaymentMethodCard.mastercard;
-        } else if (/^3[47]/.test(cardNumber)) {
-            return PaymentMethodCard.amex;
-        } else if (/^6(?:011|5)/.test(cardNumber)) {
-            return PaymentMethodCard.discover;
-        } else if (/^3(?:0[0-5]|[68])/.test(cardNumber)) {
-            return PaymentMethodCard.diners;
-        } else if (/^35/.test(cardNumber)) {
-            return PaymentMethodCard.jcb;
-        } else if (/^636368|^438935|^504175|^451416|^636297/.test(cardNumber)) {
-            return PaymentMethodCard.elo;
-        } else if (/^606282|^3841(?:[0|4|6]{1})0/.test(cardNumber)) {
-            return PaymentMethodCard.hipercard;
-        } else if (/^637095|^637568|^637599|^637609|^637612/.test(cardNumber)) {
-            return PaymentMethodCard.hiper;
-        } else if (/^50/.test(cardNumber)) {
-            return PaymentMethodCard.aura;
-        } else if (/^4026|^417500|^4508|^4844|^4913|^4917/.test(cardNumber)) {
-            return PaymentMethodCard.visaelectron;
-        } else if (/^5018|^5020|^5038|^5893|^6304|^6759|^6761|^6762|^6763/.test(cardNumber)) {
-            return PaymentMethodCard.maestro;
+        // Expressões regulares para identificar as bandeiras dos cartões
+        const cardPatterns = {
+            elo: /^(?:4011\d{12}|431274\d{10}|438935\d{10}|451416\d{10}|457393\d{10}|45763[1-2]\d{10}|504175\d{10}|506699\d{10}|5067(?:[0-6]\d|7[0-8])\d{9}|509\d{3}\d{10}|627780\d{10}|636297\d{10}|636368\d{10}|636369\d{10}|6500(?:3[1-3]|3[5-9]|4\d|5[0-1])\d{10}|650(?:4(?:0[5-9]|\d{2})|5(?:[0-2]\d|3[0-8]|4[1-9]|[5-8]\d|9[0-8]))\d{10}|6507(?:0\d|1[0-8]|2[0-7])\d{10}|6509(?:0[1-9]|1\d|20)\d{10}|6516(?:5[2-9]|[6-7]\d)\d{10}|6550(?:[0-1]\d|2[1-9]|[3-4]\d|5[0-8])\d{10})$/,
+            visa: /^4[0-9]{12}(?:[0-9]{3})?$/,
+            mastercard: /^(5[1-5][0-9]{14}|2(?:2[2-9][0-9]{2}|[3-6][0-9]{3}|7[01][0-9]{2}|720)[0-9]{12})$/,
+            amex: /^3[47][0-9]{13}$/,
+            discover: /^6(?:011|5[0-9]{2})[0-9]{12}$/,
+            diners: /^3(?:0[0-5]|[68][0-9])[0-9]{11}$/,
+            jcb: /^(?:2131|1800|35\d{3})\d{11}$/,
+            hipercard: /^(606282\d{10}(\d{3})?|3841\d{15}|637\d{13})$/,
+            aura: /^50[0-9]{14,17}$/,
+            maestro: /^(5018|5020|5038|5893|6304|6759|676[1-3])\d{8,15}$/,
+        };
+
+        // Iterar sobre os padrões para encontrar correspondência
+        for (const [brand, pattern] of Object.entries(cardPatterns)) {
+            if (pattern.test(cardNumber)) {
+                return brand as PaymentMethodCard;
+            }
         }
 
-        return null; // Return null if no match is found
+        return null; // Retorna null se nenhuma correspondência for encontrada
     }
 
     /**
