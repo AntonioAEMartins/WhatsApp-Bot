@@ -1,9 +1,8 @@
-import { Body, Controller, Get, HttpCode, HttpException, HttpStatus, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpException, HttpStatus, Post, Req } from '@nestjs/common';
 import { IPagService } from './ipag.service';
-import { CardInfoDto, CreatePaymentDto, PaymentMethodCard, PaymentType, UserPaymentCreditInfoDto, UserPaymentPixInfoDto } from './dto/ipag-pagamentos.dto';
-import { IsNotEmpty, IsString, validate } from 'class-validator';
+import { CardInfoDto, UserPaymentCreditInfoDto, UserPaymentPixInfoDto } from './dto/ipag-pagamentos.dto';
+import { validate } from 'class-validator';
 import { CreateEstablishmentDto, CreateSellerDto } from './dto/ipag-marketplace.dto';
-import { CreateCheckoutDto } from './dto/ipag-checkout.dto';
 
 @Controller('ipag')
 export class IPagController {
@@ -11,8 +10,13 @@ export class IPagController {
 
   @Post('payment/credit-card')
   @HttpCode(200)
-  async createCreditCardPayment(@Body() userPaymentInfo: UserPaymentCreditInfoDto, @Body() transactionId: string) {
-    const response = await this.ipagService.createCreditCardPayment(userPaymentInfo, transactionId);
+  async createCreditCardPayment(@Body() userPaymentInfo: UserPaymentCreditInfoDto) {
+
+    if (userPaymentInfo.cardInfo.expiry_year.length === 2) {
+      userPaymentInfo.cardInfo.expiry_year = `20${userPaymentInfo.cardInfo.expiry_year}`;
+    }
+
+    const response = await this.ipagService.createCreditCardPayment(userPaymentInfo);
     return response;
   }
 
@@ -23,44 +27,31 @@ export class IPagController {
     return response;
   }
 
-  @Post("payment/checkout/credit-card")
-  @HttpCode(200)
-  async createCheckoutCreditCard() {
-
-    const createCheckout: CreateCheckoutDto = {
-      customer: {
-        name: 'Antônio Martins',
-        tax_receipt: '478.835.168-41',
-      },
-      order: {
-        order_id: '12345432',
-        amount: 10.50,
-      },
-      split_rules: [
-        {
-          receiver: 'bd0181690d928c05350f75ce49aecb2a',
-          percentage: 50,
-          charge_processing_fee: true,
-        }
-      ]
-    }
-
-    const validation = await validate(createCheckout);
-    if (validation.length > 0) {
-      throw new HttpException(validation, HttpStatus.BAD_REQUEST);
-    }
-
-    const response = await this.ipagService.createCheckout(createCheckout);
-    return response;
-  }
-
+  /**
+   * Endpoint para receber callbacks do iPag.
+   *
+   * Para que a validação da assinatura funcione corretamente, é necessário:
+   * - Obter o corpo bruto (rawBody) da requisição (deve ser configurado via middleware).
+   * - Obter os headers obrigatórios (X-Ipag-Signature, X-Ipag-Event e X-Ipag-Timestamps).
+   * - Obter o IP de origem da requisição.
+   *
+   * Em caso de callback válido, retorna um status 200; caso contrário, lança exceção.
+   */
   @Post('callback')
   @HttpCode(200)
-  async handleCallback(@Body() callbackData: any) {
+  async handleCallback(
+    @Body() callbackData: any,
+    @Req() req: Request,
+  ): Promise<any> {
     try {
-      // console.log('[handleCallback] callbackData', callbackData);
-      const response = await this.ipagService.processCallback(callbackData);
-      return callbackData;
+      console.log("Salve")
+      // Supondo que o rawBody tenha sido armazenado via middleware customizado
+      const rawBody: string = req['rawBody'];
+      const headers = req.headers;
+      const ipAddress = headers["cf-connecting-ip"];
+
+      const response = await this.ipagService.processCallback(callbackData, rawBody, headers, ipAddress);
+      return response;
     } catch (error) {
       console.error('Error handling callback:', error);
       if (error instanceof HttpException) {
@@ -69,6 +60,7 @@ export class IPagController {
       throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
     }
   }
+
 
   @Get('list-account-fees')
   @HttpCode(200)

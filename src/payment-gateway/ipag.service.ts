@@ -1,12 +1,16 @@
 import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { CreatePaymentDto, PaymentMethodCard, PaymentMethodPix, PaymentType, UserPaymentCreditInfoDto, UserPaymentPixInfoDto } from './dto/ipag-pagamentos.dto';
-import { IPagTransactionResponse } from './types/ipag-response.types';
+import { IPagErrorResponse, IPagTransactionResponse } from './types/ipag-response.types';
 import { CreateEstablishmentDto, CreateSellerDto } from './dto/ipag-marketplace.dto';
 import { CreateCheckoutDto } from './dto/ipag-checkout.dto';
-import { Db } from 'mongodb';
-import { ClientProvider } from 'src/db/db.module';
 import { TransactionService } from 'src/transaction/transaction.service';
 import { PaymentStatus } from 'src/conversation/dto/conversation.enums';
+import * as crypto from 'crypto';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
+import { SimpleResponseDto } from 'src/request/request.dto';
+import { ConversationService } from 'src/conversation/conversation.service';
+import { PaymentProcessorDTO } from 'src/whatsapp/payment.processor';
 @Injectable()
 export class IPagService {
     private readonly baseURL: string;
@@ -14,7 +18,9 @@ export class IPagService {
     private readonly apiKey: string;
 
     constructor(
+        @InjectQueue('payment') private readonly paymentQueue: Queue,
         private readonly transactionService: TransactionService,
+        private readonly conversationService: ConversationService
     ) {
         // You can set these values using environment variables for security
 
@@ -36,7 +42,7 @@ export class IPagService {
             const headers = {
                 Authorization: this.getAuthHeader(),
                 'Content-Type': 'application/json',
-                // 'x-api-version': '2',
+                'x-api-version': '2',
             };
 
             const response = await fetch(`${this.baseURL}/${endpoint}`, {
@@ -72,6 +78,7 @@ export class IPagService {
             throw new HttpException('Transaction not pending', HttpStatus.BAD_REQUEST);
         }
 
+
         const paymentData: CreatePaymentDto = {
             amount: transaction.data.expectedAmount,
             payment: {
@@ -95,13 +102,12 @@ export class IPagService {
         try {
             const response = await this.makeRequest(endpoint, 'POST', paymentData) as IPagTransactionResponse;
 
-            console.log('[createPIXPayment] response:', response);
-
             await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
                 ipagTransactionId: response.uuid,
             });
 
             return response as IPagTransactionResponse;
+
         } catch (error) {
             console.error('Error creating payment:', error);
             if (error instanceof HttpException) {
@@ -118,10 +124,9 @@ export class IPagService {
    */
     async createCreditCardPayment(
         userPaymentInfo: UserPaymentCreditInfoDto,
-        transaction_id: string,
-    ): Promise<IPagTransactionResponse> {
+    ): Promise<SimpleResponseDto<{ msg: string }>> {
 
-        const transaction = await this.transactionService.getTransaction(transaction_id);
+        const transaction = await this.transactionService.getTransaction(userPaymentInfo.transactionId);
 
         if (!transaction) {
             throw new HttpException('Transaction not found', HttpStatus.NOT_FOUND);
@@ -147,7 +152,6 @@ export class IPagService {
                     tokenize: userPaymentInfo.saveCard,
                 },
             },
-            order_id: transaction_id,
             customer: {
                 name: userPaymentInfo.customerInfo.name,
                 cpf_cnpj: userPaymentInfo.customerInfo.cpf_cnpj,
@@ -156,21 +160,33 @@ export class IPagService {
                 seller_id: "bd0181690d928c05350f75ce49aecb2a",
                 percentage: 100,
             }]
-        }
+        };
+
+        console.log("Payment data", paymentData);
 
         const endpoint = 'service/payment'; // Ajuste este endpoint conforme a documentação do iPag
         try {
             const response = await this.makeRequest(endpoint, 'POST', paymentData);
-
             // Trata a resposta: se o código do gateway não for de sucesso, lança erro.
             const processedResponse = this.processTransactionResponse(response);
-            if (processedResponse.type !== "sucess") {
+            // Correção: comparar com "success" (com dois 'c') em vez de "sucess"
+            if (processedResponse.type !== "success") {
                 throw new HttpException(processedResponse.erros.join(' '), HttpStatus.BAD_REQUEST);
             }
-            return response as IPagTransactionResponse;
+
+            await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
+                ipagTransactionId: response.uuid,
+            });
+
+            // return response as IPagTransactionResponse;
+            return {
+                msg: "Payment created",
+                data: {
+                    msg: "Payment created",
+                }
+            }
         } catch (error) {
             console.error('Error creating payment:', error);
-            // Se já for uma HttpException, repassa-a; caso contrário, cria uma nova.
             if (error instanceof HttpException) {
                 throw error;
             }
@@ -217,13 +233,14 @@ export class IPagService {
    */
 
     private processTransactionResponse(response: any): { type: string; erros: string[] } {
-        // Verifica se os dados possuem a estrutura esperada
+
+        // Verifica se a resposta possui a estrutura esperada
         if (!response || !response.attributes) {
             return { type: "acquirer", erros: ["Dados da transação inválidos."] };
         }
         const { gateway, acquirer, status } = response.attributes;
 
-        // 1. Validação do Gateway
+        // 1. Validação do Gateway (sempre obrigatório)
         if (!gateway || !gateway.code) {
             return { type: "Gateway", erros: ["Código de gateway ausente."] };
         }
@@ -231,55 +248,115 @@ export class IPagService {
             return { type: "Gateway", erros: [gateway.message || "Erro no gateway."] };
         }
 
-        // 2. Validação do Acquirer
-        if (!acquirer || !acquirer.code) {
-            return { type: "acquirer", erros: ["Código do adquirente ausente."] };
-        }
-        if (acquirer.code !== "00") {
-            const errors: string[] = [];
-            errors.push(acquirer.message || "Erro no adquirente.");
-            // Se houver dados de status, também os valida
-            if (!status || typeof status.code === "undefined") {
-                errors.push("Status da transação ausente.");
-            } else if (status.code !== 8) {
-                errors.push(status.message || "Transação não capturada.");
-            }
-            return { type: "acquirer", erros: errors };
-        }
-
-        // 3. Validação do Status da transação
+        // 2. Verifica se o status da transação está presente
         if (!status || typeof status.code === "undefined") {
             return { type: "acquirer", erros: ["Status da transação ausente."] };
         }
-        if (status.code !== 8) {
-            return { type: "acquirer", erros: [status.message || "Transação não capturada."] };
+
+        // 3. Tratamento dos diferentes códigos de status:
+        // - Código 2: A transação está aguardando pagamento
+        if (status.code === 2) {
+            return { type: "waiting", erros: [] };
         }
 
-        // Se todas as validações passaram, a transação é considerada com sucesso.
-        return { type: "sucess", erros: [] };
+        // - Código 1: Transação criada (ainda não iniciou o processo de pagamento)
+        if (status.code === 1) {
+            return { type: "created", erros: [] };
+        }
+
+        // - Código 8: Pagamento capturado com sucesso
+        if (status.code === 8) {
+            // Para o sucesso, é exigido que o adquirente possua um código válido
+            if (!acquirer || !acquirer.code) {
+                return { type: "acquirer", erros: ["Código do adquirente ausente."] };
+            }
+            if (acquirer.code !== "00") {
+                return { type: "acquirer", erros: [acquirer.message || "Erro no adquirente."] };
+            }
+            return { type: "success", erros: [] };
+        }
+
+        // Para qualquer outro código de status, retorna o erro informado (ou uma mensagem padrão)
+        return { type: "acquirer", erros: [status.message || "Transação não capturada."] };
     }
 
+
     /**
-     * Processa os dados do callback recebidos do iPag e retorna um JSON com:
-     * - type: "Gateway" (erro no gateway), "acquirer" (erro do adquirente ou status) ou "sucess"
-     * - erros: uma lista de mensagens de erro (caso existam)
-     *
-     * @param callbackData Dados recebidos no callback
-     * @returns JSON com { type, erros }
-     */
-    async processCallback(callbackData: any): Promise<any> {
+   * Endpoint para receber callbacks do iPag.
+   * 
+   * Processa os dados do callback recebidos, validando a origem, os headers e a assinatura por meio da subfunção validateCallback.
+   * Em seguida, utiliza a lógica já existente (processTransactionResponse) para interpretar a transação.
+   *
+   * @param callbackData O JSON já _parseado_ do callback.
+   * @param rawBody O corpo bruto da requisição.
+   * @param headers Os headers da requisição.
+   * @param ipAddress O endereço IP de onde a requisição se originou.
+   * @returns Um objeto com { type: string, errors: string[] } indicando sucesso ou erro na transação.
+   * @throws HttpException caso algum requisito não seja atendido.
+   */
+    async processCallback(
+        callbackData: IPagTransactionResponse | IPagErrorResponse,
+        rawBody: string,
+        headers: any,
+        ipAddress: string,
+    ): Promise<{ type: string; errors: string[] }> {
         try {
-            // console.log('[processCallback] Dados do callback:', callbackData);
+            // Valida IP, headers obrigatórios e assinatura
+            this.validateCallback(ipAddress, headers, rawBody);
+
+            // Processa os dados do callback utilizando a lógica já existente
             const result = this.processTransactionResponse(callbackData);
-            console.log('[processCallback] Resultado do processamento:', result);
-            return result;
+
+            console.log("[processCallback] Result", result);
+            // Se o processamento indicar sucesso, retorna a resposta de sucesso
+            if (result.type === "success") {
+                // console.log("Callback data", callbackData);
+                console.log("[processCallback] Callback data is a transaction response");
+                if (this.isTransactionResponse(callbackData)) { // usa a type guard
+                    const transaction = await this.transactionService.getTransactionByipagTransactionId(callbackData.uuid);
+
+                    const conversation = await this.conversationService.getConversation(transaction.data.conversationId);
+
+                    if (transaction.data.status !== PaymentStatus.Pending) {
+                        throw new HttpException('Transaction not pending', HttpStatus.BAD_REQUEST);
+                    }
+
+                    await this.transactionService.updateTransaction(transaction.data._id.toString(), {
+                        status: PaymentStatus.Confirmed,
+                        amountPaid: callbackData.attributes.amount,
+                    });
+
+                    const paymentProcessorDTO: PaymentProcessorDTO = {
+                        transactionId: transaction.data._id.toString(),
+                        from: conversation.data.userId,
+                        state: conversation.data,
+                    }
+
+                    this.paymentQueue.add(paymentProcessorDTO);
+                    return { type: "success", errors: [] };
+                } else {
+                    // Se não for uma transação de sucesso, retorne um erro
+                    return { type: "error", errors: ["Callback não contém dados de transação válidos."] };
+                }
+            } else {
+                console.error('[processCallback] Transaction error:', result.erros);
+                return { type: "error", errors: result.erros };
+            }
         } catch (error) {
-            console.error('[processCallback] Erro ao processar callback:', error);
+            console.error('Error handling callback:', error);
             if (error instanceof HttpException) {
                 throw error;
             }
             throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
         }
+    }
+
+
+    isTransactionResponse(
+        data: IPagTransactionResponse | IPagErrorResponse
+    ): data is IPagTransactionResponse {
+        return (data as IPagTransactionResponse).uuid !== undefined
+            && (data as IPagTransactionResponse).attributes !== undefined;
     }
 
     async createSeller(createSeller: CreateSellerDto): Promise<any> {
@@ -310,49 +387,6 @@ export class IPagService {
         }
     }
 
-    // async createCreditCardPayment(createCreditCardPayment: UserPaymentInfoDto): Promise<any> {
-
-    //     const paymentMethod = this.getCardMethod(createCreditCardPayment.cardInfo.number);
-
-    //     const paymentData: CreatePaymentDto = {
-    //         amount: createCreditCardPayment.amount,
-    //         payment: {
-    //             type: PaymentType.card,
-    //             method: paymentMethod,
-    //             installments: 1,
-    //             softdescriptor: 'AstraPay',
-    //             card: {
-    //                 holder: createCreditCardPayment.cardInfo.holder,
-    //                 number: createCreditCardPayment.cardInfo.number,
-    //                 expiry_month: createCreditCardPayment.cardInfo.expiry_month,
-    //                 expiry_year: createCreditCardPayment.cardInfo.expiry_year,
-    //                 cvv: createCreditCardPayment.cardInfo.cvv,
-    //                 tokenize: createCreditCardPayment.saveCard,
-    //             }
-    //         }
-    //     }
-
-    //     const endpoint = 'service/payment';
-    //     try {
-    //         const response = await this.makeRequest(endpoint, 'POST', createCreditCardPayment);
-    //         return response;
-    //     }
-    // }
-
-    async createCheckout(createCheckout: CreateCheckoutDto): Promise<any> {
-        const endpoint = '/service/resources/checkout';
-        console.log('[createCheckout] createCheckout:', createCheckout);
-        try {
-            const response = await this.makeRequest(endpoint, 'POST', createCheckout);
-            return response;
-        } catch (error) {
-            console.error('Error creating checkout:', error);
-            if (error instanceof HttpException) {
-                throw error;
-            }
-            throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
-        }
-    }
 
     getCardMethod(cardNumber: string): PaymentMethodCard | null {
         if (!cardNumber) {
@@ -392,6 +426,47 @@ export class IPagService {
         return null; // Return null if no match is found
     }
 
+    /**
+     * Valida os dados do callback: IP de origem, headers obrigatórios e assinatura.
+     * 
+     * @param ipAddress O endereço IP de onde a requisição se originou.
+     * @param headers Os headers da requisição.
+     * @param rawBody O corpo bruto da requisição (formato compacto, UTF-8).
+     * @throws HttpException se alguma das validações falhar.
+     */
+    private validateCallback(ipAddress: string, headers: any, rawBody: string): void {
+        // 1. Validação do endereço IP (libera apenas os IPs autorizados pelo iPag)
+        const allowedIPs = ['52.73.203.226', '184.73.165.27', '3.95.238.214'];
+        if (!allowedIPs.includes(ipAddress)) {
+            throw new HttpException('Unauthorized IP address', HttpStatus.FORBIDDEN);
+        }
 
+        // 2. Verificação dos headers obrigatórios
+        const signature = headers['x-ipag-signature'] || headers['X-Ipag-Signature'];
+        if (!signature) {
+            throw new HttpException('Missing X-Ipag-Signature header', HttpStatus.BAD_REQUEST);
+        }
+        const event = headers['x-ipag-event'] || headers['X-Ipag-Event'];
+        const timestamp = headers['x-ipag-timestamps'] || headers['X-Ipag-Timestamps'];
+        if (!event || !timestamp) {
+            throw new HttpException('Missing X-Ipag-Event or X-Ipag-Timestamps header', HttpStatus.BAD_REQUEST);
+        }
+
+        // 3. Cálculo do HMAC SHA-256 usando a chave privada (this.apiKey)
+        //    É importante que rawBody esteja no mesmo formato (compacto, UTF-8) utilizado para gerar a assinatura.
+        const hmac = crypto.createHmac('sha256', this.apiKey);
+        hmac.update(rawBody, 'utf8');
+        const computedSignature = hmac.digest('hex');
+
+        // 4. Comparação da assinatura recebida com a assinatura calculada, utilizando comparação segura (constant time)
+        const signatureBuffer = Buffer.from(signature, 'utf8');
+        const computedBuffer = Buffer.from(computedSignature, 'utf8');
+        if (
+            signatureBuffer.length !== computedBuffer.length ||
+            !crypto.timingSafeEqual(signatureBuffer, computedBuffer)
+        ) {
+            throw new HttpException('Invalid callback signature', HttpStatus.BAD_REQUEST);
+        }
+    }
 
 }
