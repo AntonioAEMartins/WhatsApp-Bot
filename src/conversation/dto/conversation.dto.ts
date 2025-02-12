@@ -136,6 +136,10 @@ export class ConversationContextDTO {
   @IsEnum(PaymentMethod)
   @IsOptional()
   paymentMethod?: PaymentMethod;
+
+  @IsString()
+  @IsOptional()
+  userName?: string;
 }
 
 export class BaseConversationDto {
