@@ -31,6 +31,8 @@ import { Db, ObjectId } from 'mongodb';
 import { ClientProvider } from 'src/db/db.module';
 import { SimpleResponseDto } from 'src/request/request.dto';
 import { isError } from 'util';
+import { UserPaymentPixInfoDto } from 'src/payment-gateway/dto/ipag-pagamentos.dto';
+import { IPagService } from 'src/payment-gateway/ipag.service';
 
 // Resposta para um Request do GO
 //[{
@@ -102,6 +104,7 @@ export class WhatsAppService {
         private readonly orderService: OrderService,
         private readonly transactionService: TransactionService,
         private readonly utilsService: WhatsAppUtils,
+        private readonly ipagService: IPagService,
         @InjectQueue('payment') private readonly paymentQueue: Queue,
         @Inject('DATABASE_CONNECTION') private db: Db, clientProvider: ClientProvider
     ) { }
@@ -199,6 +202,10 @@ export class WhatsAppService {
 
             case ConversationStep.PaymentMethodSelection:
                 requestResponse = await this.handlePaymentMethodSelection(from, userMessage, state);
+                break;
+
+            case ConversationStep.CollectName:
+                requestResponse = await this.handleCollectName(from, userMessage, state);
                 break;
 
             case ConversationStep.WaitingForPayment:
@@ -1185,44 +1192,27 @@ export class WhatsAppService {
             return sentMessages;
         }
 
-        if (process.env.ENVIRONMENT === 'homologation') {
-            // Fluxo de homologação: direciona para a escolha do meio de pagamento
-            const updatedContext: ConversationContextDTO = {
-                ...state.conversationContext,
-                currentStep: ConversationStep.PaymentMethodSelection,
-                paymentStartTime: Date.now(),
-                cpf: cpfLimpo,
-            };
+        // Atualiza o contexto para direcionar o usuário à escolha do método de pagamento
+        const updatedContext: ConversationContextDTO = {
+            ...state.conversationContext,
+            currentStep: ConversationStep.PaymentMethodSelection,
+            paymentStartTime: Date.now(),
+            cpf: cpfLimpo,
+        };
 
-            await this.conversationService.updateConversation(conversationId, {
-                userId: state.userId,
-                conversationContext: updatedContext,
-            });
+        await this.conversationService.updateConversation(conversationId, {
+            userId: state.userId,
+            conversationContext: updatedContext,
+        });
 
-            sentMessages.push(...this.mapTextMessages(
-                ['👍 Escolha a forma de pagamento:\n\n1- PIX\n2- Cartão de Crédito'],
-                from
-            ));
-        } else {
-            // Fluxo de produção: atualiza o contexto para WaitingForPayment
-            const updatedContext: ConversationContextDTO = {
-                ...state.conversationContext,
-                currentStep: ConversationStep.WaitingForPayment,
-                paymentStartTime: Date.now(),
-                cpf: cpfLimpo,
-            };
-
-            await this.conversationService.updateConversation(conversationId, {
-                userId: state.userId,
-                conversationContext: updatedContext,
-            });
-
-            const paymentMessages = await this.handlePaymentInstructions(from, state);
-            sentMessages.push(...paymentMessages);
-        }
+        sentMessages.push(...this.mapTextMessages(
+            ['👍 Escolha a forma de pagamento:\n\n1- PIX\n2- Cartão de Crédito'],
+            from
+        ));
 
         return sentMessages;
     }
+
 
     /**
      * Função para lidar com CPF inválido.
@@ -1235,12 +1225,16 @@ export class WhatsAppService {
     /**
      * Função para lidar com as instruções de pagamento após a coleta do CPF.
      */
-    private async handlePaymentInstructions(from: string, state: ConversationDto): Promise<ResponseStructureExtended[]> {
+    private async handlePIXPaymentInstructions(
+        from: string,
+        state: ConversationDto,
+        pixKey?: string
+    ): Promise<ResponseStructureExtended[]> {
         const finalAmount = this.formatToTwoDecimalPlaces(state.conversationContext.userAmount);
         const messages = [
             `O valor final da sua conta é: *${formatToBRL(finalAmount)}*`,
             'Segue abaixo a chave PIX para pagamento 👇',
-            '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
+            pixKey ? pixKey : '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
             'Por favor, envie o comprovante! 📄✅'
         ];
         return this.mapTextMessages(messages, from);
@@ -1290,7 +1284,10 @@ export class WhatsAppService {
     }
 
 
-    private async createTransaction(state: ConversationDto, paymentMethod: PaymentMethod): Promise<void> {
+    private async createTransaction(state: ConversationDto, paymentMethod: PaymentMethod, userName: string): Promise<string | void> {
+
+        this.logger.log(`[createTransaction] userId: ${state.userId} paymentMethod: ${paymentMethod}`);
+
         const transactionData: CreateTransactionDTO = {
             orderId: state.orderId,
             tableId: state.tableId,
@@ -1303,8 +1300,32 @@ export class WhatsAppService {
             paymentMethod: paymentMethod,
         };
 
-        await this.transactionService.createTransaction(transactionData);
+        const transactionResponse = await this.transactionService.createTransaction(transactionData);
+
+        if (paymentMethod === PaymentMethod.PIX) {
+            const userPaymentInfo: UserPaymentPixInfoDto = {
+                transactionId: transactionResponse.data._id.toString(),
+                pixExpiresIn: 60 * 10, // 10 minutos
+                customerInfo: {
+                    name: userName,
+                    cpf_cnpj: state.conversationContext.cpf,
+                }
+            };
+
+            const ipagResponse = await this.ipagService.createPIXPayment(userPaymentInfo);
+
+            await this.transactionService.updateTransaction(
+                transactionResponse.data._id.toString(),
+                { ipagTransactionId: ipagResponse.uuid }
+            );
+
+            return ipagResponse.attributes.pix.qrcode;
+        } else {
+            return;
+        }
     }
+
+
 
     private async handlePaymentMethodSelection(
         from: string,
@@ -1316,10 +1337,10 @@ export class WhatsAppService {
         const userChoice = userMessage.trim().toLowerCase();
 
         if (userChoice === '1' || userChoice.includes('pix')) {
-            // Usuário escolheu PIX: atualiza o contexto da conversa e grava o método escolhido como PIX
+            // Atualiza o contexto para PIX e redireciona para a coleta do nome
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
-                currentStep: ConversationStep.WaitingForPayment,
+                currentStep: ConversationStep.CollectName, // novo passo para coletar o nome
                 paymentMethod: PaymentMethod.PIX,
             };
 
@@ -1328,15 +1349,15 @@ export class WhatsAppService {
                 conversationContext: updatedContext,
             });
 
-            // Para homologação, crie a transação agora (pois o CPF já foi coletado)
-            if (process.env.ENVIRONMENT === 'homologation') {
-                await this.createTransaction(state, PaymentMethod.PIX);
-            }
-
-            const paymentMessages = await this.handlePaymentInstructions(from, state);
-            sentMessages.push(...paymentMessages);
+            // Solicita que o usuário informe seu nome completo
+            sentMessages.push(
+                ...this.mapTextMessages(
+                    ['Por favor, informe seu nome completo para prosseguirmos com o pagamento via PIX.'],
+                    from
+                )
+            );
         } else if (userChoice === '2' || userChoice.includes('cartão') || userChoice.includes('crédito')) {
-            // Usuário escolheu Cartão de Crédito: atualiza o contexto da conversa e grava o método escolhido como Cartão de Crédito
+            // Fluxo existente para Cartão de Crédito
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.WaitingForPayment,
@@ -1348,18 +1369,60 @@ export class WhatsAppService {
                 conversationContext: updatedContext,
             });
 
-            // Para homologação, crie a transação agora após a escolha
-            if (process.env.ENVIRONMENT === 'homologation') {
-                await this.createTransaction(state, PaymentMethod.CREDIT_CARD);
-            }
+            // Cria a transação utilizando o método Cartão de Crédito
+            await this.createTransaction(state, PaymentMethod.CREDIT_CARD, state.conversationContext.userName);
 
             sentMessages = await this.handleCreditCardPayment(from, state);
         } else {
-            // Resposta inválida; pede novamente a opção
-            sentMessages.push(...this.mapTextMessages(
-                ['Opção inválida. Por favor, escolha:\n1- PIX\n2- Cartão de Crédito'],
-                from
-            ));
+            // Resposta inválida; solicita nova escolha
+            sentMessages.push(
+                ...this.mapTextMessages(
+                    ['Opção inválida. Por favor, escolha:\n1- PIX\n2- Cartão de Crédito'],
+                    from
+                )
+            );
+        }
+
+        return sentMessages;
+    }
+
+    private async handleCollectName(
+        from: string,
+        userMessage: string,
+        state: ConversationDto
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
+        const conversationId = state._id.toString();
+
+        const name = userMessage.trim();
+        this.logger.log(`[handleCollectName] name: ${name}`);
+
+        if (!name) {
+            sentMessages.push(
+                ...this.mapTextMessages(['Por favor, informe um nome válido.'], from)
+            );
+            return sentMessages;
+        }
+
+        // Atualiza o contexto da conversa com o nome do usuário e avança para a etapa de pagamento
+        const updatedContext: ConversationContextDTO = {
+            ...state.conversationContext,
+            userName: name,
+            currentStep: ConversationStep.WaitingForPayment,
+        };
+
+        await this.conversationService.updateConversation(conversationId, {
+            userId: state.userId,
+            conversationContext: updatedContext,
+        });
+
+        // Cria a transação utilizando o método PIX agora que temos o nome e captura o PIX key
+        const pixKey = await this.createTransaction(state, PaymentMethod.PIX, name);
+
+        // Envia as instruções de pagamento via PIX utilizando o PIX key retornado
+        if (pixKey) {
+            const paymentMessages = await this.handlePIXPaymentInstructions(from, state, pixKey);
+            sentMessages.push(...paymentMessages);
         }
 
         return sentMessages;
