@@ -11,11 +11,12 @@ import { WhatsAppUtils } from './whatsapp.utils';
 import { PaymentProcessor } from './payment.processor';
 import { BullModule } from '@nestjs/bull';
 import { DatabaseModule } from 'src/db/db.module';
+import { IPagModule } from 'src/payment-gateway/ipag.module';
 
 @Module({
   imports: [
     TableModule, LangchainModule, UserModule, ConversationModule,
-    OrderModule, TransactionModule, DatabaseModule,
+    OrderModule, TransactionModule, DatabaseModule, IPagModule,
     BullModule.forRoot({
       redis: {
         host: 'localhost',
