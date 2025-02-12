@@ -11,12 +11,18 @@ export class TransactionController {
         return await this.transactionService.createTransaction(transaction);
     }
 
+
+    @HttpCode(HttpStatus.OK)
+    @Get('summary/:id')
+    async getSummary(@Param('id') id: string) {
+        return await this.transactionService.getSummary(id);
+    }
+
     @HttpCode(HttpStatus.OK)
     @Get(':id')
     async getTransaction(@Param('id') id: string) {
         return await this.transactionService.getTransaction(id);
     }
-
     @HttpCode(HttpStatus.OK)
     @Get('active_by_order')
     async getActiveTransactionsByOrderId(@Query('orderId') orderId: string) {
@@ -47,5 +53,5 @@ export class TransactionController {
     async completeTransaction(@Param('id') id: string) {
         return await this.transactionService.completeTransaction(id);
     }
-   
+
 }

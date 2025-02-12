@@ -4,6 +4,7 @@ import { ClientProvider } from 'src/db/db.module';
 import { SimpleResponseDto } from 'src/request/request.dto';
 import { CreateTransactionDTO, TransactionDTO } from './dto/transaction.dto';
 import { ActivePaymentStatuses, PaymentDescription, PaymentStatus } from 'src/conversation/dto/conversation.enums';
+import { ConversationDto } from 'src/conversation/dto/conversation.dto';
 @Injectable()
 export class TransactionService {
 
@@ -28,6 +29,39 @@ export class TransactionService {
             data: transactionData
         }
     }
+
+    async getSummary(id: string): Promise<SimpleResponseDto<{ expectedAmount: number; userCPF: string }>> {
+        const results = await this.db.collection("transactions").aggregate([
+            { $match: { _id: new ObjectId(id) } },
+            {
+                $lookup: {
+                    from: "conversations",
+                    localField: "conversationId",
+                    foreignField: "_id",
+                    as: "conversation"
+                }
+            },
+            { $unwind: "$conversation" },
+            {
+                $project: {
+                    _id: 0,
+                    expectedAmount: 1,
+                    userCPF: "$conversation.conversationContext.cpf"
+                }
+            }
+        ]).toArray();
+
+        if (!results || results.length === 0) {
+            throw new HttpException("Transaction not found", HttpStatus.NOT_FOUND);
+        }
+
+        return {
+            msg: "Transaction found",
+            data: results[0] as { expectedAmount: number; userCPF: string },
+        };
+    }
+
+
 
     async updateTransaction(id: string, updateTransactionData: Partial<TransactionDTO>): Promise<SimpleResponseDto<TransactionDTO>> {
         const transaction = await this.db.collection("transactions").findOne({ _id: new ObjectId(id) });
@@ -77,16 +111,16 @@ export class TransactionService {
     async getTotalPaidByOrderId(orderId: string): Promise<SimpleResponseDto<{ totalPaid: number }>> {
         // Defina os status considerados para calcular o total pago
         const paymentStatusesToConsider = [PaymentStatus.Confirmed, PaymentStatus.Overpaid, PaymentStatus.Underpaid];
-    
+
         // Busca as transações com os status definidos
         const transactions = await this.db.collection("transactions").find({
             orderId,
             status: { $in: paymentStatusesToConsider },
         }).toArray();
-    
+
         // Soma os valores pagos de todas as transações
         const totalPaid = transactions.reduce((sum, transaction) => sum + (transaction.amountPaid || 0), 0);
-    
+
         return {
             msg: "Total paid calculated",
             data: { totalPaid },
@@ -96,22 +130,22 @@ export class TransactionService {
     async getTotalPaidByUserAndOrderId(userId: string, orderId: string): Promise<SimpleResponseDto<{ totalPaid: number }>> {
         // Defina os status considerados para calcular o total pago
         const paymentStatusesToConsider = [PaymentStatus.Confirmed, PaymentStatus.Overpaid, PaymentStatus.Underpaid];
-        
+
         // Busca as transações com os status definidos, filtrando também pelo userId
         const transactions = await this.db.collection("transactions").find({
             userId,
             orderId,
             status: { $in: paymentStatusesToConsider },
         }).toArray();
-        
+
         // Soma os valores pagos de todas as transações
         const totalPaid = transactions.reduce((sum, transaction) => sum + (transaction.amountPaid || 0), 0);
-        
+
         return {
             msg: "Total paid calculated for user and order",
             data: { totalPaid },
         };
-    }    
+    }
 
     async getActiveTransactionsByUserId(userId: string): Promise<SimpleResponseDto<TransactionDTO[]>> {
         // Busca as transações com `orderId` e um `status` que esteja em `activeStatuses`
