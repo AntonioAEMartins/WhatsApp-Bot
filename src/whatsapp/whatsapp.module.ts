@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module } from '@nestjs/common';
 import { WhatsAppService } from './whatsapp.service';
 import { WhatsAppController } from './whatsapp.controller';
 import { TableModule } from 'src/table/table.module';
@@ -12,6 +12,7 @@ import { PaymentProcessor } from './payment.processor';
 import { BullModule } from '@nestjs/bull';
 import { DatabaseModule } from 'src/db/db.module';
 import { IPagModule } from 'src/payment-gateway/ipag.module';
+import { AllowedIpsMiddleware } from 'src/middleware/allowed-ips.middleware';
 
 @Module({
   imports: [

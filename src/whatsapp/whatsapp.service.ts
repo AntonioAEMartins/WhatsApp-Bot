@@ -208,26 +208,6 @@ export class WhatsAppService {
                 requestResponse = await this.handleCollectName(from, userMessage, state);
                 break;
 
-            case ConversationStep.WaitingForPayment:
-                requestResponse = await this.handleWaitingForPayment(from, userMessage, state, message);
-                break;
-
-            case ConversationStep.AwaitingUserDecision:
-                requestResponse = await this.handleAwaitingUserDecision(from, userMessage, state);
-                break;
-
-            case ConversationStep.OverpaymentDecision:
-                requestResponse = await this.handleOverpaymentDecision(from, userMessage, state);
-                break;
-
-            case ConversationStep.PaymentReminder:
-                // requestMessages=await this.handlePaymentReminder(from, userMessage, state);
-                break;
-
-            case ConversationStep.CollectPhoneNumber:
-                requestResponse = await this.handleCollectPhoneNumber(from, userMessage, state);
-                break;
-
             case ConversationStep.Feedback:
                 requestResponse = await this.handleFeedback(from, userMessage, state);
                 break;
@@ -1462,878 +1442,70 @@ export class WhatsAppService {
         return sentMessages;
     }
 
-
-    /**
-     * Step 7: Waiting For Payment
-     *
-     * Handles the waiting-for-payment state of the conversation.
-     * Checks if the user has sent a payment proof (text or media) and processes it accordingly.
-     * If no proof is received within a certain time, sends a reminder.
-     *
-     * @param from - The user's unique identifier (WhatsApp ID).
-     * @param userMessage - The message sent by the user.
-     * @param state - The current state of the user's conversation.
-     * @param message - The received WhatsApp message object.
-     * @returns An array of strings representing the messages sent to the user.
-     *
-     * Functionality:
-     * - Checks if the user provided payment proof.
-     * - If provided, processes the payment proof and updates conversation state.
-     * - If no proof is received in time, sends a reminder message.
-     */
-
-    private async handleWaitingForPayment(
-        from: string,
-        userMessage: string,
-        state: ConversationDto,
-        message: RequestMessage,
-    ): Promise<any> {
-        let mediaData: string | null = null;
-        let mediaType: string | null = null;
-
-        const base64Media = message.body;
-
-        if (message.type === 'image' && base64Media) {
-            mediaData = base64Media;
-            mediaType = this.extractMimeType(base64Media);
-        }
-
-        const paymentMessageData: PaymentProcessorDTO = {
-            from,
-            userMessage,
-            state,
-            message,
-            mediaData,
-            mediaType
-        };
-
-        const job = await this.paymentQueue.add(paymentMessageData);
-        const result = await job.finished();
-        return result;
-    }
-
-    private extractMimeType(base64: string): string | null {
-        // Tenta extrair do Data URI primeiro
-        const dataUriMatch = base64.match(/^data:([a-zA-Z]+\/[a-zA-Z0-9-.+]+);base64,/);
-        if (dataUriMatch) return dataUriMatch[1];
-
-        // Se não for Data URI, decodifica e detecta via assinatura
-        try {
-            const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-
-            // Assinaturas conhecidas (exemplos)
-            const signatures = {
-                'application/pdf': [0x25, 0x50, 0x44, 0x46], // %PDF
-                'image/png': [0x89, 0x50, 0x4E, 0x47],       // ‰PNG
-                'image/jpeg': [0xFF, 0xD8, 0xFF],              // ÿØÿ
-                'image/jpg': [0xFF, 0xD8, 0xFF],               // ÿØÿ
-                'image/webp': [0x52, 0x49, 0x46, 0x46],           // RIFF
-                'image/gif': [0x47, 0x49, 0x46, 0x38],           // GIF87a
-                'image/bmp': [0x42, 0x4D],                       // BM
-                'image/tiff': [0x49, 0x49, 0x2A, 0x00],          // II*
-                'image/heic': [0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63], // ftypheic
-                'image/heif': [0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x66] // ftypheif
-            };
-
-            for (const [mime, sig] of Object.entries(signatures)) {
-                if (sig.every((byte, i) => bytes[i] === byte)) return mime;
-            }
-
-            return 'application/octet-stream'; // Tipo genérico
-        } catch {
-            return null; // Falha na decodificação
-        }
-    }
-
-
-    public async processPayment(paymentData: PaymentProcessorDTO): Promise<ResponseStructureExtended[]> {
-        const { from, userMessage, message, mediaData, mediaType, state } = paymentData;
+    public async processPayment(paymentData: PaymentProcessorDTO): Promise<void> {
+        const { transactionId, from, state } = paymentData;
         this.logger.debug(
-            `[processPayment] Processing payment, has media: ${!!mediaData}, media type: ${mediaType}`
+            `[processPayment] Processing payment, transactionId: ${transactionId}`
         );
+
         let sentMessages: ResponseStructureExtended[] = [];
+        const transaction = await this.transactionService.getTransaction(transactionId);
 
-        if (process.env.ENVIRONMENT === 'homologation') {
-            // In homologation mode, use predefined comprovante strings instead of PDF proof analysis.
-            sentMessages = await this.processPaymentHomologation(from, userMessage, state);
-        } else {
-            if (this.utilsService.userSentProof(userMessage, message)) {
-                sentMessages = await this.processPaymentProof(from, message, mediaData, mediaType, state);
-            } else {
-                sentMessages = await this.remindIfNoProof(from, state);
-            }
-        }
-
-        return sentMessages;
-    }
-
-    private async processPaymentHomologation(
-        from: string,
-        userMessage: string,
-        state: ConversationDto
-    ): Promise<ResponseStructureExtended[]> {
-        let processedMessages: ResponseStructureExtended[] = [];
-        const messageLower = userMessage.toLowerCase();
-        const expectedAmount = this.formatToTwoDecimalPlaces(state.conversationContext.userAmount);
-        let amountPaid: number;
-
-        if (messageLower.includes('comprovante-total')) {
-            // Full payment: the paid amount equals the expected amount.
-            amountPaid = expectedAmount;
-        } else if (messageLower.includes('abaixo')) {
-            // Expect a string like "R$ 30-abaixo" or "30-abaixo" indicating an underpayment.
-            const match = userMessage.match(/(?:r\$?\s*)?([\d.,]+)\s*-\s*abaixo/i);
-            if (match && match[1]) {
-                const valueStr = match[1].replace(/[^\d.,]/g, '').replace(',', '.');
-                const difference = this.formatToTwoDecimalPlaces(parseFloat(valueStr));
-                if (isNaN(difference)) {
-                    return this.mapTextMessages(
-                        ['Valor de diferença inválido para comprovante abaixo.'],
-                        from
-                    );
-                }
-                amountPaid = expectedAmount - difference;
-            } else {
-                return this.mapTextMessages(
-                    ['Formato inválido para comprovante abaixo. Use, por exemplo, "30-abaixo".'],
+        if (transaction.data.status !== PaymentStatus.Confirmed) {
+            sentMessages.push(
+                ...this.mapTextMessages(
+                    ['*👋  Coti Pagamentos* - Erro ao processar o pagamento ❌\n\nPor favor, tente novamente mais tarde.'],
                     from
-                );
-            }
-        } else if (messageLower.includes('acima')) {
-            // Expect a string like "R$ 30-acima" or "30-acima" indicating an overpayment.
-            const match = userMessage.match(/(?:r\$?\s*)?([\d.,]+)\s*-\s*acima/i);
-            if (match && match[1]) {
-                const valueStr = match[1].replace(/[^\d.,]/g, '').replace(',', '.');
-                const difference = this.formatToTwoDecimalPlaces(parseFloat(valueStr));
-                if (isNaN(difference)) {
-                    return this.mapTextMessages(
-                        ['Valor de diferença inválido para comprovante acima.'],
-                        from
-                    );
-                }
-                amountPaid = expectedAmount + difference;
-            } else {
-                return this.mapTextMessages(
-                    ['Formato inválido para comprovante acima. Use, por exemplo, "30-acima".'],
-                    from
-                );
-            }
-        } else {
-            return this.mapTextMessages(
-                ['Comprovante inválido. Envie "comprovante-total", "valor-abaixo" ou "valor-acima".'],
-                from
+                )
             );
-        }
-
-        // Determine the payment scenario based on the calculated amount.
-        const isAmountCorrect = this.formatToTwoDecimalPlaces(amountPaid) === expectedAmount;
-        const isOverpayment = this.formatToTwoDecimalPlaces(amountPaid) > expectedAmount;
-        // For homologation, assume the beneficiary is correct.
-        // Retrieve a dummy active transaction using buildPaymentData with an empty PaymentProofDTO.
-        const { activeTransaction } = await this.utilsService.buildPaymentData(state, {} as PaymentProofDTO);
-        const updateTransactionData: TransactionDTO = {
-            ...activeTransaction,
-            amountPaid: amountPaid,
-            paymentProofs: [] // No actual proof media in homologation.
-        };
-
-        if (isAmountCorrect) {
-            processedMessages = await this.handleCorrectPayment(from, state, updateTransactionData);
-        } else if (isOverpayment) {
-            processedMessages = await this.handleOverpayment(from, state, updateTransactionData, amountPaid);
         } else {
-            processedMessages = await this.handleUnderpayment(from, state, updateTransactionData, amountPaid);
-        }
+            sentMessages.push(
+                ...this.mapTextMessages(
+                    [
+                        '*👋  Coti Pagamentos* - Pagamento Confirmado ✅\n\nEsperamos que sua experiência tenha sido excelente.',
+                        'Como você se sentiria se não pudesse mais usar o nosso serviço?\n\nEscolha uma das opções abaixo',
+                        '1- Muito decepcionado\n2- Um pouco decepcionado\n3- Não faria diferença',
+                    ],
+                    from
+                )
+            );
+            // Atualiza o estado da conversa para iniciar a etapa de Feedback
+            await this.conversationService.updateConversation(state._id.toString(), {
+                userId: state.userId,
+                conversationContext: {
+                    ...state.conversationContext,
+                    currentStep: ConversationStep.Feedback,
+                },
+            });
 
-        // Update the order with the new payment amount and notify waiters accordingly.
-        const updateAmountResponse = await this.orderService.updateAmountPaidAndCheckOrderStatus(
-            state.orderId,
-            amountPaid,
-            state.userId
-        );
-        const isFullPaymentAmountPaid = updateAmountResponse.data.isPaid;
-
-        if (isFullPaymentAmountPaid) {
+            // Finaliza o pagamento na mesa
             const tableId = parseInt(state.tableId, 10);
             await this.tableService.finishPayment(tableId);
+
+            // Notifica os atendentes que a mesa pagou com sucesso
             const notifyWaiterMessages = await this.notifyWaiterTablePaymentComplete(state);
-            processedMessages.push(...notifyWaiterMessages);
-        } else {
-            const notifyWaiterMessages = await this.notifyWaiterPaymentMade(state);
-            processedMessages.push(...notifyWaiterMessages);
+            sentMessages.push(...notifyWaiterMessages);
         }
 
-        return processedMessages;
-    }
-
-
-
-    /**
-     * Step 7.1: Process Payment Proof
-     *
-     * Processes the payment proof (if media is attached), extracts and analyzes it.
-     * Handles errors and sends appropriate responses.
-     *
-     * @param from - The user's unique identifier (WhatsApp ID).
-     * @param message - The received WhatsApp message object.
-     * @param state - The current state of the user's conversation.
-     * @param sentMessages - An array to accumulate messages sent to the user.
-     * @returns A Promise that resolves to an array of messages sent to the user.
-     *
-     * Functionality:
-     * - Downloads and analyzes payment proof media.
-     * - Delegates analysis to a helper function.
-     * - Sends error messages if processing fails.
-     */
-    private async processPaymentProof(
-        from: string,
-        message: RequestMessage,
-        mediaData: string | null,
-        mediaType: string | null,
-        state: ConversationDto
-    ): Promise<ResponseStructureExtended[]> {
-        let sentMessages: ResponseStructureExtended[] = [];
-
+        // Envia as mensagens para o bot GO (que está ouvindo na porta 3105)
+        const goBotUrl = process.env.GO_BOT_URL || "http://localhost:3105/send-messages";
         try {
-            const analysisResult = await this.utilsService.extractAndAnalyzePaymentProof(
-                mediaData,
-                state,
-            );
-            this.logger.debug(`[processPaymentProof] Analysis result: ${JSON.stringify(analysisResult)}`);
-            sentMessages = await this.handleProofAnalysisResult(from, state, analysisResult, mediaData, mediaType);
+            const response = await fetch(goBotUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(sentMessages),
+            });
+            if (!response.ok) {
+                const errText = await response.text();
+                this.logger.error(`Falha ao enviar mensagens para o bot GO. Status: ${response.status}, erro: ${errText}`);
+            } else {
+                this.logger.debug("Mensagens enviadas com sucesso para o bot GO.");
+            }
         } catch (error) {
-            this.logger.error('Error processing payment proof:', error);
-            sentMessages = await this.handlePaymentProofError(from, state);
+            this.logger.error(`Erro ao enviar mensagens para o bot GO: ${error.message}`);
         }
-
-        return sentMessages;
     }
 
-    private async handlePaymentProofError(from: string, state: ConversationDto): Promise<ResponseStructureExtended[]> {
-        const errorMessage = [
-            'Desculpe, não conseguimos processar o comprovante de pagamento. Por favor, envie novamente.',
-        ];
-        return this.mapTextMessages(errorMessage, from);
-    }
-
-
-    /**
-     * Step 7.2: Handle Proof Analysis Result
-     *
-     * Interprets the analysis result of the payment proof and decides the next conversation steps.
-     * Handles duplicate, correct, overpaid, underpaid, or invalid beneficiary scenarios.
-     *
-     * @param from - The user's unique identifier (WhatsApp ID).
-     * @param state - The current state of the user's conversation.
-     * @param sentMessages - An array to accumulate messages sent to the user.
-     * @param analysisResult - The analyzed payment proof details.
-     * @returns A Promise that resolves to an array of messages sent to the user.
-     *
-     * Functionality:
-     * - Checks for duplicate proofs.
-     * - Validates beneficiary and amount paid.
-     * - Proceeds accordingly: confirms payment, requests decision on overpayment, or highlights under/overpayment.
-     */
-    private async handleProofAnalysisResult(
-        from: string,
-        state: ConversationDto,
-        paymentData: PaymentProofDTO,
-        mediaData: string | null,
-        mediaType: string | null
-    ): Promise<ResponseStructureExtended[]> {
-        let sentMessages: ResponseStructureExtended[] = [];
-
-        const isDuplicate = await this.transactionService.isPaymentProofTransactionIdDuplicate(
-            state.userId,
-            paymentData.id_transacao,
-        );
-
-        if (isDuplicate) {
-            sentMessages = await this.handleDuplicateProof(from, state);
-            return sentMessages;
-        }
-
-        const { activeTransaction, amountPaid } = await this.utilsService.buildPaymentData(
-            state,
-            paymentData
-        );
-        const isBeneficiaryCorrect = this.utilsService.validateBeneficiary(paymentData);
-        const isAmountCorrect = this.formatToTwoDecimalPlaces(amountPaid) === this.formatToTwoDecimalPlaces(activeTransaction.expectedAmount);
-        const isOverpayment = this.formatToTwoDecimalPlaces(amountPaid) > this.formatToTwoDecimalPlaces(activeTransaction.expectedAmount);
-
-        const updateTransactionData: TransactionDTO = {
-            ...activeTransaction,
-            amountPaid: amountPaid,
-            paymentProofs: [paymentData]
-        };
-
-        if (!isBeneficiaryCorrect) {
-            this.logger.debug(`[handleProofAnalysisResult] Beneficiary is not correct: ${JSON.stringify(paymentData)}`);
-            sentMessages = await this.handleInvalidBeneficiary(from, state);
-            return sentMessages;
-        }
-
-        if (isAmountCorrect) {
-            sentMessages = await this.handleCorrectPayment(from, state, updateTransactionData);
-        } else if (isOverpayment) {
-            sentMessages = await this.handleOverpayment(from, state, updateTransactionData, amountPaid);
-        } else {
-            sentMessages = await this.handleUnderpayment(from, state, updateTransactionData, amountPaid);
-        }
-
-        if (mediaData && mediaType) {
-            const notifyProofMessages = this.sendProofToGroup(mediaData, mediaType, state);
-
-            sentMessages.push(...notifyProofMessages);
-        }
-
-        const updateAmountResponse = await this.orderService.updateAmountPaidAndCheckOrderStatus(
-            state.orderId,
-            amountPaid,
-            state.userId
-        );
-        const isFullPaymentAmountPaid = updateAmountResponse.data.isPaid;
-
-        if (isFullPaymentAmountPaid) {
-            const tableId = parseInt(state.tableId);
-            await this.tableService.finishPayment(tableId);
-            const notifyWaiterMessages = await this.notifyWaiterTablePaymentComplete(state);
-            sentMessages.push(...notifyWaiterMessages);
-        } else {
-            const notifyWaiterMessages = await this.notifyWaiterPaymentMade(state);
-            sentMessages.push(...notifyWaiterMessages);
-        }
-
-        return sentMessages;
-    }
-
-
-    /**
-     * Step 7.2.1: Handle Duplicate Proof
-     *
-     * Notifies the user that the payment proof has already been used previously.
-     * Updates the conversation state accordingly.
-     *
-     * @param from - The user's unique identifier (WhatsApp ID).
-     * @param state - The current state of the user's conversation.
-     * @param sentMessages - An array to accumulate messages sent to the user.
-     * @returns A Promise that resolves to void.
-     *
-     * Functionality:
-     * - Sends a message informing the user about the duplicate proof.
-     * - No status updates to the transaction since the proof is invalid.
-     */
-    private async handleDuplicateProof(
-        from: string,
-        state: ConversationDto
-    ): Promise<ResponseStructureExtended[]> {
-        const duplicateMessage = [
-            '❌ Este comprovante de pagamento já foi recebido anteriormente.\n\n Por favor, verifique seu comprovante.',
-        ];
-
-        return this.mapTextMessages(duplicateMessage, from);
-    }
-
-    /**
-     * Step 7.3: Remind If No Proof
-     *
-     * Checks if sufficient time has passed without receiving a payment proof,
-     * and sends a reminder message if needed.
-     *
-     * @param from - The user's unique identifier (WhatsApp ID).
-     * @param state - The current state of the user's conversation.
-     * @param sentMessages - An array to accumulate messages sent to the user.
-     * @returns A Promise that resolves to void.
-     *
-     * Functionality:
-     * - Calculates elapsed time since payment start.
-     * - Sends a reminder if no proof is received within a defined timeframe.
-     */
-    private async remindIfNoProof(
-        from: string,
-        state: ConversationDto
-    ): Promise<ResponseStructureExtended[]> {
-        const timeSincePaymentStart = Date.now() - state.conversationContext.paymentStartTime;
-
-        if (timeSincePaymentStart > 5 * 60 * 1000) {
-            const messages = [
-                'Notamos que ainda não recebemos seu comprovante. Se precisar de ajuda ou tiver algum problema, estamos aqui para ajudar! 👍',
-            ];
-
-            const sentMessages = this.mapTextMessages(messages, from);
-
-            const updatedContext: ConversationContextDTO = {
-                ...state.conversationContext,
-                currentStep: ConversationStep.PaymentReminder,
-            };
-
-            await this.conversationService.updateConversation(state._id.toString(), {
-                userId: state.userId,
-                conversationContext: updatedContext,
-            });
-
-            return sentMessages;
-        }
-
-        return [];
-    }
-
-
-    /**
-     * Step 7.2.2: Handle Invalid Beneficiary
-     *
-     * Informs the user that the sent proof does not match the expected beneficiary.
-     *
-     * @param from - The user's unique identifier (WhatsApp ID).
-     * @param state - The current state of the user's conversation.
-     * @param sentMessages - An array to accumulate messages sent to the user.
-     * @returns A Promise that resolves to void.
-     *
-     * Functionality:
-     * - Sends a message indicating invalid beneficiary.
-     * - Updates the conversation state to reflect the invalid payment attempt.
-     */
-    private async handleInvalidBeneficiary(
-        from: string,
-        state: ConversationDto
-    ): Promise<ResponseStructureExtended[]> {
-        const errorMessage = [
-            '❌ O comprovante enviado apresenta inconsistências.\n👨‍💼 Um de nossos atendentes está a caminho para te ajudar!',
-        ];
-
-        const sentMessages = this.mapTextMessages(errorMessage, from);
-
-        const updatedContext: ConversationContextDTO = {
-            ...state.conversationContext,
-            currentStep: ConversationStep.PaymentInvalid,
-        };
-
-        await this.conversationService.updateConversation(
-            state._id.toString(),
-            { userId: state.userId, conversationContext: updatedContext },
-        );
-
-        return sentMessages;
-    }
-
-
-    /**
-     * Step 7.2.3: Handle Correct Payment
-     *
-     * Confirms the payment, thanks the user, and requests feedback.
-     *
-     * @param from - The user's unique identifier (WhatsApp ID).
-     * @param state - The current state of the user's conversation.
-     * @param sentMessages - An array to accumulate messages sent to the user.
-     * @param updateTransactionData - The updated transaction data.
-     * @param amountPaid - The amount paid by the user.
-     * @returns A Promise that resolves to void.
-     *
-     * Functionality:
-     * - Confirms the payment.
-     * - Sends a thank-you message and requests user feedback.
-     * - Updates the transaction status and conversation state.
-     */
-    private async handleCorrectPayment(
-        from: string,
-        state: ConversationDto,
-        updateTransactionData: TransactionDTO
-    ): Promise<ResponseStructureExtended[]> {
-        const messages = [
-            '*👋  Coti Pagamentos* - Pagamento Confirmado ✅\n\nEsperamos que sua experiência tenha sido excelente.',
-            'Por favor, informe o seu número de telefone com DDD para enviarmos o comprovante de pagamento.\n\n💡 Exemplo: (11) 91234-5678',
-        ];
-
-        const sentMessages = this.mapTextMessages(messages, from);
-
-        const updatedContext: ConversationContextDTO = {
-            ...state.conversationContext,
-            currentStep: ConversationStep.CollectPhoneNumber,
-        };
-
-        await this.conversationService.updateConversation(
-            state._id.toString(),
-            { userId: state.userId, conversationContext: updatedContext },
-        );
-
-        updateTransactionData.status = PaymentStatus.Confirmed;
-
-        await this.transactionService.updateTransaction(
-            updateTransactionData._id.toString(),
-            updateTransactionData
-        );
-
-        return sentMessages;
-    }
-
-
-
-    /**
-     * Step 7.2.4: Handle Overpayment
-     *
-     * Notifies the user that they overpaid and presents options to keep the excess as a tip or request a refund.
-     *
-     * @param from - The user's unique identifier (WhatsApp ID).
-     * @param state - The current state of the user's conversation.
-     * @param sentMessages - An array to accumulate messages sent to the user.
-     * @param updateTransactionData - The updated transaction data.
-     * @param amountPaid - The amount paid by the user.
-     * @returns A Promise that resolves to void.
-     *
-     * Functionality:
-     * - Informs the user about the overpayment.
-     * - Asks the user if they want to add the excess as a tip or request a refund.
-     * - Updates the conversation state to reflect the user's next decision step.
-     */
-    private async handleOverpayment(
-        from: string,
-        state: ConversationDto,
-        updateTransactionData: TransactionDTO,
-        amountPaid: number
-    ): Promise<ResponseStructureExtended[]> {
-        const excessAmount = amountPaid - state.conversationContext.userAmount;
-        const messages = [
-            `❌ Você pagou um valor superior ao necessário: *${formatToBRL(amountPaid)}* ao invés de *${formatToBRL(state.conversationContext.userAmount)}*.`,
-            `Você deseja:\n\n1- Adicionar o valor excedente de *${formatToBRL(excessAmount)}* como gorjeta.\n2- Solicitar o estorno do valor extra.`,
-        ];
-
-        const sentMessages = this.mapTextMessages(messages, from);
-
-        const updatedContext: ConversationContextDTO = {
-            ...state.conversationContext,
-            currentStep: ConversationStep.OverpaymentDecision,
-            excessPaymentAmount: excessAmount,
-        };
-
-        await this.conversationService.updateConversation(
-            state._id.toString(),
-            { userId: state.userId, conversationContext: updatedContext },
-        );
-
-        updateTransactionData.status = PaymentStatus.Overpaid;
-
-        await this.transactionService.updateTransaction(
-            updateTransactionData._id.toString(),
-            updateTransactionData
-        );
-
-        return sentMessages;
-    }
-
-
-    /**
-     * Step 7.2.5: Handle Underpayment
-     *
-     * Informs the user that they underpaid and provides options to pay the remaining amount or request assistance.
-     *
-     * @param from - The user's unique identifier (WhatsApp ID).
-     * @param state - The current state of the user's conversation.
-     * @param sentMessages - An array to accumulate messages sent to the user.
-     * @param updateTransactionData - The updated transaction data.
-     * @param amountPaid - The amount paid by the user.
-     * @returns A Promise that resolves to void.
-     *
-     * Functionality:
-     * - Informs the user about the underpayment.
-     * - Provides options to pay the remaining balance or seek help.
-     * - Updates the conversation state and transaction status accordingly.
-     */
-    private async handleUnderpayment(
-        from: string,
-        state: ConversationDto,
-        updateTransactionData: TransactionDTO,
-        amountPaid: number
-    ): Promise<ResponseStructureExtended[]> {
-        const remainingAmount = state.conversationContext.userAmount - amountPaid;
-        const errorMessage = [
-            `❌ O valor pago foi de ${formatToBRL(amountPaid)} enquanto deveria ser ${formatToBRL(state.conversationContext.userAmount)}.`,
-            `💰 Você ainda tem um saldo de ${formatToBRL(remainingAmount)} a pagar.\n\nEscolha uma das opções abaixo:\n1- Pagar valor restante.\n2- Chamar um atendente.`,
-        ];
-
-        const sentMessages = this.mapTextMessages(errorMessage, from);
-
-        const updatedContext: ConversationContextDTO = {
-            ...state.conversationContext,
-            currentStep: ConversationStep.AwaitingUserDecision,
-            underPaymentAmount: remainingAmount,
-        };
-
-        await this.conversationService.updateConversation(
-            state._id.toString(),
-            { userId: state.userId, conversationContext: updatedContext },
-        );
-
-        updateTransactionData.status = PaymentStatus.Underpaid;
-
-        await this.transactionService.updateTransaction(
-            updateTransactionData._id.toString(),
-            updateTransactionData
-        );
-
-        return sentMessages;
-    }
-
-
-    /**
-     * Step 8: Overpayment Decision
-     *
-     * Handles the user's decision regarding overpayment and updates the conversation state.
-     *
-     * @param from - The user's unique identifier (WhatsApp ID).
-     * @param userMessage - The text message sent by the user, indicating their choice for the overpaid amount.
-     * @param state - The current state of the user's conversation.
-     * @returns A Promise that resolves to an array of strings representing the messages sent to the user.
-     * 
-     * Functionality:
-     * - Processes the user's input to either add the excess amount as a tip or request a refund.
-     * - Updates the conversation state to proceed to the feedback step.
-     * - Sends follow-up messages confirming the user's choice and thanking them for their decision.
-     * - Handles invalid responses by prompting the user with available options.
-     */
-
-    private async handleOverpaymentDecision(
-        from: string,
-        userMessage: string,
-        state: ConversationDto
-    ): Promise<ResponseStructureExtended[]> {
-        let sentMessages: ResponseStructureExtended[] = [];
-        const { data: transactionData } = await this.transactionService.getLastOverpaidTransactionByUserAndOrder(
-            state.userId,
-            state.orderId
-        );
-
-        const excessAmount = transactionData.amountPaid - transactionData.expectedAmount;
-        const transactionId = transactionData._id.toString();
-
-        const addAsTipResponses = ['1', 'adicionar como gorjeta', 'gorjeta', 'adicionar gorjeta'];
-        const refundResponses = ['2', 'estorno', 'solicitar estorno', 'extornar'];
-
-        if (addAsTipResponses.some((response) => userMessage.includes(response))) {
-            const messages = [
-                `🎉 Muito obrigado pela sua generosidade! O valor de *${formatToBRL(excessAmount)}* foi adicionado como gorjeta. 😊`,
-                'Por favor, informe o seu número de telefone com DDD para enviarmos o comprovante de pagamento.\n\n💡 Exemplo: (11) 91234-5678',
-            ];
-            sentMessages = this.mapTextMessages(messages, from);
-
-            const alreadyPaidTip = state.conversationContext.tipAmount || 0;
-
-            const updatedContext: ConversationContextDTO = {
-                ...state.conversationContext,
-                currentStep: ConversationStep.CollectPhoneNumber,
-                tipAmount: alreadyPaidTip + excessAmount,
-            };
-
-            await this.conversationService.updateConversation(state._id.toString(), {
-                userId: state.userId,
-                conversationContext: updatedContext,
-            });
-
-            await this.transactionService.changeTransactionStatusToConfirmed(transactionId);
-        } else if (refundResponses.some((response) => userMessage.includes(response))) {
-            const messages = [
-                `Entendido! Vamos providenciar o estorno do valor excedente de *${formatToBRL(excessAmount)}* o mais rápido possível. 💸`,
-                'Por favor, informe o seu número de telefone com DDD para enviarmos o comprovante de pagamento.\n\n💡 Exemplo: (11) 91234-5678',
-            ];
-            sentMessages = this.mapTextMessages(messages, from);
-
-            const updatedContext: ConversationContextDTO = {
-                ...state.conversationContext,
-                currentStep: ConversationStep.CollectPhoneNumber,
-            };
-
-            const notifyRefundMessages = this.notifyRefundRequest(parseInt(state.tableId), excessAmount);
-
-            sentMessages.push(...notifyRefundMessages);
-
-            await this.conversationService.updateConversation(state._id.toString(), {
-                userId: state.userId,
-                conversationContext: updatedContext,
-            });
-        } else {
-            const messages = [
-                'Desculpe, não entendi sua resposta.',
-                `Por favor, escolha uma das opções abaixo:\n1- Adicionar o valor excedente como gorjeta.\n2- Solicitar o estorno do valor extra.`,
-            ];
-            sentMessages = this.mapTextMessages(messages, from);
-        }
-
-        return sentMessages;
-    }
-
-
-    /**
- * Step 9: Awaiting User Decision
- *
- * Handles the user's response regarding the next step for incomplete payments and updates the conversation state.
- *
- * @param from - The user's unique identifier (WhatsApp ID).
- * @param userMessage - The text message sent by the user indicating their decision.
- * @param state - The current state of the user's conversation.
- * @returns A Promise that resolves to an array of strings representing the messages sent to the user.
- * 
- * Functionality:
- * - Processes the user's input to either proceed with a new transaction to pay the remaining amount or request assistance.
- * - Updates the conversation state to either `WaitingForPayment` or `PaymentAssistance`.
- * - Sends follow-up messages with payment details or assistance confirmation.
- * - Handles invalid responses by prompting the user with the available options again.
- */
-
-    private async handleAwaitingUserDecision(
-        from: string,
-        userMessage: string,
-        state: ConversationDto
-    ): Promise<ResponseStructureExtended[]> {
-        let sentMessages: ResponseStructureExtended[] = [];
-        const conversationId = state._id.toString();
-
-        const positiveResponses = ['1', 'nova transação', 'realizar nova transação', 'pagar valor restante'];
-        const assistanceResponses = ['2', 'chamar atendente', 'ajuda', 'preciso de ajuda'];
-
-        if (positiveResponses.some((response) => userMessage.includes(response))) {
-            const { data: transactionData } = await this.transactionService.getLastUnderpaidTransactionByUserAndOrder(
-                state.userId,
-                state.orderId
-            );
-
-            const remainingAmount = state.conversationContext.userAmount - transactionData.amountPaid;
-            const transactionId = transactionData._id.toString();
-            state.conversationContext.userAmount = remainingAmount;
-
-            sentMessages = this.mapTextMessages(
-                [
-                    `Valor a ser pago: *${formatToBRL(remainingAmount)}*`,
-                    'Segue abaixo a chave PIX para pagamento 👇',
-                    '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
-                    'Por favor, envie o comprovante! 📄✅',
-                ],
-                from
-            );
-
-            const updatedContext: ConversationContextDTO = {
-                ...state.conversationContext,
-                currentStep: ConversationStep.WaitingForPayment,
-            };
-
-            await this.conversationService.updateConversation(conversationId, {
-                userId: state.userId,
-                conversationContext: updatedContext,
-            });
-
-            await this.transactionService.changeTransactionStatusToConfirmed(transactionId);
-
-            const newTransactionData: CreateTransactionDTO = {
-                orderId: state.orderId,
-                tableId: state.tableId,
-                conversationId: conversationId,
-                userId: state.userId,
-                amountPaid: 0,
-                expectedAmount: remainingAmount,
-                status: PaymentStatus.Pending,
-                initiatedAt: new Date(),
-                paymentMethod: state.conversationContext.paymentMethod,
-            };
-
-            await this.transactionService.createTransaction(newTransactionData);
-        } else if (assistanceResponses.some((response) => userMessage.includes(response))) {
-            sentMessages = this.mapTextMessages(
-                ['👨‍💼 Um de nossos atendentes já está a caminho para te ajudar!'],
-                from
-            );
-
-            const updatedContext: ConversationContextDTO = {
-                ...state.conversationContext,
-                currentStep: ConversationStep.PaymentAssistance,
-            };
-
-            await this.conversationService.updateConversation(conversationId, {
-                userId: state.userId,
-                conversationContext: updatedContext,
-            });
-        } else {
-            sentMessages = this.mapTextMessages(
-                [
-                    'Desculpe, não entendi sua resposta.',
-                    'Por favor, escolha uma das opções abaixo:\n' +
-                    '1- Pagar valor restante.\n' +
-                    '2- Chamar um atendente.',
-                ],
-                from
-            );
-        }
-
-        return sentMessages;
-    }
-
-
-    /**
-     * Step 10: Payment Reminder
-     *
-     * Handles the user's response to a payment reminder and updates the conversation state accordingly.
-     *
-     * @param from - The user's unique identifier (WhatsApp ID).
-     * @param userMessage - The text message sent by the user, indicating their status regarding the payment.
-     * @param state - The current state of the user's conversation.
-     * @returns A Promise that resolves to an array of strings representing the messages sent to the user.
-     * 
-     * Functionality:
-     * - Processes the user's input to determine whether they need assistance, are making the payment, or prefer an alternative method.
-     * - Updates the conversation state to:
-     *   - `PaymentAssistance` if the user requests help.
-     *   - `WaitingForPayment` if the user confirms they are proceeding with the payment.
-     *   - `PaymentDeclined` if the user decides to pay conventionally.
-     * - Sends follow-up messages based on the user's response.
-     * - Handles invalid responses by prompting the user for clarification.
-     */
-
-    private async handlePaymentReminder(
-        from: string,
-        userMessage: string,
-        state: ConversationDto,
-    ): Promise<string[]> {
-
-        return [];
-    }
-
-    private async handleCollectPhoneNumber(
-        from: string,
-        userMessage: string,
-        state: ConversationDto
-    ): Promise<ResponseStructureExtended[]> {
-        let sentMessages: ResponseStructureExtended[] = [];
-        const conversationId = state._id.toString();
-
-        const phoneClean = userMessage.replace(/\D/g, '');
-
-        if (phoneClean.length < 10) {
-            sentMessages = this.mapTextMessages(
-                ['Por favor, informe um número de telefone com DDD (mínimo 10 dígitos). 🧐'],
-                from
-            );
-            return sentMessages;
-        }
-
-        const updatedContext: ConversationContextDTO = {
-            ...state.conversationContext,
-            phone: phoneClean,
-            currentStep: ConversationStep.Feedback,
-        };
-
-        await this.conversationService.updateConversation(conversationId, {
-            userId: state.userId,
-            conversationContext: updatedContext,
-        });
-
-        sentMessages = this.mapTextMessages(
-            [
-                '👋  Coti Pagamentos - Pagamento Finalizado ✅\n\nEsperamos que sua experiência tenha sido excelente.',
-                'Como você se sentiria se não pudesse mais usar o nosso serviço?\n\nEscolha uma das opções abaixo',
-                'a) Muito decepcionado\nb) Um pouco decepcionado\nc) Não faria diferença'
-            ],
-            from
-        );
-
-        return sentMessages;
-    }
 
 
 
@@ -2375,21 +1547,36 @@ export class WhatsAppService {
         if (typeof feedback.mustHaveScore === 'undefined') {
             const userResponse = userMessage.trim().toLowerCase();
             const validOptions: Record<string, string> = {
-                'a': 'Muito decepcionado',
-                'b': 'Um pouco decepcionado',
-                'c': 'Não faria diferença',
+                '1-': 'Muito decepcionado',
+                '1': 'Muito decepcionado',
+                'muito decepcionado': 'Muito decepcionado',
+                'decepcionado': 'Muito decepcionado',
+                '2-': 'Um pouco decepcionado',
+                '2': 'Um pouco decepcionado',
+                'um pouco decepcionado': 'Um pouco decepcionado',
+                'pouco decepcionado': 'Um pouco decepcionado',
+                '3-': 'Não faria diferença',
+                '3': 'Não faria diferença',
+                'não faria diferença': 'Não faria diferença',
+                'nao faria diferença': 'Não faria diferença', // Sem acento
+                'indiferente': 'Não faria diferença',
             };
 
-            if (!Object.keys(validOptions).includes(userResponse)) {
+            // Verifica se a resposta do usuário é válida
+            const matchedOption = Object.keys(validOptions).find(
+                (key) => key === userResponse || userResponse.includes(key)
+            );
+
+            if (!matchedOption) {
                 sentMessages = this.mapTextMessages(
                     [
-                        'Por favor, escolha uma das opções abaixo e envie apenas a letra correspondente:',
-                        'a) Muito decepcionado\nb) Um pouco decepcionado\nc) Não faria diferença',
+                        'Por favor, escolha uma das opções abaixo e envie apenas o número ou a descrição correspondente:',
+                        '1- Muito decepcionado\n2- Um pouco decepcionado\n3- Não faria diferença',
                     ],
                     from
                 );
             } else {
-                feedback.mustHaveScore = validOptions[userResponse];
+                feedback.mustHaveScore = validOptions[matchedOption];
 
                 sentMessages = this.mapTextMessages(
                     ['Entendemos. Pode nos contar um pouco mais sobre o motivo da sua escolha?'],
@@ -2414,6 +1601,8 @@ export class WhatsAppService {
 
         return sentMessages;
     }
+
+
 
     /**
      * Step 12: Feedback Detail

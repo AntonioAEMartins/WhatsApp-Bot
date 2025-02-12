@@ -4,12 +4,9 @@ import { ConversationDto } from 'src/conversation/dto/conversation.dto';
 import { Job } from 'bull';
 
 export class PaymentProcessorDTO {
+  transactionId: string;
   from: string;
-  userMessage: string;
   state: ConversationDto;
-  message: RequestMessage;
-  mediaData: string;
-  mediaType: string;
 }
 
 
@@ -18,11 +15,10 @@ export class PaymentProcessor {
   constructor(private readonly whatsAppService: WhatsAppService) { }
 
   @Process()
-  async process(job: Job<PaymentProcessorDTO>): Promise<ResponseStructure[]> {
+  async process(job: Job<PaymentProcessorDTO>): Promise<void> {
     try {
       // Aqui, pegue o retorno que você quer de fato
-      const result = await this.whatsAppService.processPayment(job.data);
-      return result;
+      await this.whatsAppService.processPayment(job.data)
     } catch (error) {
       throw error;
     }
