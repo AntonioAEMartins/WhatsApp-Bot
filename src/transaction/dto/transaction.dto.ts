@@ -32,6 +32,11 @@ export class PaymentProofDTO {
     id_transacao: string;
 }
 
+export enum PaymentMethod {
+    PIX = 'pix',
+    CREDIT_CARD = 'credit_card'
+}
+
 export class BaseTransactionDTO {
     // Referência ao pedido desta transação
     @IsString()
@@ -46,6 +51,10 @@ export class BaseTransactionDTO {
     @IsString()
     @IsOptional()
     conversationId?: string;
+
+    @IsEnum(PaymentMethod)
+    @IsOptional()
+    paymentMethod: PaymentMethod;
 
     @IsString()
     @IsOptional()
