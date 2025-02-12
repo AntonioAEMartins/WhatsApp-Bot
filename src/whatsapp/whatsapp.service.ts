@@ -1425,7 +1425,7 @@ export class WhatsAppService {
         // Envia uma mensagem com o link de pagamento
         sentMessages.push(...this.mapTextMessages(
             [
-                `O valor final da conta é de ${formatToBRL(state.conversationContext.userAmount)}*.`,
+                `O valor final da conta é de *${formatToBRL(state.conversationContext.userAmount)}*.`,
                 `*Clique no link abaixo* para realizar o pagamento com Cartão de Crédito:`,
                 paymentLink,
                 `*Importante:* Não consegue clicar no link?\n\n*Salve* nosso contato na agenda.\nOu copie e cole em seu navegador.`
