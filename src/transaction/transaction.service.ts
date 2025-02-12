@@ -56,6 +56,18 @@ export class TransactionService {
         }
     }
 
+    async getTransactionByipagTransactionId(ipagTransactionId: string): Promise<SimpleResponseDto<TransactionDTO>> {
+        const transaction = await this.db.collection("transactions").findOne({ ipagTransactionId });
+
+        if (!transaction) {
+            throw new HttpException("Transaction not found", HttpStatus.NOT_FOUND);
+        }
+
+        return {
+            msg: "Transaction found",
+            data: transaction as TransactionDTO,
+        }
+    }
     async updateTransaction(id: string, updateTransactionData: Partial<TransactionDTO>): Promise<SimpleResponseDto<TransactionDTO>> {
         const transaction = await this.db.collection("transactions").findOne({ _id: new ObjectId(id) });
 
