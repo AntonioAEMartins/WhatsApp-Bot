@@ -1,5 +1,5 @@
 import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { CreatePaymentDto, PaymentMethodCard, PaymentType, UserPaymentInfoDto } from './dto/ipag-pagamentos.dto';
+import { CreatePaymentDto, PaymentMethodCard, PaymentMethodPix, PaymentType, UserPaymentCreditInfoDto, UserPaymentPixInfoDto } from './dto/ipag-pagamentos.dto';
 import { IPagTransactionResponse } from './types/ipag-response.types';
 import { CreateEstablishmentDto, CreateSellerDto } from './dto/ipag-marketplace.dto';
 import { CreateCheckoutDto } from './dto/ipag-checkout.dto';
@@ -18,7 +18,7 @@ export class IPagService {
     ) {
         // You can set these values using environment variables for security
 
-        const ipagBaseUrl = process.env.ENVIRONMENT === 'development' ? process.env.IPAG_BASE_DEV_URL : process.env.IPAG_BASE_PROD_URL;
+        const ipagBaseUrl = process.env.ENVIRONMENT === 'development' ? process.env.IPAG_BASE_DEV_URL : process.env.ENVIRONMENT === 'homologation' ? process.env.IPAG_BASE_DEV_URL : process.env.IPAG_BASE_PROD_URL;
         this.baseURL = ipagBaseUrl || 'https://api.ipag.com.br';
         this.apiId = process.env.IPAG_API_ID
         this.apiKey = process.env.IPAG_API_KEY
@@ -59,13 +59,65 @@ export class IPagService {
         }
     }
 
+    async createPIXPayment(
+        userPaymentInfo: UserPaymentPixInfoDto,
+    ): Promise<IPagTransactionResponse> {
+        const transaction = await this.transactionService.getTransaction(userPaymentInfo.transactionId);
+
+        if (!transaction) {
+            throw new HttpException('Transaction not found', HttpStatus.NOT_FOUND);
+        }
+
+        if (transaction.data.status !== PaymentStatus.Pending) {
+            throw new HttpException('Transaction not pending', HttpStatus.BAD_REQUEST);
+        }
+
+        const paymentData: CreatePaymentDto = {
+            amount: transaction.data.expectedAmount,
+            payment: {
+                type: PaymentType.pix,
+                method: PaymentMethodPix.pix,
+                pix_expires_in: userPaymentInfo.pixExpiresIn,
+                installments: 1,
+                softdescriptor: 'AstraPay',
+            },
+            customer: {
+                name: userPaymentInfo.customerInfo.name,
+                cpf_cnpj: userPaymentInfo.customerInfo.cpf_cnpj,
+            },
+            split_rules: [{
+                seller_id: "bd0181690d928c05350f75ce49aecb2a",
+                percentage: 100,
+            }]
+        }
+
+        const endpoint = 'service/payment';
+        try {
+            const response = await this.makeRequest(endpoint, 'POST', paymentData) as IPagTransactionResponse;
+
+            console.log('[createPIXPayment] response:', response);
+
+            await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
+                ipagTransactionId: response.uuid,
+            });
+
+            return response as IPagTransactionResponse;
+        } catch (error) {
+            console.error('Error creating payment:', error);
+            if (error instanceof HttpException) {
+                throw error;
+            }
+            throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+        }
+    }
+
     /**
    * Cria um pagamento enviando os dados para o endpoint correspondente.
    * Após obter a resposta, verifica se há algum erro (ex.: cartão expirado,
    * dados incorretos etc.) e, em caso afirmativo, lança uma exceção.
    */
-    async createPayment(
-        userPaymentInfo: UserPaymentInfoDto,
+    async createCreditCardPayment(
+        userPaymentInfo: UserPaymentCreditInfoDto,
         transaction_id: string,
     ): Promise<IPagTransactionResponse> {
 
@@ -100,10 +152,10 @@ export class IPagService {
                 name: userPaymentInfo.customerInfo.name,
                 cpf_cnpj: userPaymentInfo.customerInfo.cpf_cnpj,
             },
-            split_rules: {
+            split_rules: [{
                 seller_id: "bd0181690d928c05350f75ce49aecb2a",
-                percentage: 50,
-            }
+                percentage: 100,
+            }]
         }
 
         const endpoint = 'service/payment'; // Ajuste este endpoint conforme a documentação do iPag

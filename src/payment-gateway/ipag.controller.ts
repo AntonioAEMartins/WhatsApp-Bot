@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, HttpException, HttpStatus, Param, Post } from '@nestjs/common';
 import { IPagService } from './ipag.service';
-import { CardInfoDto, CreatePaymentDto, PaymentMethodCard, PaymentType, UserPaymentInfoDto } from './dto/ipag-pagamentos.dto';
+import { CardInfoDto, CreatePaymentDto, PaymentMethodCard, PaymentType, UserPaymentCreditInfoDto, UserPaymentPixInfoDto } from './dto/ipag-pagamentos.dto';
 import { IsNotEmpty, IsString, validate } from 'class-validator';
 import { CreateEstablishmentDto, CreateSellerDto } from './dto/ipag-marketplace.dto';
 import { CreateCheckoutDto } from './dto/ipag-checkout.dto';
@@ -9,10 +9,17 @@ import { CreateCheckoutDto } from './dto/ipag-checkout.dto';
 export class IPagController {
   constructor(private readonly ipagService: IPagService) { }
 
-  @Post('create-payment')
+  @Post('payment/credit-card')
   @HttpCode(200)
-  async createPayment(@Body() userPaymentInfo: UserPaymentInfoDto, @Body() transactionId: string) {
-    const response = await this.ipagService.createPayment(userPaymentInfo, transactionId);
+  async createCreditCardPayment(@Body() userPaymentInfo: UserPaymentCreditInfoDto, @Body() transactionId: string) {
+    const response = await this.ipagService.createCreditCardPayment(userPaymentInfo, transactionId);
+    return response;
+  }
+
+  @Post('payment/pix')
+  @HttpCode(200)
+  async createPIXPayment(@Body() userPaymentInfo: UserPaymentPixInfoDto) {
+    const response = await this.ipagService.createPIXPayment(userPaymentInfo);
     return response;
   }
 
