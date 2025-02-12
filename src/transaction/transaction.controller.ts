@@ -23,6 +23,7 @@ export class TransactionController {
     async getTransaction(@Param('id') id: string) {
         return await this.transactionService.getTransaction(id);
     }
+    
     @HttpCode(HttpStatus.OK)
     @Get('active_by_order')
     async getActiveTransactionsByOrderId(@Query('orderId') orderId: string) {
