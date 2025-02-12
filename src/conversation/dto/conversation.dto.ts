@@ -4,6 +4,7 @@ import { IsString, IsNumber, IsArray, IsOptional, ValidateNested, IsEnum, IsDate
 import { Type } from 'class-transformer';
 import { ObjectId } from 'mongodb';
 import { ConversationStep, MessageType, PaymentStatus } from './conversation.enums';
+import { PaymentMethod } from 'src/transaction/dto/transaction.dto';
 
 
 
@@ -131,6 +132,10 @@ export class ConversationContextDTO {
   @ValidateNested({ each: true })
   @Type(() => MessageDTO)
   messages: MessageDTO[];
+
+  @IsEnum(PaymentMethod)
+  @IsOptional()
+  paymentMethod?: PaymentMethod;
 }
 
 export class BaseConversationDto {
