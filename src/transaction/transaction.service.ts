@@ -5,16 +5,20 @@ import { SimpleResponseDto } from 'src/request/request.dto';
 import { CreateTransactionDTO, TransactionDTO } from './dto/transaction.dto';
 import { ActivePaymentStatuses, PaymentDescription, PaymentStatus } from 'src/conversation/dto/conversation.enums';
 import { ConversationDto } from 'src/conversation/dto/conversation.dto';
+import { IPagService } from 'src/payment-gateway/ipag.service';
+import { UserPaymentPixInfoDto } from 'src/payment-gateway/dto/ipag-pagamentos.dto';
 @Injectable()
 export class TransactionService {
 
     private readonly mongoClient: MongoClient;
     private readonly timeThreshold = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
-    constructor(@Inject('DATABASE_CONNECTION') private db: Db, clientProvider: ClientProvider) {
+    constructor(
+        @Inject('DATABASE_CONNECTION') private db: Db, clientProvider: ClientProvider,
+    ) {
         this.mongoClient = clientProvider.getClient();
     }
 
-    async createTransaction(createTransactionData: CreateTransactionDTO): Promise<SimpleResponseDto<CreateTransactionDTO>> {
+    async createTransaction(createTransactionData: CreateTransactionDTO): Promise<SimpleResponseDto<TransactionDTO>> {
         const transactionData: TransactionDTO = {
             _id: new ObjectId(),
             ...createTransactionData,
