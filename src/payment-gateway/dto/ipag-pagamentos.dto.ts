@@ -284,10 +284,10 @@ export class CreatePaymentDto {
     @IsOptional()
     @ValidateNested()
     @Type(() => SplitRulesDto)
-    split_rules?: SplitRulesDto
+    split_rules?: SplitRulesDto[];
 }
 
-export class UserPaymentInfoDto {
+export class UserPaymentCreditInfoDto {
 
     @IsNotEmpty({ message: "cardInfo is required" })
     @ValidateNested()
@@ -311,6 +311,21 @@ export class UserPaymentInfoDto {
     @IsNotEmpty({ message: "transactionId is required" })
     @IsString()
     transactionId: string;
+}
+
+export class UserPaymentPixInfoDto {
+    @IsNotEmpty({ message: "transactionId is required" })
+    @IsString()
+    transactionId: string;
+
+    @IsOptional()
+    @IsNumber()
+    pixExpiresIn?: number;
+
+    @IsNotEmpty({ message: "customerInfo is required" })
+    @ValidateNested()
+    @Type(() => CustomerDto)
+    customerInfo: CustomerDto;
 }
 
 export class CardInfoDto {
