@@ -20,7 +20,7 @@ import { ConversationStep, MessageType, PaymentStatus } from 'src/conversation/d
 import { OrderService } from 'src/order/order.service';
 import { CreateOrderDTO } from 'src/order/dto/order.dto';
 import { TransactionService } from 'src/transaction/transaction.service';
-import { CreateTransactionDTO, PaymentProofDTO, TransactionDTO } from 'src/transaction/dto/transaction.dto';
+import { CreateTransactionDTO, PaymentMethod, PaymentProofDTO, TransactionDTO } from 'src/transaction/dto/transaction.dto';
 import { GroupMessageKeys, GroupMessages } from './utils/group.messages.utils';
 import { WhatsAppUtils } from './whatsapp.utils';
 import { PaymentProcessorDTO } from './payment.processor';
@@ -1045,6 +1045,7 @@ export class WhatsAppService {
      * Agora, em vez de enviar diretamente a chave PIX e ir para o WaitingForPayment,
      * o usuário será direcionado para a coleta do CPF (CollectCPF).
      */
+    // 1. handleExtraTip – REMOÇÃO DA CRIAÇÃO DA TRANSAÇÃO
     private async handleExtraTip(
         from: string,
         userMessage: string,
@@ -1062,11 +1063,9 @@ export class WhatsAppService {
             sentMessages = await this.handleInvalidTip(from, state);
         }
 
-        // Mantém a criação inicial da transação (caso seja necessária para controle)
-        await this.createTransaction(state);
-
         return sentMessages;
     }
+
 
     private isNoTip(userMessage: string, noTipKeywords: string[]): boolean {
         return noTipKeywords.some((keyword) => userMessage.includes(keyword));
@@ -1186,11 +1185,11 @@ export class WhatsAppService {
             return sentMessages;
         }
 
-        // Se estivermos em homologação, vamos para a seleção do método de pagamento
         if (process.env.ENVIRONMENT === 'homologation') {
+            // Fluxo de homologação: direciona para a escolha do meio de pagamento
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
-                currentStep: ConversationStep.PaymentMethodSelection, // novo passo
+                currentStep: ConversationStep.PaymentMethodSelection,
                 paymentStartTime: Date.now(),
                 cpf: cpfLimpo,
             };
@@ -1201,11 +1200,11 @@ export class WhatsAppService {
             });
 
             sentMessages.push(...this.mapTextMessages(
-                ['Por favor, escolha a forma de pagamento:\n1- PIX\n2- Cartão de Crédito'],
+                ['👍 Escolha a forma de pagamento:\n\n1- PIX\n2- Cartão de Crédito'],
                 from
             ));
         } else {
-            // Fluxo normal (produção, homologação não se aplica)
+            // Fluxo de produção: atualiza o contexto para WaitingForPayment
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.WaitingForPayment,
@@ -1291,7 +1290,7 @@ export class WhatsAppService {
     }
 
 
-    private async createTransaction(state: ConversationDto): Promise<void> {
+    private async createTransaction(state: ConversationDto, paymentMethod: PaymentMethod): Promise<void> {
         const transactionData: CreateTransactionDTO = {
             orderId: state.orderId,
             tableId: state.tableId,
@@ -1301,6 +1300,7 @@ export class WhatsAppService {
             expectedAmount: this.formatToTwoDecimalPlaces(state.conversationContext.userAmount),
             status: PaymentStatus.Pending,
             initiatedAt: new Date(),
+            paymentMethod: paymentMethod,
         };
 
         await this.transactionService.createTransaction(transactionData);
@@ -1309,40 +1309,49 @@ export class WhatsAppService {
     private async handlePaymentMethodSelection(
         from: string,
         userMessage: string,
-        state: ConversationDto
+        state: ConversationDto,
     ): Promise<ResponseStructureExtended[]> {
         let sentMessages: ResponseStructureExtended[] = [];
         const conversationId = state._id.toString();
         const userChoice = userMessage.trim().toLowerCase();
 
         if (userChoice === '1' || userChoice.includes('pix')) {
-            // Usuário escolheu PIX: atualiza para o passo WaitingForPayment e envia as instruções PIX
+            // Usuário escolheu PIX: atualiza o contexto da conversa e grava o método escolhido como PIX
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
-                currentStep: ConversationStep.WaitingForPayment, // segue para pagamento PIX
-                // opcionalmente, pode gravar o método escolhido:
-                // paymentMethod: 'pix'
+                currentStep: ConversationStep.WaitingForPayment,
+                paymentMethod: PaymentMethod.PIX,
             };
 
             await this.conversationService.updateConversation(conversationId, {
                 userId: state.userId,
                 conversationContext: updatedContext,
             });
+
+            // Para homologação, crie a transação agora (pois o CPF já foi coletado)
+            if (process.env.ENVIRONMENT === 'homologation') {
+                await this.createTransaction(state, PaymentMethod.PIX);
+            }
 
             const paymentMessages = await this.handlePaymentInstructions(from, state);
             sentMessages.push(...paymentMessages);
         } else if (userChoice === '2' || userChoice.includes('cartão') || userChoice.includes('crédito')) {
-            // Usuário escolheu Cartão de Crédito: atualiza e chama o tratamento do cartão
+            // Usuário escolheu Cartão de Crédito: atualiza o contexto da conversa e grava o método escolhido como Cartão de Crédito
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
-                currentStep: ConversationStep.WaitingForPayment, // ou outro passo se preferir
-                // opcional: paymentMethod: 'credit_card'
+                currentStep: ConversationStep.WaitingForPayment,
+                paymentMethod: PaymentMethod.CREDIT_CARD,
             };
 
             await this.conversationService.updateConversation(conversationId, {
                 userId: state.userId,
                 conversationContext: updatedContext,
             });
+
+            // Para homologação, crie a transação agora após a escolha
+            if (process.env.ENVIRONMENT === 'homologation') {
+                await this.createTransaction(state, PaymentMethod.CREDIT_CARD);
+            }
 
             sentMessages = await this.handleCreditCardPayment(from, state);
         } else {
@@ -1355,6 +1364,7 @@ export class WhatsAppService {
 
         return sentMessages;
     }
+
 
     private async handleCreditCardPayment(
         from: string,
@@ -2157,6 +2167,7 @@ export class WhatsAppService {
                 expectedAmount: remainingAmount,
                 status: PaymentStatus.Pending,
                 initiatedAt: new Date(),
+                paymentMethod: state.conversationContext.paymentMethod,
             };
 
             await this.transactionService.createTransaction(newTransactionData);
