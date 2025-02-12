@@ -31,37 +31,26 @@ export class TransactionService {
     }
 
     async getSummary(id: string): Promise<SimpleResponseDto<{ expectedAmount: number; userCPF: string }>> {
-        const results = await this.db.collection("transactions").aggregate([
-            { $match: { _id: new ObjectId(id) } },
-            {
-                $lookup: {
-                    from: "conversations",
-                    localField: "conversationId",
-                    foreignField: "_id",
-                    as: "conversation"
-                }
-            },
-            { $unwind: "$conversation" },
-            {
-                $project: {
-                    _id: 0,
-                    expectedAmount: 1,
-                    userCPF: "$conversation.conversationContext.cpf"
-                }
-            }
-        ]).toArray();
+        const transaction = await this.db.collection("transactions").findOne({ _id: new ObjectId(id) }) as TransactionDTO;
 
-        if (!results || results.length === 0) {
+        if (!transaction) {
             throw new HttpException("Transaction not found", HttpStatus.NOT_FOUND);
+        }
+
+        const conversation = await this.db.collection("conversations").findOne({ _id: new ObjectId(transaction.conversationId) }) as ConversationDto;
+
+        if (!conversation) {
+            throw new HttpException("Conversation not found", HttpStatus.NOT_FOUND);
         }
 
         return {
             msg: "Transaction found",
-            data: results[0] as { expectedAmount: number; userCPF: string },
-        };
+            data: {
+                expectedAmount: transaction.expectedAmount,
+                userCPF: conversation.conversationContext.cpf,
+            }
+        }
     }
-
-
 
     async updateTransaction(id: string, updateTransactionData: Partial<TransactionDTO>): Promise<SimpleResponseDto<TransactionDTO>> {
         const transaction = await this.db.collection("transactions").findOne({ _id: new ObjectId(id) });
