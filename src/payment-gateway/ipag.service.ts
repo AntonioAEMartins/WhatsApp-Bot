@@ -82,7 +82,7 @@ export class IPagService {
                 softdescriptor: 'AstraPay',
             },
             customer: {
-                name: userPaymentInfo.customerInfo.name,
+                name: userPaymentInfo.customerInfo.name.substring(0, 80),
                 cpf_cnpj: userPaymentInfo.customerInfo.cpf_cnpj,
             },
             split_rules: [{
