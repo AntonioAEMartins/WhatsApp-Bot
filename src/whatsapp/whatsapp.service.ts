@@ -321,7 +321,7 @@ export class WhatsAppService {
 
             sentMessages.push(
                 ...this.mapTextMessages(
-                    ['👋 *Coti Pagamentos* - Que ótimo! Estamos processando sua comanda, por favor aguarde. 😁'],
+                    ['👋 Coti Pagamentos – Bem-vindo(a)!\nTornamos o seu pagamento prático e sem complicações.\n\nMétodos Aceitos:\n- PIX\n- Cartão de Crédito (em breve!)'],
                     from,
                     true, // reply deve ser true
                 ),
