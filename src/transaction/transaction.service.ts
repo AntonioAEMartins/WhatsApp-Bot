@@ -34,7 +34,7 @@ export class TransactionService {
         }
     }
 
-    async getSummary(id: string): Promise<SimpleResponseDto<{ expectedAmount: number; userCPF: string }>> {
+    async getSummary(id: string): Promise<SimpleResponseDto<{ expectedAmount: number; userCPF: string; status: string }>> {
         const transaction = await this.db.collection("transactions").findOne({ _id: new ObjectId(id) }) as TransactionDTO;
 
         if (!transaction) {
@@ -47,11 +47,14 @@ export class TransactionService {
             throw new HttpException("Conversation not found", HttpStatus.NOT_FOUND);
         }
 
+        console.log("Conversation", conversation);
+
         return {
             msg: "Transaction found",
             data: {
                 expectedAmount: transaction.expectedAmount,
                 userCPF: conversation.conversationContext.cpf,
+                status: transaction.status,
             }
         }
     }
