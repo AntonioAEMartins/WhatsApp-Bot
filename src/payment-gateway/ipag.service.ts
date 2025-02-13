@@ -16,6 +16,7 @@ export class IPagService {
     private readonly baseURL: string;
     private readonly apiId: string;
     private readonly apiKey: string;
+    private readonly ipagSplitSellerId: string;
 
     constructor(
         @InjectQueue('payment') private readonly paymentQueue: Queue,
@@ -23,11 +24,12 @@ export class IPagService {
         private readonly conversationService: ConversationService
     ) {
         // You can set these values using environment variables for security
-
+        this.ipagSplitSellerId = process.env.ENVIRONMENT === 'development' ? process.env.IPAG_DEV_VENDOR : process.env.ENVIRONMENT === 'homologation' ? process.env.IPAG_DEV_VENDOR : process.env.IPAG_CP_VENDOR;
         const ipagBaseUrl = process.env.ENVIRONMENT === 'development' ? process.env.IPAG_BASE_DEV_URL : process.env.ENVIRONMENT === 'homologation' ? process.env.IPAG_BASE_DEV_URL : process.env.IPAG_BASE_PROD_URL;
+        const ipagApiKey = process.env.ENVIRONMENT === 'development' ? process.env.IPAG_API_DEV_KEY : process.env.ENVIRONMENT === 'homologation' ? process.env.IPAG_API_DEV_KEY : process.env.IPAG_API_PROD_KEY;
         this.baseURL = ipagBaseUrl || 'https://api.ipag.com.br';
         this.apiId = process.env.IPAG_API_ID
-        this.apiKey = process.env.IPAG_API_KEY
+        this.apiKey = ipagApiKey
     }
 
     // Function to create the Authorization header for HTTP Basic Auth
@@ -93,7 +95,7 @@ export class IPagService {
                 cpf_cnpj: userPaymentInfo.customerInfo.cpf_cnpj,
             },
             split_rules: [{
-                seller_id: "bd0181690d928c05350f75ce49aecb2a",
+                seller_id: this.ipagSplitSellerId,
                 percentage: 100,
             }]
         }
@@ -158,7 +160,7 @@ export class IPagService {
                 cpf_cnpj: userPaymentInfo.customerInfo.cpf_cnpj,
             },
             split_rules: [{
-                seller_id: "bd0181690d928c05350f75ce49aecb2a",
+                seller_id: this.ipagSplitSellerId,
                 percentage: 100,
             }]
         };
