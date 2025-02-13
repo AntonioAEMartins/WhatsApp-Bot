@@ -295,7 +295,7 @@ export class WhatsAppService {
                         'Desculpe, não entendi o número da comanda. Por favor, diga "Gostaria de pagar a comanda X", onde X é o número da comanda.',
                     ],
                     from,
-                    true, // reply deve ser true
+                    true,
                 ),
             );
             return sentMessages;
@@ -304,8 +304,9 @@ export class WhatsAppService {
         const tableIdInt = parseInt(tableId, 10);
         const orderProcessingInfo = await this.isOrderBeingProcessed(tableId, from);
 
+        // Se ninguém está processando a comanda, inicie o processamento.
         if (!orderProcessingInfo.isProcessing) {
-            // Atualiza o contexto da conversa para "ProcessingOrder"
+            // Atualiza o contexto para ProcessingOrder.
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.ProcessingOrder,
@@ -321,20 +322,22 @@ export class WhatsAppService {
 
             sentMessages.push(
                 ...this.mapTextMessages(
-                    ['👋 Coti Pagamentos – Bem-vindo(a)!\nTornamos o seu pagamento prático e sem complicações.\n\nMétodos Aceitos:\n- PIX\n- Cartão de Crédito (em breve!)'],
+                    [
+                        '*👋 Coti Pagamentos* – Bem-vindo(a)!\nTornamos o seu pagamento prático e sem complicações.\n\nMétodos Aceitos:\n- PIX\n- Cartão de Crédito (em breve!)',
+                    ],
                     from,
-                    true, // reply deve ser true
+                    true,
                 ),
             );
 
-            // Processa a comanda
+            // Processa a comanda (chamada para a função de processamento interno).
             const processingMessages = await this.handleProcessingOrder(from, state, tableIdInt);
             sentMessages.push(...processingMessages);
 
             return sentMessages;
         }
 
-        // Verifica inatividade do usuário anterior
+        // Se a comanda já está sendo processada, verifique a inatividade do outro usuário.
         const { state: otherState, userNumber } = orderProcessingInfo;
         const lastMessageTime = otherState?.conversationContext?.lastMessage
             ? new Date(otherState.conversationContext.lastMessage).getTime()
@@ -353,9 +356,7 @@ export class WhatsAppService {
                     ConversationStep.IncompleteOrder,
                 );
             } else {
-                this.logger.warn(
-                    `Unable to mark conversation as errored for user ${userNumber}: Missing conversation ID.`,
-                );
+                this.logger.warn(`Unable to mark conversation as errored for user ${userNumber}: Missing conversation ID.`);
             }
 
             await this.conversationService.updateConversation(state._id.toString(), {
@@ -368,20 +369,21 @@ export class WhatsAppService {
 
             sentMessages.push(
                 ...this.mapTextMessages(
-                    ['👋 *Coti Pagamentos* - Que ótimo! Estamos processando sua comanda, por favor aguarde. 😁'],
+                    [
+                        '*👋 Coti Pagamentos* – Bem-vindo(a)!\nTornamos o seu pagamento prático e sem complicações.\n\nMétodos Aceitos:\n- PIX\n- Cartão de Crédito (em breve!)',
+                    ],
                     from,
-                    true, // reply deve ser true
+                    true,
                 ),
             );
 
-            // Processa a comanda
             const processingMessages = await this.handleProcessingOrder(from, state, tableIdInt);
             sentMessages.push(...processingMessages);
 
             return sentMessages;
         }
 
-        // Se outra pessoa já está processando, verifica o status da conta
+        // Se outra pessoa já está processando a comanda, verifique se ela está na fase de divisão.
         const step = otherState?.conversationContext?.currentStep;
         const splittingSteps = [
             ConversationStep.SplitBill,
@@ -390,13 +392,14 @@ export class WhatsAppService {
         ];
 
         if (step && splittingSteps.includes(step)) {
+            // Apenas notifica que a comanda está em divisão.
             sentMessages.push(
                 ...this.mapTextMessages(
                     [
-                        `Sua comanda está em processo de divisão de conta. O número *${userNumber}* está compartilhando os contatos para dividir a conta. Por favor, aguarde ou entre em contato com essa pessoa para participar da divisão.`,
+                        '*👋 Coti Pagamentos* - A comanda está sendo dividida. Aguarde a finalização para continuar.',
                     ],
                     from,
-                    true, // reply deve ser true
+                    true,
                 ),
             );
         } else {
@@ -404,7 +407,7 @@ export class WhatsAppService {
                 ...this.mapTextMessages(
                     ['Desculpe, esta comanda já está sendo processada por outra pessoa.'],
                     from,
-                    true, // reply deve ser true
+                    true,
                 ),
             );
         }
