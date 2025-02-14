@@ -19,6 +19,12 @@ export class TransactionController {
     }
 
     @HttpCode(HttpStatus.OK)
+    @Get("receipt/:id")
+    async getReceipt(@Param('id') id: string) {
+        return await this.transactionService.getReceipt(id);
+    }
+
+    @HttpCode(HttpStatus.OK)
     @Get(':id')
     async getTransaction(@Param('id') id: string) {
         return await this.transactionService.getTransaction(id);

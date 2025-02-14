@@ -57,6 +57,19 @@ export class TransactionService {
         }
     }
 
+    async getReceipt(id: string): Promise<SimpleResponseDto<TransactionDTO>> {
+        const transaction = await this.db.collection("transactions").findOne({ _id: new ObjectId(id) }, { projection: { _id: 1, tableId: 1, paymentMethod: 1, amountPaid: 1, expectedAmount: 1, status: 1, confirmedAt: 1 } });
+
+        if (!transaction) {
+            throw new HttpException("Transaction not found", HttpStatus.NOT_FOUND);
+        }
+
+        return {
+            msg: "Transaction found",
+            data: transaction as TransactionDTO,
+        }
+    }
+
     async getTransactionByipagTransactionId(ipagTransactionId: string): Promise<SimpleResponseDto<TransactionDTO>> {
         const transaction = await this.db.collection("transactions").findOne({ ipagTransactionId });
 
@@ -116,7 +129,7 @@ export class TransactionService {
 
     async getTotalPaidByOrderId(orderId: string): Promise<SimpleResponseDto<{ totalPaid: number }>> {
         // Defina os status considerados para calcular o total pago
-        const paymentStatusesToConsider = [PaymentStatus.Confirmed, PaymentStatus.Overpaid, PaymentStatus.Underpaid];
+        const paymentStatusesToConsider = [PaymentStatus.Confirmed, PaymentStatus.Failed];
 
         // Busca as transações com os status definidos
         const transactions = await this.db.collection("transactions").find({
@@ -135,7 +148,7 @@ export class TransactionService {
 
     async getTotalPaidByUserAndOrderId(userId: string, orderId: string): Promise<SimpleResponseDto<{ totalPaid: number }>> {
         // Defina os status considerados para calcular o total pago
-        const paymentStatusesToConsider = [PaymentStatus.Confirmed, PaymentStatus.Overpaid, PaymentStatus.Underpaid];
+        const paymentStatusesToConsider = [PaymentStatus.Confirmed, PaymentStatus.Failed];
 
         // Busca as transações com os status definidos, filtrando também pelo userId
         const transactions = await this.db.collection("transactions").find({
@@ -220,42 +233,6 @@ export class TransactionService {
         return !!transaction;
     }
 
-    async getLastOverpaidTransactionByUserAndOrder(userId: string, orderId: string): Promise<SimpleResponseDto<TransactionDTO>> {
-        const transactions = await this.db.collection("transactions").findOne(
-            {
-                userId,
-                orderId,
-                status: PaymentStatus.Overpaid,
-            },
-            {
-                sort: { createdAt: -1 },
-            }
-        )
-
-        return {
-            msg: "Last overpaid transaction found",
-            data: transactions as TransactionDTO,
-        };
-    }
-
-    async getLastUnderpaidTransactionByUserAndOrder(userId: string, orderId: string): Promise<SimpleResponseDto<TransactionDTO>> {
-        const transactions = await this.db.collection("transactions").findOne(
-            {
-                userId: userId,
-                orderId: orderId,
-                status: PaymentStatus.Underpaid,
-            },
-            {
-                sort: { createdAt: -1 },
-            }
-        )
-
-        return {
-            msg: "Last underpaid transaction found",
-            data: transactions as TransactionDTO,
-        };
-    }
-
     async changeTransactionStatusToConfirmed(transactionId: string): Promise<SimpleResponseDto<TransactionDTO>> {
         const transaction = await this.db.collection("transactions").findOne({ _id: new ObjectId(transactionId) });
 
@@ -266,20 +243,12 @@ export class TransactionService {
         // Construção da descrição com base no estado atual
         let description = '';
         switch (transaction.status) {
-            case PaymentStatus.Overpaid:
-                description = PaymentDescription.Overpaid;
-                break;
-            case PaymentStatus.Underpaid:
-                description = PaymentDescription.Underpaid;
-                break;
-            case PaymentStatus.Partial:
-                description = PaymentDescription.Partial;
-                break;
-            case PaymentStatus.Incomplete:
-                description = PaymentDescription.Incomplete;
+            case PaymentStatus.Failed:
+                description = PaymentDescription.Failed;
                 break;
             default:
                 description = 'Confirmed without additional context'; // Caso o status não seja mapeado
+                break;
         }
 
         const updatedTransaction = await this.db.collection("transactions").findOneAndUpdate(
