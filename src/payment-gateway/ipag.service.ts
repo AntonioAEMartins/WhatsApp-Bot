@@ -11,6 +11,7 @@ import { Queue } from 'bull';
 import { SimpleResponseDto } from 'src/request/request.dto';
 import { ConversationService } from 'src/conversation/conversation.service';
 import { PaymentProcessorDTO } from 'src/whatsapp/payment.processor';
+import { CreateTransactionDTO, PaymentMethod, TransactionDTO } from 'src/transaction/dto/transaction.dto';
 @Injectable()
 export class IPagService {
     private readonly baseURL: string;
@@ -70,19 +71,16 @@ export class IPagService {
     async createPIXPayment(
         userPaymentInfo: UserPaymentPixInfoDto,
     ): Promise<IPagTransactionResponse> {
-        const transaction = await this.transactionService.getTransaction(userPaymentInfo.transactionId);
-
-        if (!transaction) {
-            throw new HttpException('Transaction not found', HttpStatus.NOT_FOUND);
-        }
-
-        if (transaction.data.status !== PaymentStatus.Pending) {
-            throw new HttpException('Transaction not pending', HttpStatus.BAD_REQUEST);
-        }
-
+        // Valida a transação para PIX – se não estiver Pending e for Failed, cria nova transação e continua;
+        // se estiver em outro status, lança exceção.
+        const transaction = await this.validateTransaction(
+            userPaymentInfo.transactionId,
+            PaymentMethod.PIX,
+            true,
+        );
 
         const paymentData: CreatePaymentDto = {
-            amount: transaction.data.expectedAmount,
+            amount: transaction.expectedAmount,
             payment: {
                 type: PaymentType.pix,
                 method: PaymentMethodPix.pix,
@@ -94,22 +92,27 @@ export class IPagService {
                 name: userPaymentInfo.customerInfo.name.substring(0, 80),
                 cpf_cnpj: userPaymentInfo.customerInfo.cpf_cnpj,
             },
-            split_rules: [{
-                seller_id: this.ipagSplitSellerId,
-                percentage: 100,
-            }]
-        }
+            split_rules: [
+                {
+                    seller_id: this.ipagSplitSellerId,
+                    percentage: 100,
+                },
+            ],
+        };
 
         const endpoint = 'service/payment';
         try {
-            const response = await this.makeRequest(endpoint, 'POST', paymentData) as IPagTransactionResponse;
+            const response = (await this.makeRequest(
+                endpoint,
+                'POST',
+                paymentData,
+            )) as IPagTransactionResponse;
 
             await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
                 ipagTransactionId: response.uuid,
             });
 
-            return response as IPagTransactionResponse;
-
+            return response;
         } catch (error) {
             console.error('Error creating payment:', error);
             if (error instanceof HttpException) {
@@ -119,28 +122,20 @@ export class IPagService {
         }
     }
 
-    /**
-   * Cria um pagamento enviando os dados para o endpoint correspondente.
-   * Após obter a resposta, verifica se há algum erro (ex.: cartão expirado,
-   * dados incorretos etc.) e, em caso afirmativo, lança uma exceção.
-   */
     async createCreditCardPayment(
         userPaymentInfo: UserPaymentCreditInfoDto,
     ): Promise<SimpleResponseDto<{ msg: string }>> {
-
-        const transaction = await this.transactionService.getTransaction(userPaymentInfo.transactionId);
-
-        if (!transaction) {
-            throw new HttpException('Transaction not found', HttpStatus.NOT_FOUND);
-        }
-
-        if (transaction.data.status !== PaymentStatus.Pending) {
-            throw new HttpException('Transaction not pending', HttpStatus.BAD_REQUEST);
-        }
+        // Valida a transação para Cartão de Crédito – se não estiver Pending, mesmo que seja Failed (após criação da nova transação),
+        // lança exceção.
+        const transaction = await this.validateTransaction(
+            userPaymentInfo.transactionId,
+            PaymentMethod.CREDIT_CARD,
+            false,
+        );
 
         const paymentData: CreatePaymentDto = {
-            amount: transaction.data.expectedAmount,
-            callback_url: "https://webhook.astra1.com.br/ipag/callback",
+            amount: transaction.expectedAmount,
+            callback_url: 'https://webhook.astra1.com.br/ipag/callback',
             payment: {
                 type: PaymentType.card,
                 method: this.getCardMethod(userPaymentInfo.cardInfo.number),
@@ -159,21 +154,23 @@ export class IPagService {
                 name: userPaymentInfo.customerInfo.name,
                 cpf_cnpj: userPaymentInfo.customerInfo.cpf_cnpj,
             },
-            split_rules: [{
-                seller_id: this.ipagSplitSellerId,
-                percentage: 100,
-            }]
+            split_rules: [
+                {
+                    seller_id: this.ipagSplitSellerId,
+                    percentage: 100,
+                },
+            ],
         };
 
-        console.log("Payment data", paymentData);
+        console.log('Payment data', paymentData);
 
-        const endpoint = 'service/payment'; // Ajuste este endpoint conforme a documentação do iPag
+        const endpoint = 'service/payment'; // Endpoint conforme documentação do iPag
         try {
             const response = await this.makeRequest(endpoint, 'POST', paymentData);
-            // Trata a resposta: se o código do gateway não for de sucesso, lança erro.
             const processedResponse = this.processTransactionResponse(response);
-            // Correção: comparar com "success" (com dois 'c') em vez de "sucess"
-            if (processedResponse.type !== "success") {
+
+            // Corrige: comparação com "success" (com dois "c")
+            if (processedResponse.type !== 'success') {
                 throw new HttpException(processedResponse.erros.join(' '), HttpStatus.BAD_REQUEST);
             }
 
@@ -181,13 +178,12 @@ export class IPagService {
                 ipagTransactionId: response.uuid,
             });
 
-            // return response as IPagTransactionResponse;
             return {
-                msg: "Payment created",
+                msg: 'Payment created',
                 data: {
-                    msg: "Payment created",
-                }
-            }
+                    msg: 'Payment created',
+                },
+            };
         } catch (error) {
             console.error('Error creating payment:', error);
             if (error instanceof HttpException) {
@@ -196,6 +192,59 @@ export class IPagService {
             throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
         }
     }
+
+    /**
+     * Valida a transação com base no ID e no método de pagamento.
+     * 
+     * Para ambos os métodos:
+     * - Se a transação não for encontrada, lança erro.
+     * - Se o status não for Pending:
+     *    - Se for Failed, cria uma nova transação com status Pending.
+     *      - Para PIX, a nova transação é utilizada e o fluxo continua.
+     *      - Para Cartão de Crédito, após criar a nova transação, lança exceção.
+     *    - Caso contrário, lança exceção imediatamente.
+     * 
+     * @param transactionId ID da transação
+     * @param paymentMethod Método de pagamento (PIX ou CREDIT_CARD)
+     * @param isPix Flag que indica se é uma transação PIX (true) ou não (false)
+     */
+    private async validateTransaction(
+        transactionId: string,
+        paymentMethod: PaymentMethod,
+        isPix: boolean,
+    ): Promise<TransactionDTO> {
+        let transaction = await this.transactionService.getTransaction(transactionId);
+
+        if (!transaction) {
+            throw new HttpException('Transaction not found', HttpStatus.NOT_FOUND);
+        }
+
+        if (transaction.data.status !== PaymentStatus.Pending) {
+            if (transaction.data.status === PaymentStatus.Failed) {
+                const newTransactionData: CreateTransactionDTO = {
+                    ...transaction.data,
+                    status: PaymentStatus.Pending,
+                    paymentMethod,
+                    initiatedAt: new Date(),
+                    updatedAt: new Date(),
+                    userId: transaction.data.userId,
+                    ipagTransactionId: null,
+                };
+
+                transaction = await this.transactionService.createTransaction(newTransactionData);
+
+                // Para cartão de crédito, mesmo após criar nova transação, a lógica exige lançar exceção
+                if (!isPix) {
+                    throw new HttpException('Transaction not pending', HttpStatus.BAD_REQUEST);
+                }
+            } else {
+                throw new HttpException('Transaction not pending', HttpStatus.BAD_REQUEST);
+            }
+        }
+
+        return transaction.data;
+    }
+
 
     /**
    * Lista as taxas da conta.
