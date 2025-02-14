@@ -1,20 +1,14 @@
 export enum PaymentStatus {
   Pending = 'pending',
   Confirmed = 'confirmed',
-  Overpaid = 'overpaid',
-  Underpaid = 'underpaid',
-  Partial = 'partial',
-  Incomplete = 'incomplete',
+  Failed = 'failed',
 }
 
 export enum PaymentDescription {
-  Overpaid = 'overpaid',
-  Underpaid = 'underpaid',
-  Partial = 'partial',
-  Incomplete = 'incomplete',
+  Failed = 'failed',
 }
 
-export const ActivePaymentStatuses = [PaymentStatus.Pending, PaymentStatus.Partial];
+export const ActivePaymentStatuses = [PaymentStatus.Pending];
 
 export enum MessageType {
   User = 'user',
