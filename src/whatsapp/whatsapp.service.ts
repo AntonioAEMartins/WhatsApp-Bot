@@ -1324,8 +1324,11 @@ export class WhatsAppService {
     }
 
 
-    private async createTransaction(state: ConversationDto, paymentMethod: PaymentMethod, userName: string): Promise<{ transactionResponse: TransactionDTO, pixKey: string }> {
-
+    private async createTransaction(
+        state: ConversationDto,
+        paymentMethod: PaymentMethod,
+        userName: string
+    ): Promise<{ transactionResponse: TransactionDTO, pixKey: string }> {
         this.logger.log(`[createTransaction] userId: ${state.userId} paymentMethod: ${paymentMethod}`);
 
         const transactionData: CreateTransactionDTO = {
@@ -1353,17 +1356,40 @@ export class WhatsAppService {
                 }
             };
 
-            const ipagResponse = await this.ipagService.createPIXPayment(userPaymentInfo);
-            const ipagTransactionId = ipagResponse.uuid;
-            const pixKey = ipagResponse.attributes.pix.qrcode;
+            try {
+                const ipagResponse = await this.ipagService.createPIXPayment(userPaymentInfo);
+                const ipagTransactionId = ipagResponse.uuid;
+                const pixKey = ipagResponse.attributes.pix.qrcode;
 
-            await this.transactionService.updateTransaction(transactionId, { ipagTransactionId });
+                await this.transactionService.updateTransaction(transactionId, { ipagTransactionId });
 
-            return { transactionResponse: transactionResponse.data, pixKey };
+                return { transactionResponse: transactionResponse.data, pixKey };
+            } catch (error) {
+                this.logger.error(`[createTransaction] Error generating PIX: ${error.message}`);
+
+                // Atualiza o status da transação para falha
+                await this.transactionService.updateTransaction(transactionId, {
+                    status: PaymentStatus.Failed,
+                });
+
+                // Atualiza o contexto para seleção do método de pagamento
+                const revertContext: ConversationContextDTO = {
+                    ...state.conversationContext,
+                    currentStep: ConversationStep.PaymentMethodSelection,
+                };
+
+                await this.conversationService.updateConversation(state._id.toString(), {
+                    userId: state.userId,
+                    conversationContext: revertContext,
+                });
+
+                throw new Error('PIX generation failed');
+            }
         }
 
         return { transactionResponse: transactionResponse.data, pixKey: null };
     }
+
 
 
 
@@ -1459,17 +1485,33 @@ export class WhatsAppService {
             conversationContext: updatedContext,
         });
 
-        // Cria a transação utilizando o método PIX agora que temos o nome e captura o PIX key
-        const transactionResponse = await this.createTransaction(state, PaymentMethod.PIX, name);
+        // Tenta criar a transação via PIX
+        try {
+            const transactionResponse = await this.createTransaction(state, PaymentMethod.PIX, name);
 
-        // Envia as instruções de pagamento via PIX utilizando o PIX key retornado
-        if (transactionResponse.pixKey) {
-            const paymentMessages = await this.handlePIXPaymentInstructions(from, state, transactionResponse.pixKey);
-            sentMessages.push(...paymentMessages);
+            if (transactionResponse.pixKey) {
+                const paymentMessages = await this.handlePIXPaymentInstructions(from, state, transactionResponse.pixKey);
+                sentMessages.push(...paymentMessages);
+            } else {
+                throw new Error('PIX key not received');
+            }
+        } catch (error) {
+            this.logger.error(`[handleCollectName] Error generating PIX: ${error.message}`);
+
+            // Mensagem ao usuário para retornar à seleção de método de pagamento
+            sentMessages.push(
+                ...this.mapTextMessages(
+                    [
+                        'Houve um erro na geração do PIX. Por favor, escolha novamente a forma de pagamento:\n\n1- PIX\n2- Cartão de Crédito'
+                    ],
+                    from
+                )
+            );
         }
 
         return sentMessages;
     }
+
 
 
     private async handleCreditCardPayment(
