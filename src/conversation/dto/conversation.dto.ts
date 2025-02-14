@@ -101,7 +101,7 @@ export class ConversationContextDTO {
   @IsOptional()
   @IsString()
   @Matches(/^\d+$/, { message: 'cpf deve conter apenas números.' })
-  cpf?: string;
+  documentNumber?: string;
 
   @IsOptional()
   @IsString()

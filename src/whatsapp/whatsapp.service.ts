@@ -1167,19 +1167,29 @@ export class WhatsAppService {
         let sentMessages: ResponseStructureExtended[] = [];
         const conversationId = state._id.toString();
 
-        // Validação do CPF (mesmo código que você já tem)
-        const cpfLimpo = userMessage.replace(/\D/g, '');
-        if (cpfLimpo.length !== 11 || !this.isValidCPF(cpfLimpo)) {
+        const documentNumber = userMessage.replace(/\D/g, '');
+
+        let isValidDocument = false;
+        let documentType = '';
+
+        if (documentNumber.length === 11) {
+            isValidDocument = this.isValidCPF(documentNumber);
+            documentType = 'CPF';
+        } else if (documentNumber.length === 14) {
+            isValidDocument = this.isValidCNPJ(documentNumber);
+            documentType = 'CNPJ';
+        }
+
+        if (!isValidDocument) {
             sentMessages = await this.handleInvalidCPF(from, state);
             return sentMessages;
         }
 
-        // Atualiza o contexto para direcionar o usuário à escolha do método de pagamento
         const updatedContext: ConversationContextDTO = {
             ...state.conversationContext,
             currentStep: ConversationStep.PaymentMethodSelection,
             paymentStartTime: Date.now(),
-            cpf: cpfLimpo,
+            documentNumber: documentNumber,
         };
 
         await this.conversationService.updateConversation(conversationId, {
@@ -1187,22 +1197,28 @@ export class WhatsAppService {
             conversationContext: updatedContext,
         });
 
-        sentMessages.push(...this.mapTextMessages(
-            ['👍 Escolha a forma de pagamento:\n\n1- PIX\n2- Cartão de Crédito'],
-            from
-        ));
+        sentMessages.push(
+            ...this.mapTextMessages(
+                ['👍 Escolha a forma de pagamento:\n\n1- PIX\n2- Cartão de Crédito'],
+                from
+            )
+        );
 
         return sentMessages;
     }
+
+
 
 
     /**
      * Função para lidar com CPF inválido.
      */
     private async handleInvalidCPF(from: string, state: ConversationDto): Promise<ResponseStructureExtended[]> {
-        const messages = ['Por favor, informe um CPF válido com 11 dígitos. 🧐'];
+        const messages = ['Por favor, informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido. 🧐'];
         return this.mapTextMessages(messages, from);
     }
+
+
 
     /**
      * Função para lidar com as instruções de pagamento após a coleta do CPF.
@@ -1265,6 +1281,48 @@ export class WhatsAppService {
         return true;
     }
 
+    /**
+  * Valida matematicamente um CNPJ.
+  * @param cnpj - CNPJ limpo (apenas números)
+  * @returns boolean - Retorna true se o CNPJ for válido, caso contrário, false.
+  */
+    private isValidCNPJ(cnpj: string): boolean {
+        // Remove quaisquer caracteres não numéricos (garante tratamento para valores formatados ou não)
+        cnpj = cnpj.replace(/[^\d]+/g, '');
+
+        if (cnpj.length !== 14) return false;
+
+        // Elimina CNPJs com todos os dígitos iguais
+        if (/^(\d)\1+$/.test(cnpj)) return false;
+
+        // Validação do primeiro dígito verificador
+        let tamanho = cnpj.length - 2;
+        let numeros = cnpj.substring(0, tamanho);
+        const digitos = cnpj.substring(tamanho);
+        let soma = 0;
+        let pos = tamanho - 7;
+        for (let i = tamanho; i >= 1; i--) {
+            soma += parseInt(numeros.charAt(tamanho - i)) * pos--;
+            if (pos < 2) pos = 9;
+        }
+        let resultado = soma % 11 < 2 ? 0 : 11 - (soma % 11);
+        if (resultado !== parseInt(digitos.charAt(0))) return false;
+
+        // Validação do segundo dígito verificador
+        tamanho = tamanho + 1;
+        numeros = cnpj.substring(0, tamanho);
+        soma = 0;
+        pos = tamanho - 7;
+        for (let i = tamanho; i >= 1; i--) {
+            soma += parseInt(numeros.charAt(tamanho - i)) * pos--;
+            if (pos < 2) pos = 9;
+        }
+        resultado = soma % 11 < 2 ? 0 : 11 - (soma % 11);
+        if (resultado !== parseInt(digitos.charAt(1))) return false;
+
+        return true;
+    }
+
 
     private async createTransaction(state: ConversationDto, paymentMethod: PaymentMethod, userName: string): Promise<{ transactionResponse: TransactionDTO, pixKey: string }> {
 
@@ -1291,7 +1349,7 @@ export class WhatsAppService {
                 pixExpiresIn: 600, // 10 minutes in seconds
                 customerInfo: {
                     name: userName,
-                    cpf_cnpj: state.conversationContext.cpf,
+                    cpf_cnpj: state.conversationContext.documentNumber,
                 }
             };
 

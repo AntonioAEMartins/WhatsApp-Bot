@@ -34,7 +34,7 @@ export class TransactionService {
         }
     }
 
-    async getSummary(id: string): Promise<SimpleResponseDto<{ expectedAmount: number; userCPF: string; status: string }>> {
+    async getSummary(id: string): Promise<SimpleResponseDto<{ expectedAmount: number; documentNumber: string; status: string }>> {
         const transaction = await this.db.collection("transactions").findOne({ _id: new ObjectId(id) }) as TransactionDTO;
 
         if (!transaction) {
@@ -53,7 +53,7 @@ export class TransactionService {
             msg: "Transaction found",
             data: {
                 expectedAmount: transaction.expectedAmount,
-                userCPF: conversation.conversationContext.cpf,
+                documentNumber: conversation.conversationContext.documentNumber,
                 status: transaction.status,
             }
         }
