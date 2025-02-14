@@ -47,8 +47,6 @@ export class TransactionService {
             throw new HttpException("Conversation not found", HttpStatus.NOT_FOUND);
         }
 
-        console.log("Conversation", conversation);
-
         return {
             msg: "Transaction found",
             data: {
