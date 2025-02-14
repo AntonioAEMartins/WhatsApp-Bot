@@ -327,6 +327,7 @@ export class IPagService {
                     await this.transactionService.updateTransaction(transaction.data._id.toString(), {
                         status: PaymentStatus.Confirmed,
                         amountPaid: callbackData.attributes.amount,
+                        confirmedAt: new Date(),
                     });
 
                     const paymentProcessorDTO: PaymentProcessorDTO = {
