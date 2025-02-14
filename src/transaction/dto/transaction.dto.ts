@@ -82,6 +82,9 @@ export class BaseTransactionDTO {
     confirmedAt?: Date;
 
     @IsOptional()
+    expiresAt?: Date;
+
+    @IsOptional()
     createdAt?: Date;
 
     @IsOptional()

@@ -1,8 +1,8 @@
 import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { MongoClient, Db, WithId, ObjectId } from 'mongodb';
+import { MongoClient, Db, WithId, ObjectId, ClientSession } from 'mongodb';
 import { ClientProvider } from 'src/db/db.module';
 import { SimpleResponseDto } from 'src/request/request.dto';
-import { CreateTransactionDTO, TransactionDTO } from './dto/transaction.dto';
+import { CreateTransactionDTO, PaymentMethod, TransactionDTO } from './dto/transaction.dto';
 import { ActivePaymentStatuses, PaymentDescription, PaymentStatus } from 'src/conversation/dto/conversation.enums';
 import { ConversationDto } from 'src/conversation/dto/conversation.dto';
 import { IPagService } from 'src/payment-gateway/ipag.service';
@@ -70,6 +70,22 @@ export class TransactionService {
         }
     }
 
+    async getExpiredPIXTransactions(): Promise<SimpleResponseDto<TransactionDTO[]>> {
+        const now = new Date(); // Data e hora atual
+
+        const expiredTransactions = await this.db.collection("transactions").find({
+            status: PaymentStatus.Pending, // Apenas transações pendentes
+            paymentMethod: PaymentMethod.PIX, // Apenas pagamentos via PIX
+            expiresAt: { $lt: now } // Verifica se a expiração já passou
+        }).toArray();
+
+        return {
+            msg: "Expired PIX transactions found",
+            data: expiredTransactions as TransactionDTO[],
+        };
+    }
+
+
     async getTransactionByipagTransactionId(ipagTransactionId: string): Promise<SimpleResponseDto<TransactionDTO>> {
         const transaction = await this.db.collection("transactions").findOne({ ipagTransactionId });
 
@@ -82,23 +98,34 @@ export class TransactionService {
             data: transaction as TransactionDTO,
         }
     }
-    async updateTransaction(id: string, updateTransactionData: Partial<TransactionDTO>): Promise<SimpleResponseDto<TransactionDTO>> {
-        const transaction = await this.db.collection("transactions").findOne({ _id: new ObjectId(id) });
+
+    async updateTransaction(
+        id: string,
+        updateTransactionData: Partial<TransactionDTO>,
+        options?: { session?: ClientSession }
+    ): Promise<SimpleResponseDto<TransactionDTO>> {
+        // Busca a transação existente utilizando a session (se fornecida)
+        const transaction = await this.db
+            .collection("transactions")
+            .findOne({ _id: new ObjectId(id) }, options);
 
         if (!transaction) {
             throw new HttpException("Transaction not found", HttpStatus.NOT_FOUND);
         }
 
-        const updatedTransaction = await this.db.collection("transactions").findOneAndUpdate(
-            { _id: new ObjectId(id) },
-            { $set: { ...updateTransactionData, updatedAt: new Date() } },
-            { returnDocument: "after" }
-        );
+        // Atualiza a transação, passando a session se fornecida
+        const updatedTransaction = await this.db
+            .collection("transactions")
+            .findOneAndUpdate(
+                { _id: new ObjectId(id) },
+                { $set: { ...updateTransactionData, updatedAt: new Date() } },
+                { returnDocument: "after", ...options }
+            );
 
         return {
             msg: "Transaction updated",
             data: updatedTransaction.value as TransactionDTO,
-        }
+        };
     }
 
     async getTransaction(id: string): Promise<SimpleResponseDto<TransactionDTO>> {
@@ -129,7 +156,7 @@ export class TransactionService {
 
     async getTotalPaidByOrderId(orderId: string): Promise<SimpleResponseDto<{ totalPaid: number }>> {
         // Defina os status considerados para calcular o total pago
-        const paymentStatusesToConsider = [PaymentStatus.Confirmed, PaymentStatus.Failed];
+        const paymentStatusesToConsider = [PaymentStatus.Accepted, PaymentStatus.Denied];
 
         // Busca as transações com os status definidos
         const transactions = await this.db.collection("transactions").find({
@@ -148,7 +175,7 @@ export class TransactionService {
 
     async getTotalPaidByUserAndOrderId(userId: string, orderId: string): Promise<SimpleResponseDto<{ totalPaid: number }>> {
         // Defina os status considerados para calcular o total pago
-        const paymentStatusesToConsider = [PaymentStatus.Confirmed, PaymentStatus.Failed];
+        const paymentStatusesToConsider = [PaymentStatus.Accepted, PaymentStatus.Denied];
 
         // Busca as transações com os status definidos, filtrando também pelo userId
         const transactions = await this.db.collection("transactions").find({
@@ -214,7 +241,7 @@ export class TransactionService {
 
         const updatedTransaction = await this.db.collection("transactions").findOneAndUpdate(
             { _id: new ObjectId(id) },
-            { $set: { status: PaymentStatus.Confirmed, confirmedAt: new Date() } },
+            { $set: { status: PaymentStatus.Accepted, confirmedAt: new Date() } },
             { returnDocument: "after" }
         );
 
@@ -243,7 +270,7 @@ export class TransactionService {
         // Construção da descrição com base no estado atual
         let description = '';
         switch (transaction.status) {
-            case PaymentStatus.Failed:
+            case PaymentStatus.Denied:
                 description = PaymentDescription.Failed;
                 break;
             default:
@@ -255,7 +282,7 @@ export class TransactionService {
             { _id: new ObjectId(transactionId) },
             {
                 $set: {
-                    status: PaymentStatus.Confirmed,
+                    status: PaymentStatus.Accepted,
                     confirmedAt: new Date(),
                     description: description,
                 }

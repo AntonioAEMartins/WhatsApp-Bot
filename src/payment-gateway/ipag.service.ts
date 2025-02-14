@@ -220,7 +220,7 @@ export class IPagService {
         }
 
         if (transaction.data.status !== PaymentStatus.Pending) {
-            if (transaction.data.status === PaymentStatus.Failed) {
+            if (transaction.data.status === PaymentStatus.Denied) {
                 const newTransactionData: CreateTransactionDTO = {
                     ...transaction.data,
                     status: PaymentStatus.Pending,
@@ -374,7 +374,7 @@ export class IPagService {
                     }
 
                     await this.transactionService.updateTransaction(transaction.data._id.toString(), {
-                        status: PaymentStatus.Confirmed,
+                        status: PaymentStatus.Accepted,
                         amountPaid: callbackData.attributes.amount,
                         confirmedAt: new Date(),
                     });

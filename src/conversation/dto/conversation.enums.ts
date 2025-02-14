@@ -1,7 +1,8 @@
 export enum PaymentStatus {
   Pending = 'pending',
-  Confirmed = 'confirmed',
-  Failed = 'failed',
+  Accepted = 'accepted',
+  Denied = 'denied',
+  Expired = 'expired',
 }
 
 export enum PaymentDescription {
@@ -26,6 +27,7 @@ export enum ConversationStep {
   WaitingForContacts = 'waiting_for_contacts',
   ExtraTip = 'extra_tip',
   CollectCPF = 'collect_cpf',
+  PixExpired = 'pix_expired',
   PaymentMethodSelection = 'payment_method_selection',
   WaitingForPayment = 'waiting_for_payment',
   AwaitingUserDecision = 'awaiting_user_decision',

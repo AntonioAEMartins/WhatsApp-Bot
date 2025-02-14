@@ -1,5 +1,5 @@
 import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { MongoClient, Db, WithId, ObjectId } from 'mongodb';
+import { MongoClient, Db, WithId, ObjectId, ClientSession } from 'mongodb';
 import { ClientProvider } from 'src/db/db.module';
 import { SimpleResponseDto } from 'src/request/request.dto';
 import { ConversationStep } from './dto/conversation.enums';
@@ -24,15 +24,15 @@ export class ConversationService {
                 lastMessage: new Date(),
             },
         };
-    
+
         const result = await this.db.collection("conversations").insertOne(conversationData);
-    
+
         return {
             msg: "Conversation created",
             data: { _id: result.insertedId.toString() },
         };
     }
-    
+
 
 
     async getConversation(id: string): Promise<SimpleResponseDto<ConversationDto>> {
@@ -149,8 +149,15 @@ export class ConversationService {
         };
     }
 
-    async updateConversation(id: string, conversationData: BaseConversationDto): Promise<SimpleResponseDto<BaseConversationDto>> {
-        const existingConversation = await this.db.collection("conversations").findOne({ _id: new ObjectId(id) });
+    async updateConversation(
+        id: string,
+        conversationData: BaseConversationDto,
+        options?: { session?: ClientSession }
+    ): Promise<SimpleResponseDto<BaseConversationDto>> {
+        // Busca a conversa existente utilizando a session (se fornecida)
+        const existingConversation = await this.db
+            .collection("conversations")
+            .findOne({ _id: new ObjectId(id) }, options);
 
         if (!existingConversation) {
             throw new HttpException("Conversation not found", HttpStatus.NOT_FOUND);
@@ -160,23 +167,23 @@ export class ConversationService {
             ...existingConversation,
             ...conversationData,
             updatedAt: new Date(),
-        }
+        };
 
-        const conversation = await this.db.collection("conversations").findOneAndUpdate(
-            { _id: new ObjectId(id) },
-            {
-                $set: {
-                    ...updatedConversation,
-                },
-            },
-            { returnDocument: "after" }
-        );
+        // Atualiza a conversa, passando a session se fornecida
+        const conversation = await this.db
+            .collection("conversations")
+            .findOneAndUpdate(
+                { _id: new ObjectId(id) },
+                { $set: { ...updatedConversation } },
+                { returnDocument: "after", ...options }
+            );
 
         return {
             msg: "Conversation updated",
             data: updatedConversation as BaseConversationDto,
         };
     }
+
 
     async completeConversation(id: string): Promise<SimpleResponseDto<ConversationDto>> {
         const conversation = await this.db.collection("conversations").findOne({ _id: new ObjectId(id) });

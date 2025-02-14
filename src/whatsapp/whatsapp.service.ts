@@ -27,12 +27,13 @@ import { PaymentProcessorDTO } from './payment.processor';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { CreateWhatsAppGroupDTO, WhatsAppGroupDTO, WhatsAppParticipantsDTO } from './dto/whatsapp.dto';
-import { Db, ObjectId } from 'mongodb';
+import { Db, MongoClient, ObjectId } from 'mongodb';
 import { ClientProvider } from 'src/db/db.module';
 import { SimpleResponseDto } from 'src/request/request.dto';
 import { isError } from 'util';
 import { UserPaymentPixInfoDto } from 'src/payment-gateway/dto/ipag-pagamentos.dto';
 import { IPagService } from 'src/payment-gateway/ipag.service';
+import { Cron } from '@nestjs/schedule';
 
 // Resposta para um Request do GO
 //[{
@@ -92,6 +93,7 @@ interface retryRequestResponse {
 @Injectable()
 export class WhatsAppService {
     private readonly logger = new Logger(WhatsAppService.name);
+    private readonly mongoClient: MongoClient;
 
     private readonly waiterGroupId = process.env.ENVIRONMENT === 'homologation' ? process.env.WAITER_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.WAITER_PROD_GROUP_ID : process.env.WAITER_DEV_GROUP_ID;
     private readonly paymentProofGroupId = process.env.ENVIRONMENT === 'homologation' ? process.env.PAYMENT_PROOF_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.PAYMENT_PROOF_PROD_GROUP_ID : process.env.PAYMENT_PROOF_DEV_GROUP_ID;
@@ -107,7 +109,64 @@ export class WhatsAppService {
         private readonly ipagService: IPagService,
         @InjectQueue('payment') private readonly paymentQueue: Queue,
         @Inject('DATABASE_CONNECTION') private db: Db, clientProvider: ClientProvider
-    ) { }
+    ) {
+        this.mongoClient = clientProvider.getClient();
+    }
+
+    @Cron('10 * * * * *') // a cada 10 segundos
+    public async handleExpiredPIXTransactions(): Promise<void> {
+        const transactions = await this.transactionService.getExpiredPIXTransactions();
+
+        for (const transaction of transactions.data) {
+            // Obtém a conversa associada à transação
+            const conversation = await this.conversationService.getConversation(transaction.conversationId);
+
+            if (!conversation.data) {
+                this.logger.error(`[handleExpiredPIXTransactions] Conversation not found for transaction ${transaction._id}`);
+                continue;
+            }
+
+            const sentMessages: ResponseStructureExtended[] = [];
+
+            sentMessages.push({
+                type: "text",
+                content: "*👋 Coti Pagamentos* - Seu PIX expirou 😭",
+                caption: "",
+                to: conversation.data.userId,
+                reply: false,
+                isError: false,
+            });
+
+            sentMessages.push({
+                type: "text",
+                content: "O que acha de gerarmos um novo para você?\n\n1 - Sim\n2 - Não",
+                caption: "",
+                to: conversation.data.userId,
+                reply: false,
+                isError: false,
+            });
+
+            // Inicia uma sessão de transação no Mongo
+            await this.conversationService.updateConversation(
+                conversation.data._id.toString(),
+                {
+                    userId: conversation.data.userId,
+                    conversationContext: {
+                        ...conversation.data.conversationContext,
+                        currentStep: ConversationStep.PixExpired,
+                    },
+                }
+            );
+
+            await this.transactionService.updateTransaction(
+                transaction._id.toString(),
+                { status: PaymentStatus.Expired }
+            );
+            // Envia as mensagens para o bot GO fora do escopo da transação
+            await this.sendMessagesDirectly(sentMessages);
+        }
+    }
+
 
     public async handleProcessMessage(request: RequestStructure): Promise<ResponseStructureExtended[]> {
         const fromPerson = request.from;
@@ -202,6 +261,10 @@ export class WhatsAppService {
 
             case ConversationStep.PaymentMethodSelection:
                 requestResponse = await this.handlePaymentMethodSelection(from, userMessage, state);
+                break;
+
+            case ConversationStep.PixExpired:
+                requestResponse = await this.handlePixExpired(from, userMessage, state);
                 break;
 
             case ConversationStep.CollectName:
@@ -1323,6 +1386,84 @@ export class WhatsAppService {
         return true;
     }
 
+    private async handlePixExpired(
+        from: string,
+        userMessage: string,
+        state: ConversationDto
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
+        const normalizedMessage = userMessage.trim().toLowerCase();
+
+        if (normalizedMessage === '1' || normalizedMessage.includes('sim')) {
+            try {
+                const transactionResponse = await this.createTransaction(state, PaymentMethod.PIX, state.conversationContext.userName);
+
+                if (transactionResponse.pixKey) {
+                    await this.conversationService.updateConversation(state._id.toString(), {
+                        userId: state.userId,
+                        conversationContext: {
+                            ...state.conversationContext,
+                            currentStep: ConversationStep.WaitingForPayment,
+                        },
+                    });
+
+                    const paymentMessages = await this.handlePIXPaymentInstructions(from, state, transactionResponse.pixKey);
+                    sentMessages.push(...paymentMessages);
+                } else {
+                    throw new Error('PIX key not received');
+                }
+            } catch (error) {
+                this.logger.error(`[handlePixExpired] Error generating new PIX: ${error.message}`);
+                await this.conversationService.updateConversation(state._id.toString(), {
+                    userId: state.userId,
+                    conversationContext: {
+                        ...state.conversationContext,
+                        currentStep: ConversationStep.PaymentMethodSelection,
+                    },
+                });
+                sentMessages.push(
+                    ...this.mapTextMessages(
+                        [
+                            'Ops! 😕 Tivemos um problema ao gerar o PIX. Por favor, escolha novamente a forma de pagamento:\n\n1️⃣ - PIX\n2️⃣ - Cartão de Crédito'
+                        ],
+                        from
+                    )
+                );
+            }
+        } else if (normalizedMessage === '2' || normalizedMessage.includes('não') || normalizedMessage.includes('nao')) {
+            await this.conversationService.updateConversation(state._id.toString(), {
+                userId: state.userId,
+                conversationContext: {
+                    ...state.conversationContext,
+                    currentStep: ConversationStep.Feedback,
+                },
+            });
+            sentMessages.push(
+                ...this.mapTextMessages(
+                    [
+                        '*👋  Coti Pagamentos* - Pagamento Cancelado ❌',
+                        'Como você se sentiria se não pudesse mais usar o nosso serviço?\n\nEscolha uma das opções abaixo:',
+                        '1- Muito decepcionado',
+                        '2- Um pouco decepcionado',
+                        '3- Não faria diferença'
+                    ],
+                    from
+                )
+            );
+        } else {
+            sentMessages.push(
+                ...this.mapTextMessages(
+                    ['Por favor, responda:\n1 - Sim, gerar novo PIX\n2 - Não, seguir para feedback'],
+                    from
+                )
+            );
+        }
+
+        return sentMessages;
+    }
+
+
+
 
     private async createTransaction(
         state: ConversationDto,
@@ -1361,7 +1502,7 @@ export class WhatsAppService {
                 const ipagTransactionId = ipagResponse.uuid;
                 const pixKey = ipagResponse.attributes.pix.qrcode;
 
-                await this.transactionService.updateTransaction(transactionId, { ipagTransactionId });
+                await this.transactionService.updateTransaction(transactionId, { ipagTransactionId, expiresAt: new Date(Date.now() + 1000 * 60 * 10) }); // 10 minutes from now
 
                 return { transactionResponse: transactionResponse.data, pixKey };
             } catch (error) {
@@ -1369,7 +1510,7 @@ export class WhatsAppService {
 
                 // Atualiza o status da transação para falha
                 await this.transactionService.updateTransaction(transactionId, {
-                    status: PaymentStatus.Failed,
+                    status: PaymentStatus.Denied,
                 });
 
                 // Atualiza o contexto para seleção do método de pagamento
@@ -1554,14 +1695,12 @@ export class WhatsAppService {
 
     public async processPayment(paymentData: PaymentProcessorDTO): Promise<void> {
         const { transactionId, from, state } = paymentData;
-        this.logger.debug(
-            `[processPayment] Processing payment, transactionId: ${transactionId}`
-        );
+        this.logger.debug(`[processPayment] Processing payment, transactionId: ${transactionId}`);
 
         let sentMessages: ResponseStructureExtended[] = [];
         const transaction = await this.transactionService.getTransaction(transactionId);
 
-        if (transaction.data.status !== PaymentStatus.Confirmed) {
+        if (transaction.data.status !== PaymentStatus.Accepted) {
             sentMessages.push(
                 ...this.mapTextMessages(
                     ['*👋  Coti Pagamentos* - Erro ao processar o pagamento ❌\n\nPor favor, tente novamente mais tarde.'],
@@ -1579,7 +1718,8 @@ export class WhatsAppService {
                     from
                 )
             );
-            // Atualiza o estado da conversa para iniciar a etapa de Feedback
+
+            // Atualiza o estado da conversa para a etapa de Feedback
             await this.conversationService.updateConversation(state._id.toString(), {
                 userId: state.userId,
                 conversationContext: {
@@ -1588,7 +1728,7 @@ export class WhatsAppService {
                 },
             });
 
-            // Finaliza o pagamento na mesa
+            // Finaliza o pagamento da mesa
             const tableId = parseInt(state.tableId, 10);
             await this.tableService.finishPayment(tableId);
 
@@ -1597,14 +1737,21 @@ export class WhatsAppService {
             sentMessages.push(...notifyWaiterMessages);
         }
 
-        // Envia as mensagens para o bot GO (que está ouvindo na porta 3105)
+        // Envia as mensagens diretamente para o bot GO
+        await this.sendMessagesDirectly(sentMessages);
+    }
+
+
+    private async sendMessagesDirectly(messages: ResponseStructureExtended[]): Promise<void> {
         const goBotUrl = process.env.GO_BOT_URL || "http://localhost:3105/send-messages";
+
         try {
             const response = await fetch(goBotUrl, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(sentMessages),
+                body: JSON.stringify(messages),
             });
+
             if (!response.ok) {
                 const errText = await response.text();
                 this.logger.error(`Falha ao enviar mensagens para o bot GO. Status: ${response.status}, erro: ${errText}`);
@@ -1615,9 +1762,6 @@ export class WhatsAppService {
             this.logger.error(`Erro ao enviar mensagens para o bot GO: ${error.message}`);
         }
     }
-
-
-
 
 
     /**
