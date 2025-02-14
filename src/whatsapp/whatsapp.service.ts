@@ -465,7 +465,7 @@ export class WhatsAppService {
                 this.logger.error(`[handleProcessingOrder] No content found for table ${tableId}. User: ${from}`);
                 sentMessages.push(
                     ...this.mapTextMessages(
-                        ['👋 Coti Pagamentos - Não há pedidos cadastrados em sua comanda. Por favor, tente novamente mais tarde.'],
+                        ['*👋 Coti Pagamentos* - Não há pedidos cadastrados em sua comanda. Por favor, tente novamente mais tarde.'],
                         from,
                         true,
                         false,
@@ -678,7 +678,7 @@ export class WhatsAppService {
             sentMessages.push(
                 ...this.mapTextMessages(
                     [
-                        'Ok, gostaria de dividir entre quantas pessoas?\n\nLembrando que apenas suportamos a divisão em partes iguais.',
+                        'Com quantas pessoas, *incluindo você*, a conta será dividida?\n\nLembrando que a divisão será feita em *partes iguais* entre todos.',
                     ],
                     from,
                 ),
@@ -750,8 +750,7 @@ export class WhatsAppService {
             sentMessages.push(
                 ...this.mapTextMessages(
                     [
-                        '😊 Perfeito! Agora, nos envie o contato das pessoas com quem deseja dividir a conta, ou peça para que elas escaneiem o QR Code da sua mesa. 📲',
-                        'Assim que recebermos todos os contatos, daremos continuidade ao atendimento e deixaremos tudo prontinho para vocês! 🎉',
+                        '😊 Perfeito! Me envie os contatos das pessoas usando o botão *Enviar Contato do WhatsApp*.\n\nAssim que recebermos, seguimos com o atendimento! 📲'
                     ],
                     from,
                 ),
@@ -974,7 +973,7 @@ export class WhatsAppService {
         for (const contact of contacts) {
             const contactId = `${contact.phone}@s.whatsapp.net`;
             const messages = [
-                `👋 Coti Pagamentos - Olá! Você foi incluído na divisão do pagamento da comanda *${state.tableId}* no restaurante Cris Parrilla. Aguarde para receber mais informações sobre o pagamento.`,
+                `*👋 Coti Pagamentos* - Olá! Você foi incluído na divisão do pagamento da comanda *${state.tableId}* no restaurante Cris Parrilla.`,
                 `Sua parte na conta é de *${formatToBRL(individualAmount)}*.`,
                 'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
             ];
