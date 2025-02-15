@@ -26,7 +26,7 @@ export class CardService {
     async getCardsByUserId(userId: string): Promise<SimpleResponseDto<Omit<CardDto, 'token'>[]>> {
         const cards = await this.db
             .collection<CardDto>("cards")
-            .find({ userId }, { projection: { token: 0 } })
+            .find({ userId, token: { $ne: null } }, { projection: { token: 0 } })
             .toArray();
 
         return {
