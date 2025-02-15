@@ -31,10 +31,11 @@ import { Db, MongoClient, ObjectId } from 'mongodb';
 import { ClientProvider } from 'src/db/db.module';
 import { SimpleResponseDto } from 'src/request/request.dto';
 import { isError } from 'util';
-import { UserPaymentPixInfoDto } from 'src/payment-gateway/dto/ipag-pagamentos.dto';
+import { UserPaymentCreditInfoDto, UserPaymentPixInfoDto } from 'src/payment-gateway/dto/ipag-pagamentos.dto';
 import { IPagService } from 'src/payment-gateway/ipag.service';
 import { Cron } from '@nestjs/schedule';
 import { CardService } from 'src/card/card.service';
+import { CardDto } from 'src/card/dto/card.dto';
 
 // Resposta para um Request do GO
 //[{
@@ -223,12 +224,6 @@ export class WhatsAppService {
 
         const userMessage = message.body.trim().toLowerCase();
 
-        // Log current state for debugging
-        // this.logger.debug(
-        //     `User: ${from}, State: ${state.conversationContext.currentStep}, Message: "${userMessage}"`,
-        // );
-
-        // Handle conversation steps
         switch (state.conversationContext.currentStep) {
             case ConversationStep.ProcessingOrder:
                 if (userMessage.toLowerCase().includes('pagar a comanda')) {
@@ -265,6 +260,10 @@ export class WhatsAppService {
                 requestResponse = await this.handlePaymentMethodSelection(from, userMessage, state);
                 break;
 
+            case ConversationStep.SelectSavedCard:
+                requestResponse = await this.handleSelectSavedCard(from, userMessage, state);
+                break;
+
             case ConversationStep.PixExpired:
                 requestResponse = await this.handlePixExpired(from, userMessage, state);
                 break;
@@ -282,7 +281,7 @@ export class WhatsAppService {
                 break;
 
             case ConversationStep.Completed:
-                // Conversation completed; no action needed
+                // 
                 break;
 
             default:
@@ -1177,7 +1176,7 @@ export class WhatsAppService {
         // Mensagem para solicitar o CPF antes do pagamento
         sentMessages.push(
             ...this.mapTextMessages(
-                ['Por favor, nos informe o seu CPF para a emissão da nota fiscal. 😊'],
+                ['Por favor, nos informe o seu CPF ou CNPJ para a emissão da nota fiscal. 😊'],
                 from
             ),
         );
@@ -1546,7 +1545,7 @@ export class WhatsAppService {
         const userChoice = userMessage.trim().toLowerCase();
 
         if (userChoice === '1' || userChoice.includes('pix')) {
-            // Atualiza o contexto para PIX e redireciona para a coleta do nome
+            // Fluxo PIX (permanece inalterado)
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.CollectName, // novo passo para coletar o nome
@@ -1558,7 +1557,6 @@ export class WhatsAppService {
                 conversationContext: updatedContext,
             });
 
-            // Solicita que o usuário informe seu nome completo
             sentMessages.push(
                 ...this.mapTextMessages(
                     ['Por favor, informe seu nome completo para prosseguirmos com o pagamento via PIX.'],
@@ -1566,27 +1564,51 @@ export class WhatsAppService {
                 )
             );
         } else if (userChoice === '2' || userChoice.includes('cartão') || userChoice.includes('crédito')) {
-            // Fluxo existente para Cartão de Crédito
-            const updatedContext: ConversationContextDTO = {
-                ...state.conversationContext,
-                currentStep: ConversationStep.WaitingForPayment,
-                paymentMethod: PaymentMethod.CREDIT_CARD,
-            };
+            const cardsResponse = await this.cardService.getCardsByUserId(state.userId);
+            const savedCards = cardsResponse.data;
 
-            await this.conversationService.updateConversation(conversationId, {
-                userId: state.userId,
-                conversationContext: updatedContext,
-            });
+            if (savedCards && savedCards.length > 0) {
+                let optionsMessage = 'Escolha o cartão que deseja utilizar:\n';
+                savedCards.forEach((card, index) => {
+                    optionsMessage += `👉 ${index + 1}. **** ${card.last4} \n`;
+                });
+                optionsMessage += `👉 ${savedCards.length + 1}. 💳 Novo Cartão`;
 
-            // Cria a transação utilizando o método Cartão de Crédito
-            const transactionResponse = await this.createTransaction(state, PaymentMethod.CREDIT_CARD, state.conversationContext.userName);
+                const updatedContext: ConversationContextDTO = {
+                    ...state.conversationContext,
+                    currentStep: ConversationStep.SelectSavedCard,
+                    paymentMethod: PaymentMethod.CREDIT_CARD,
+                    savedCards: savedCards as CardDto[],
+                };
+                await this.conversationService.updateConversation(conversationId, {
+                    userId: state.userId,
+                    conversationContext: updatedContext,
+                });
 
+                sentMessages.push(...this.mapTextMessages([optionsMessage], from));
+            } else {
+                const updatedContext: ConversationContextDTO = {
+                    ...state.conversationContext,
+                    currentStep: ConversationStep.WaitingForPayment,
+                    paymentMethod: PaymentMethod.CREDIT_CARD,
+                };
+                await this.conversationService.updateConversation(conversationId, {
+                    userId: state.userId,
+                    conversationContext: updatedContext,
+                });
 
-            this.logger.log(`[handlePaymentMethodSelection] transactionResponse: ${transactionResponse.transactionResponse._id}`);
-            sentMessages = await this.handleCreditCardPayment(from, state, transactionResponse.transactionResponse);
+                const transactionResponse = await this.createTransaction(
+                    state,
+                    PaymentMethod.CREDIT_CARD,
+                    state.conversationContext.userName
+                );
 
+                this.logger.log(
+                    `[handlePaymentMethodSelection] transactionResponse: ${transactionResponse.transactionResponse._id}`
+                );
+                sentMessages = await this.handleCreditCardPayment(from, state, transactionResponse.transactionResponse);
+            }
         } else {
-            // Resposta inválida; solicita nova escolha
             sentMessages.push(
                 ...this.mapTextMessages(
                     ['Opção inválida. Por favor, escolha:\n1- PIX\n2- Cartão de Crédito'],
@@ -1597,6 +1619,82 @@ export class WhatsAppService {
 
         return sentMessages;
     }
+
+    private async handleSelectSavedCard(
+        from: string,
+        userMessage: string,
+        state: ConversationDto,
+    ): Promise<ResponseStructureExtended[]> {
+        let sentMessages: ResponseStructureExtended[] = [];
+        const conversationId = state._id.toString();
+
+        // Recupera os cartões salvos do contexto da conversa
+        const savedCards: any[] = state.conversationContext.savedCards || [];
+        const totalOptions = savedCards.length + 1; // inclui a opção "Novo Cartão"
+
+        // Extrai a seleção do usuário (espera-se que seja um número)
+        const selection = parseInt(userMessage.trim());
+        if (isNaN(selection) || selection < 1 || selection > totalOptions) {
+            sentMessages.push(...this.mapTextMessages(['Por favor, envie um número válido correspondente à opção desejada.'], from));
+            return sentMessages;
+        }
+
+        if (selection === totalOptions) {
+            const updatedContext: ConversationContextDTO = {
+                ...state.conversationContext,
+                currentStep: ConversationStep.WaitingForPayment,
+            };
+            await this.conversationService.updateConversation(conversationId, {
+                userId: state.userId,
+                conversationContext: updatedContext,
+            });
+
+            const transactionResponse = await this.createTransaction(
+                state,
+                PaymentMethod.CREDIT_CARD,
+                state.conversationContext.userName
+            );
+            this.logger.log(
+                `[handleSavedCardSelection] Transaction created for new card: ${transactionResponse.transactionResponse._id}`
+            );
+            sentMessages = await this.handleCreditCardPayment(from, state, transactionResponse.transactionResponse);
+        } else {
+            const selectedCard = savedCards[selection - 1];
+            const updatedContext: ConversationContextDTO = {
+                ...state.conversationContext,
+                currentStep: ConversationStep.WaitingForPayment,
+                selectedCardId: selectedCard._id,
+            };
+            await this.conversationService.updateConversation(conversationId, {
+                userId: state.userId,
+                conversationContext: updatedContext,
+            });
+
+            const transactionResponse = await this.createTransaction(
+                state,
+                PaymentMethod.CREDIT_CARD,
+                state.conversationContext.userName
+            );
+            this.logger.log(
+                `[handleSavedCardSelection] Transaction created using saved card: ${transactionResponse.transactionResponse._id}`
+            );
+
+            const userPaymentInfo: UserPaymentCreditInfoDto = {
+                transactionId: transactionResponse.transactionResponse._id.toString(),
+                cardId: selectedCard._id,
+            };
+
+            try {
+                const paymentResult = await this.ipagService.createCreditCardPayment(userPaymentInfo);
+                sentMessages.push(...this.mapTextMessages(['Pagamento realizado com sucesso!'], from));
+            } catch (error) {
+                sentMessages.push(...this.mapTextMessages([`Erro ao processar o pagamento: ${error.message}`], from));
+            }
+        }
+
+        return sentMessages;
+    }
+
 
     private async handleCollectName(
         from: string,
