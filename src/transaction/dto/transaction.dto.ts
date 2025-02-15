@@ -37,6 +37,14 @@ export enum PaymentMethod {
     CREDIT_CARD = 'credit_card'
 }
 
+export class PixInfoDTO {
+    @IsString()
+    name: string;
+
+    @IsString()
+    document: string;
+}
+
 export class BaseTransactionDTO {
     // Referência ao pedido desta transação
     @IsString()
@@ -97,6 +105,15 @@ export class BaseTransactionDTO {
     @IsOptional()
     @IsString()
     ipagTransactionId?: string;
+
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => PixInfoDTO)
+    pixInfo?: PixInfoDTO;
+
+    @IsOptional()
+    @IsString()
+    cardId?: string;
 }
 
 export class CreateTransactionDTO extends BaseTransactionDTO {
