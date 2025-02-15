@@ -286,19 +286,18 @@ export class CreatePaymentDto {
     @Type(() => SplitRulesDto)
     split_rules?: SplitRulesDto[];
 }
-
 export class UserPaymentCreditInfoDto {
     @ValidateIf(o => !o.cardId)
     @IsNotEmpty({ message: "cardInfo is required when cardId is not provided" })
     @ValidateNested()
     @Type(() => IPagCardDto)
-    cardInfo: IPagCardDto;
+    cardInfo?: IPagCardDto;
 
     @ValidateIf(o => !o.cardId)
     @IsNotEmpty({ message: "customerInfo is required when cardId is not provided" })
     @ValidateNested()
     @Type(() => CustomerDto)
-    customerInfo: CustomerDto;
+    customerInfo?: CustomerDto;
 
     @ValidateIf(o => !o.cardId)
     @IsOptional()
@@ -309,7 +308,7 @@ export class UserPaymentCreditInfoDto {
     @ValidateIf(o => !o.cardId)
     @IsNotEmpty({ message: "saveCard is required when cardId is not provided" })
     @IsBoolean()
-    saveCard: boolean;
+    saveCard?: boolean;
 
     @IsNotEmpty({ message: "transactionId is required" })
     @IsString()
@@ -319,6 +318,7 @@ export class UserPaymentCreditInfoDto {
     @IsString()
     cardId?: string;
 }
+
 
 export class UserPaymentPixInfoDto {
     @IsNotEmpty({ message: "transactionId is required" })
