@@ -13,9 +13,10 @@ export class TransactionController {
 
     @HttpCode(HttpStatus.OK)
     @Get('summary/:id')
-    async getSummary(@Param('id') id: string) {
-        return await this.transactionService.getSummary(id);
+    async getSummaryWithDuplicateInfo(@Param('id') id: string) {
+        return await this.transactionService.getSummaryWithDuplicateInfo(id);
     }
+
 
     @HttpCode(HttpStatus.OK)
     @Get("receipt/:id")
@@ -27,12 +28,6 @@ export class TransactionController {
     @Get("status/:id")
     async getTransactionStatus(@Param('id') id: string) {
         return await this.transactionService.getTransactionStatus(id);
-    }
-
-    @HttpCode(HttpStatus.OK)
-    @Get("duplicated/:id")
-    async getDuplicatedTransactions(@Param('id') id: string) {
-        return await this.transactionService.getDuplicatedTransactions(id);
     }
 
     @HttpCode(HttpStatus.OK)

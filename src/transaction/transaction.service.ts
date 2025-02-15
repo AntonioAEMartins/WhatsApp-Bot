@@ -34,28 +34,75 @@ export class TransactionService {
         }
     }
 
-    async getSummary(id: string): Promise<SimpleResponseDto<{ expectedAmount: number; documentNumber: string; status: string }>> {
-        const transaction = await this.db.collection("transactions").findOne({ _id: new ObjectId(id) }) as TransactionDTO;
+    async getSummaryWithDuplicateInfo(
+        id: string
+    ): Promise<SimpleResponseDto<{
+        wasDuplicated: boolean;
+        duplicatedTransactionId: string;
+        expectedAmount: number;
+        documentNumber: string;
+        status: string;
+    }>> {
+        // Validate that the ID is a 24-character hexadecimal string.
+        if (!id || !/^[0-9a-fA-F]{24}$/.test(id)) {
+            throw new HttpException(
+                "Transaction ID must be a valid 24-character hex string",
+                HttpStatus.BAD_REQUEST
+            );
+        }
+
+        // Retrieve the original transaction.
+        const transaction = (await this.db
+            .collection("transactions")
+            .findOne({ _id: new ObjectId(id) })) as TransactionDTO;
 
         if (!transaction) {
             throw new HttpException("Transaction not found", HttpStatus.NOT_FOUND);
         }
 
-        const conversation = await this.db.collection("conversations").findOne({ _id: new ObjectId(transaction.conversationId) }) as ConversationDto;
+        // Retrieve the conversation linked to the transaction.
+        const conversation = (await this.db
+            .collection("conversations")
+            .findOne({ _id: new ObjectId(transaction.conversationId) })) as ConversationDto;
 
         if (!conversation) {
             throw new HttpException("Conversation not found", HttpStatus.NOT_FOUND);
         }
 
+        // Check for a duplicated transaction:
+        // Find a transaction with the same orderId and conversationId that is still pending.
+        let wasDuplicated = false;
+        let duplicateTransactionId = "";
+        try {
+            const pendingTransaction = await this.db
+                .collection("transactions")
+                .findOne({
+                    orderId: transaction.orderId,
+                    conversationId: transaction.conversationId,
+                    status: PaymentStatus.Pending,
+                });
+
+            if (pendingTransaction) {
+                wasDuplicated = true;
+                duplicateTransactionId = pendingTransaction._id.toString();
+            }
+        } catch (error) {
+            // Optionally log the error if needed.
+        }
+
+        // Return the unified summary.
         return {
             msg: "Transaction found",
             data: {
+                wasDuplicated,
+                duplicatedTransactionId: duplicateTransactionId,
                 expectedAmount: transaction.expectedAmount,
                 documentNumber: conversation.conversationContext.documentNumber,
                 status: transaction.status,
-            }
-        }
+            },
+        };
     }
+
 
     async getReceipt(id: string): Promise<SimpleResponseDto<TransactionDTO>> {
         const transaction = await this.db.collection("transactions").findOne({ _id: new ObjectId(id) }, { projection: { _id: 1, tableId: 1, paymentMethod: 1, amountPaid: 1, expectedAmount: 1, status: 1, confirmedAt: 1 } });
@@ -308,10 +355,10 @@ export class TransactionService {
             data: updatedTransaction.value as TransactionDTO,
         };
     }
-
-    async getDuplicatedTransactions(
+    
+    async duplicateTransaction(
         transactionId: string
-    ): Promise<SimpleResponseDto<{ wasDuplicated: boolean, transactionId: string }>> {
+    ): Promise<SimpleResponseDto<{ transactionId: string }>> {
         try {
             const transactionObjectId = new ObjectId(transactionId);
 
@@ -319,66 +366,36 @@ export class TransactionService {
                 .collection("transactions")
                 .findOne({ _id: transactionObjectId });
 
+                
             if (!originalTransaction) {
-                return { msg: "Transaction not found", data: { wasDuplicated: false, transactionId: "" } };
+                throw new HttpException("Transaction not found", HttpStatus.NOT_FOUND);
             }
 
-            const { orderId, conversationId } = originalTransaction;
+            const { _id, ...transactionData } = originalTransaction;
 
-            const pendingTransaction = await this.db
-                .collection("transactions")
-                .findOne({
-                    orderId,
-                    conversationId,
-                    status: PaymentStatus.Pending,
-                });
+            const now = new Date();
+            transactionData.createdAt = now;
+            transactionData.updatedAt = now;
+            transactionData.status = PaymentStatus.Pending;
 
-            if (!pendingTransaction) {
-                return { msg: "No duplicated transaction with status Pending found", data: { wasDuplicated: false, transactionId: "" } };
-            }
+            const newTransactionId = new ObjectId();
 
-            return { msg: "Duplicated transaction found", data: { wasDuplicated: true, transactionId: pendingTransaction._id.toString() } };
+            const newTransaction = { _id: newTransactionId, ...transactionData };
+
+            await this.db.collection("transactions").insertOne(newTransaction);
+
+            return {
+                msg: "Duplicated transaction created",
+                data: { transactionId: newTransactionId.toString() },
+            };
         } catch (error) {
-            return { msg: "Error getting duplicated transactions", data: { wasDuplicated: false, transactionId: "" } };
+            if (error instanceof HttpException) {
+                throw error;
+            }
+            throw new HttpException(
+                "Error duplicating transaction",
+                HttpStatus.INTERNAL_SERVER_ERROR
+            );
         }
     }
-
-    async duplicateTransaction(
-        transactionId: string
-      ): Promise<SimpleResponseDto<{ transactionId: string }>> {
-        try {
-          const transactionObjectId = new ObjectId(transactionId);
-      
-          const originalTransaction = await this.db
-            .collection("transactions")
-            .findOne({ _id: transactionObjectId });
-      
-          if (!originalTransaction) {
-            throw new HttpException("Transaction not found", HttpStatus.NOT_FOUND);
-          }
-      
-          const { _id, ...transactionData } = originalTransaction;
-      
-          const now = new Date();
-          transactionData.createdAt = now;
-          transactionData.updatedAt = now;
-          transactionData.status = PaymentStatus.Pending;
-      
-          const newTransactionId = new ObjectId();
-      
-          const newTransaction = { _id: newTransactionId, ...transactionData };
-      
-          await this.db.collection("transactions").insertOne(newTransaction);
-      
-          return {
-            msg: "Duplicated transaction created",
-            data: { transactionId: newTransactionId.toString() },
-          };
-        } catch (error) {
-          throw new HttpException(
-            "Error duplicating transaction",
-            HttpStatus.INTERNAL_SERVER_ERROR
-          );
-        }
-      }
 }
