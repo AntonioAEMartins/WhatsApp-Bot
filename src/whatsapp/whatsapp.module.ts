@@ -12,11 +12,12 @@ import { PaymentProcessor } from './payment.processor';
 import { BullModule } from '@nestjs/bull';
 import { DatabaseModule } from 'src/db/db.module';
 import { IPagModule } from 'src/payment-gateway/ipag.module';
-import { ScheduleModule } from '@nestjs/schedule';
+import { CardModule } from 'src/card/card.module';
+
 @Module({
   imports: [
     TableModule, LangchainModule, UserModule, ConversationModule,
-    OrderModule, TransactionModule, DatabaseModule, IPagModule,
+    OrderModule, TransactionModule, DatabaseModule, IPagModule, CardModule,
     BullModule.forRoot({
       redis: {
         host: 'localhost',
