@@ -1,6 +1,6 @@
 import { isInteger } from "@langchain/core/dist/utils/fast-json-patch/src/helpers";
 import { Type } from "class-transformer";
-import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, MaxLength, IsInt, Min, Max, IsBoolean, ValidateNested, Matches } from "class-validator";
+import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, MaxLength, IsInt, Min, Max, IsBoolean, ValidateNested, Matches, ValidateIf } from "class-validator";
 
 export class AntiFraudDto {
 
@@ -288,30 +288,37 @@ export class CreatePaymentDto {
 }
 
 export class UserPaymentCreditInfoDto {
-
-    @IsNotEmpty({ message: "cardInfo is required" })
+    @ValidateIf(o => !o.cardId)
+    @IsNotEmpty({ message: "cardInfo is required when cardId is not provided" })
     @ValidateNested()
     @Type(() => IPagCardDto)
     cardInfo: IPagCardDto;
-
-    @IsNotEmpty({ message: "customerInfo is required" })
+  
+    @ValidateIf(o => !o.cardId)
+    @IsNotEmpty({ message: "customerInfo is required when cardId is not provided" })
     @ValidateNested()
     @Type(() => CustomerDto)
     customerInfo: CustomerDto;
-
-    @IsOptional()
+  
+    @ValidateIf(o => !o.cardId)
+    @IsOptional() 
     @ValidateNested()
     @Type(() => BillingAddressDto)
     billingAddress?: BillingAddressDto;
-
-    @IsNotEmpty({ message: "saveCard is required" })
+  
+    @ValidateIf(o => !o.cardId)
+    @IsNotEmpty({ message: "saveCard is required when cardId is not provided" })
     @IsBoolean()
     saveCard: boolean;
-
+  
     @IsNotEmpty({ message: "transactionId is required" })
     @IsString()
     transactionId: string;
-}
+  
+    @IsOptional()
+    @IsString()
+    cardId?: string;
+  }
 
 export class UserPaymentPixInfoDto {
     @IsNotEmpty({ message: "transactionId is required" })

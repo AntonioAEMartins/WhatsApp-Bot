@@ -130,14 +130,41 @@ export class IPagService {
     async createCreditCardPayment(
         userPaymentInfo: UserPaymentCreditInfoDto,
     ): Promise<SimpleResponseDto<{ msg: string }>> {
+        // Valida a transação e garante que ela está no estado adequado.
         const transaction = await this.validateTransaction(
             userPaymentInfo.transactionId,
             PaymentMethod.CREDIT_CARD,
             false,
         );
 
-        const cardBrand = this.getCardMethod(userPaymentInfo.cardInfo.number);
+        const isTokenized = Boolean(userPaymentInfo.cardId);
+        let cardPayload: any;
+        let cardBrand: PaymentMethodCard | null = null;
+        let holderName: string;
+        let holderDocument: string;
+        if (isTokenized) {
+            const existingCardResponse = await this.cardService.getCardById(userPaymentInfo.cardId);
+            if (!existingCardResponse?.data) {
+                throw new HttpException('Card not found', HttpStatus.BAD_REQUEST);
+            }
+            cardPayload = { token: userPaymentInfo.cardId };
+            holderName = existingCardResponse.data.token;
+            holderDocument = existingCardResponse.data.holderDocument;
+        } else {
+            cardBrand = this.getCardMethod(userPaymentInfo.cardInfo.number);
+            cardPayload = {
+                holder: userPaymentInfo.cardInfo.holder,
+                number: userPaymentInfo.cardInfo.number,
+                expiry_month: userPaymentInfo.cardInfo.expiry_month,
+                expiry_year: userPaymentInfo.cardInfo.expiry_year,
+                cvv: userPaymentInfo.cardInfo.cvv,
+                tokenize: userPaymentInfo.saveCard,
+            };
+            holderName = userPaymentInfo.customerInfo.name;
+            holderDocument = userPaymentInfo.customerInfo.cpf_cnpj;
+        }
 
+        // Constrói o payload de pagamento conforme a documentação do iPag.
         const paymentData: CreatePaymentDto = {
             amount: transaction.expectedAmount,
             callback_url: 'https://webhook.astra1.com.br/ipag/callback',
@@ -146,18 +173,11 @@ export class IPagService {
                 method: cardBrand,
                 installments: 1,
                 softdescriptor: 'AstraPay',
-                card: {
-                    holder: userPaymentInfo.cardInfo.holder,
-                    number: userPaymentInfo.cardInfo.number,
-                    expiry_month: userPaymentInfo.cardInfo.expiry_month,
-                    expiry_year: userPaymentInfo.cardInfo.expiry_year,
-                    cvv: userPaymentInfo.cardInfo.cvv,
-                    tokenize: userPaymentInfo.saveCard,
-                },
+                card: cardPayload,
             },
             customer: {
-                name: userPaymentInfo.customerInfo.name,
-                cpf_cnpj: userPaymentInfo.customerInfo.cpf_cnpj,
+                name: holderName,
+                cpf_cnpj: holderDocument,
             },
             split_rules: [
                 {
@@ -167,41 +187,41 @@ export class IPagService {
             ],
         };
 
-        const endpoint = 'service/payment'; // Endpoint conforme documentação do iPag
         try {
-            const response = await this.makeRequest(endpoint, 'POST', paymentData);
+            const response = await this.makeRequest('service/payment', 'POST', paymentData);
 
             if (!this.isTransactionResponse(response)) {
                 throw new HttpException('Invalid transaction response', HttpStatus.BAD_REQUEST);
             }
 
             const processedResponse = this.processTransactionResponse(response);
-
             if (processedResponse.type !== 'success') {
                 throw new HttpException(processedResponse.erros.join(' '), HttpStatus.BAD_REQUEST);
             }
 
-            const newCard = await this.cardService.createCard({
-                userId: transaction.userId,
-                holder: {
-                    name: userPaymentInfo.customerInfo.name,
-                    document: userPaymentInfo.customerInfo.cpf_cnpj,
-                },
-                brand: cardBrand,
-                last4: userPaymentInfo.cardInfo.number.slice(-4),
-                token: userPaymentInfo.saveCard ? response.attributes.card.token : null,
-            });
+            let createdCard;
+            if (!isTokenized) {
+                createdCard = await this.cardService.createCard({
+                    userId: transaction.userId,
+                    holder: {
+                        name: userPaymentInfo.customerInfo.name,
+                        document: userPaymentInfo.customerInfo.cpf_cnpj,
+                    },
+                    brand: cardBrand,
+                    last4: userPaymentInfo.cardInfo.number.slice(-4),
+                    token: userPaymentInfo.saveCard ? response.attributes.card.token : null,
+                });
+            }
 
+            const finalCardId = userPaymentInfo.cardId || createdCard.data._id;
             await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
                 ipagTransactionId: response.uuid,
-                cardId: newCard.data._id,
+                cardId: finalCardId,
             });
 
             return {
                 msg: 'Payment created',
-                data: {
-                    msg: 'Payment created',
-                },
+                data: { msg: 'Payment created' },
             };
         } catch (error) {
             console.error('Error creating payment:', error);
@@ -211,6 +231,8 @@ export class IPagService {
             throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
         }
     }
+
+
 
     /**
      * Valida a transação com base no ID e no método de pagamento.
