@@ -44,7 +44,7 @@ export type PaymentMethodMethod =
     | { type: PaymentType.boleto, method: never } // Assuming no specific method for boleto
     | { type: PaymentType.pix, method: PaymentMethodPix };
 
-export class CardDto {
+export class IPagCardDto {
 
     @MaxLength(50)
     @IsNotEmpty({ message: "holder is required" })
@@ -130,8 +130,8 @@ export class PaymentDto {
 
     @IsOptional()
     @ValidateNested()
-    @Type(() => CardDto)
-    card?: CardDto
+    @Type(() => IPagCardDto)
+    card?: IPagCardDto
 
     @IsOptional()
     @IsInt()
@@ -291,8 +291,8 @@ export class UserPaymentCreditInfoDto {
 
     @IsNotEmpty({ message: "cardInfo is required" })
     @ValidateNested()
-    @Type(() => CardDto)
-    cardInfo: CardDto;
+    @Type(() => IPagCardDto)
+    cardInfo: IPagCardDto;
 
     @IsNotEmpty({ message: "customerInfo is required" })
     @ValidateNested()
