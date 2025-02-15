@@ -11,6 +11,7 @@ import { TransactionModule } from './transaction/transaction.module';
 import { OrderModule } from './order/order.module';
 import { IPagModule } from './payment-gateway/ipag.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { CardModule } from './card/card.module';
 
 @Module({
   imports: [
@@ -23,7 +24,8 @@ import { ScheduleModule } from '@nestjs/schedule';
     TransactionModule,
     OrderModule,
     IPagModule,
-    ScheduleModule.forRoot()
+    ScheduleModule.forRoot(),
+    CardModule
   ],
   controllers: [AppController],
   providers: [AppService],
