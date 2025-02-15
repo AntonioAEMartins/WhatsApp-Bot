@@ -5,6 +5,7 @@ import { Type } from 'class-transformer';
 import { ObjectId } from 'mongodb';
 import { ConversationStep, MessageType, PaymentStatus } from './conversation.enums';
 import { PaymentMethod } from 'src/transaction/dto/transaction.dto';
+import { CardDto } from 'src/card/dto/card.dto';
 
 
 
@@ -140,6 +141,15 @@ export class ConversationContextDTO {
   @IsString()
   @IsOptional()
   userName?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CardDto)
+  savedCards?: CardDto[];
+
+  @IsString()
+  @IsOptional()
+  selectedCardId?: string;
 }
 
 export class BaseConversationDto {

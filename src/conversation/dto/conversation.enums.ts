@@ -42,4 +42,5 @@ export enum ConversationStep {
   PaymentInvalid = 'payment_invalid',
   PaymentAssistance = 'payment_assistance',
   OverpaymentDecision = 'overpayment_decision',
+  SelectSavedCard = 'select_saved_card',
 }

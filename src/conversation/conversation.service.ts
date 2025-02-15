@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { MongoClient, Db, WithId, ObjectId, ClientSession } from 'mongodb';
 import { ClientProvider } from 'src/db/db.module';
 import { SimpleResponseDto } from 'src/request/request.dto';
@@ -7,9 +7,9 @@ import { BaseConversationDto, ConversationContextDTO, ConversationDto, CreateCon
 
 @Injectable()
 export class ConversationService {
-
+    private readonly logger = new Logger(ConversationService.name);
     private readonly mongoClient: MongoClient;
-    private readonly timeThreshold = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
+    private readonly timeThreshold = 1 * 60 * 60 * 1000; // 1 hour in milliseconds
     constructor(@Inject('DATABASE_CONNECTION') private db: Db, clientProvider: ClientProvider) {
         this.mongoClient = clientProvider.getClient();
     }
@@ -55,61 +55,82 @@ export class ConversationService {
             ConversationStep.OrderNotFound,
             ConversationStep.PaymentInvalid,
             ConversationStep.PaymentAssistance,
-            // ConversationStep.Feedback,
-            // ConversationStep.FeedbackDetail,
         ];
 
         const now = new Date();
+        const oneDayAgo = new Date(now.getTime() - 86400000); // 1 day ago
 
         const conversation = await this.db
             .collection<ConversationDto>("conversations")
-            .find({ userId: userId })
-            .sort({ "conversationContext.lastMessage": -1 })
-            .limit(1)
-            .next();
+            .findOne({
+                userId,
+            }, {
+                sort: { "conversationContext.lastMessage": -1 },
+            });
 
-        if (conversation) {
-            const currentStep = conversation.conversationContext.currentStep;
-            const lastMessage = conversation.conversationContext.lastMessage;
+        this.logger.debug(`[getActiveConversation] is active conversation: ${conversation ? "true" : "false"}, last message: ${conversation?.conversationContext.lastMessage}`);
 
-            if (!terminalSteps.includes(currentStep) && lastMessage) {
-                const timeDifference = now.getTime() - new Date(lastMessage).getTime();
-                if (timeDifference <= this.timeThreshold) {
-                    return {
-                        msg: "Active conversation found",
-                        data: conversation,
-                    };
-                }
+        if (conversation && conversation.conversationContext.lastMessage) {
+            const timeDifference = now.getTime() - new Date(conversation.conversationContext.lastMessage).getTime();
+            this.logger.debug(
+                `[getActiveConversation] Time difference: ${timeDifference}, Threshold: ${this.timeThreshold}`
+            );
+            if (timeDifference <= this.timeThreshold) {
+                return {
+                    msg: "Active conversation found",
+                    data: conversation,
+                };
             }
         }
 
+        this.logger.debug(`[getActiveConversation] No active conversation found for user ${userId}`);
         return {
             msg: "No active conversation",
             data: null,
         };
     }
 
+
+
     async getActiveConversationsByOrderId(orderId: number): Promise<SimpleResponseDto<ConversationDto[]>> {
         const terminalSteps = [
             ConversationStep.Completed,
+            ConversationStep.IncompleteOrder,
+            ConversationStep.OrderNotFound,
+            ConversationStep.PaymentInvalid,
+            ConversationStep.PaymentAssistance,
         ];
 
         const now = new Date();
+        const oneDayAgo = new Date(now.getTime() - 86400000); // 1 dia atrás
 
-        // Busca todas as conversas relacionadas ao orderId
+        // Busca todas as conversas relacionadas ao orderId com lastMessage dentro do último dia
+        // e que não estejam em etapas terminais.
         const conversations = await this.db
             .collection<ConversationDto>("conversations")
             .find({
                 "conversationContext.paymentDetails.orderId": orderId,
                 "conversationContext.currentStep": { $nin: terminalSteps },
-                "conversationContext.lastMessage": { $gte: new Date(now.getTime() - this.timeThreshold) },
+                "conversationContext.lastMessage": { $gte: oneDayAgo },
             })
+            .sort({ "conversationContext.lastMessage": -1 })
             .toArray();
 
-        if (conversations && conversations.length > 0) {
+        // Filtra as conversas que estão ativas conforme o threshold definido (ex: 2 horas)
+        const activeConversations = conversations.filter(conversation => {
+            const lastMessage = conversation.conversationContext.lastMessage;
+            if (!lastMessage) return false;
+            const timeDifference = now.getTime() - new Date(lastMessage).getTime();
+            this.logger.debug(
+                `[getActiveConversationsByOrderId] Conversation ID: ${conversation._id}, Time difference: ${timeDifference}, Threshold: ${this.timeThreshold}`
+            );
+            return timeDifference <= this.timeThreshold;
+        });
+
+        if (activeConversations.length > 0) {
             return {
                 msg: "Active conversations found",
-                data: conversations,
+                data: activeConversations,
             };
         }
 
@@ -118,6 +139,7 @@ export class ConversationService {
             data: [],
         };
     }
+
 
     async updateConversationContext(id: string, conversationContext: ConversationContextDTO): Promise<SimpleResponseDto<ConversationDto>> {
 
