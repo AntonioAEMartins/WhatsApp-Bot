@@ -34,6 +34,7 @@ import { isError } from 'util';
 import { UserPaymentPixInfoDto } from 'src/payment-gateway/dto/ipag-pagamentos.dto';
 import { IPagService } from 'src/payment-gateway/ipag.service';
 import { Cron } from '@nestjs/schedule';
+import { CardService } from 'src/card/card.service';
 
 // Resposta para um Request do GO
 //[{
@@ -107,6 +108,7 @@ export class WhatsAppService {
         private readonly transactionService: TransactionService,
         private readonly utilsService: WhatsAppUtils,
         private readonly ipagService: IPagService,
+        private readonly cardService: CardService,
         @InjectQueue('payment') private readonly paymentQueue: Queue,
         @Inject('DATABASE_CONNECTION') private db: Db, clientProvider: ClientProvider
     ) {
