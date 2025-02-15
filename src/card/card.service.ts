@@ -35,4 +35,20 @@ export class CardService {
         };
     }
 
+    async getCardById(cardId: string): Promise<SimpleResponseDto<{ token: string, holderName: string, holderDocument: string }>> {
+        const cardToken = await this.db.collection("cards").findOne({ _id: new ObjectId(cardId) }, { projection: { token: 1, holder: 1 } });
+
+        if (!cardToken) {
+            throw new HttpException('Token not found', HttpStatus.NOT_FOUND);
+        }
+
+        return {
+            msg: "Token found",
+            data: {
+                token: cardToken.token,
+                holderName: cardToken.holder.name,
+                holderDocument: cardToken.holder.document,
+            },
+        };
+    }
 }
