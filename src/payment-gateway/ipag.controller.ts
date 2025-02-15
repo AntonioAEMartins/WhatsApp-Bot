@@ -61,15 +61,6 @@ export class IPagController {
     }
   }
 
-
-  @Get('list-account-fees')
-  @HttpCode(200)
-  async listAccountFees() {
-    const response = await this.ipagService.listAccountFees();
-    console.log(response);
-    return response;
-  }
-
   @Post('/marketplace/seller')
   @HttpCode(200)
   async createSeller() {
