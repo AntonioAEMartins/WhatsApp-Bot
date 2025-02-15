@@ -11,7 +11,6 @@ export class TransactionController {
         return await this.transactionService.createTransaction(transaction);
     }
 
-
     @HttpCode(HttpStatus.OK)
     @Get('summary/:id')
     async getSummary(@Param('id') id: string) {
@@ -25,11 +24,29 @@ export class TransactionController {
     }
 
     @HttpCode(HttpStatus.OK)
+    @Get("status/:id")
+    async getTransactionStatus(@Param('id') id: string) {
+        return await this.transactionService.getTransactionStatus(id);
+    }
+
+    @HttpCode(HttpStatus.OK)
+    @Get("duplicated/:id")
+    async getDuplicatedTransactions(@Param('id') id: string) {
+        return await this.transactionService.getDuplicatedTransactions(id);
+    }
+
+    @HttpCode(HttpStatus.OK)
+    @Get("duplicate/:id")
+    async duplicateTransaction(@Param('id') id: string) {
+        return await this.transactionService.duplicateTransaction(id);
+    }
+
+    @HttpCode(HttpStatus.OK)
     @Get(':id')
     async getTransaction(@Param('id') id: string) {
         return await this.transactionService.getTransaction(id);
     }
-    
+
     @HttpCode(HttpStatus.OK)
     @Get('active_by_order')
     async getActiveTransactionsByOrderId(@Query('orderId') orderId: string) {
