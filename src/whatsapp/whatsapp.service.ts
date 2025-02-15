@@ -1135,7 +1135,7 @@ export class WhatsAppService {
         // Mensagem de confirmação de "sem problemas".
         const messages = [
             'Sem problemas!',
-            'Por favor, nos informe o seu CPF para a emissão da nota fiscal. 😊'
+            'Por favor, nos informe o seu CPF ou CNPJ para a emissão da nota fiscal. 😊'
         ];
 
         const sentMessages = this.mapTextMessages(messages, from);
