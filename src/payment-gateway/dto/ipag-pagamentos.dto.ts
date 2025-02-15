@@ -293,32 +293,32 @@ export class UserPaymentCreditInfoDto {
     @ValidateNested()
     @Type(() => IPagCardDto)
     cardInfo: IPagCardDto;
-  
+
     @ValidateIf(o => !o.cardId)
     @IsNotEmpty({ message: "customerInfo is required when cardId is not provided" })
     @ValidateNested()
     @Type(() => CustomerDto)
     customerInfo: CustomerDto;
-  
+
     @ValidateIf(o => !o.cardId)
-    @IsOptional() 
+    @IsOptional()
     @ValidateNested()
     @Type(() => BillingAddressDto)
     billingAddress?: BillingAddressDto;
-  
+
     @ValidateIf(o => !o.cardId)
     @IsNotEmpty({ message: "saveCard is required when cardId is not provided" })
     @IsBoolean()
     saveCard: boolean;
-  
+
     @IsNotEmpty({ message: "transactionId is required" })
     @IsString()
     transactionId: string;
-  
+
     @IsOptional()
     @IsString()
     cardId?: string;
-  }
+}
 
 export class UserPaymentPixInfoDto {
     @IsNotEmpty({ message: "transactionId is required" })
