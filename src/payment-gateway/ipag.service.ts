@@ -142,13 +142,14 @@ export class IPagService {
         let cardBrand: PaymentMethodCard | null = null;
         let holderName: string;
         let holderDocument: string;
+
         if (isTokenized) {
             const existingCardResponse = await this.cardService.getCardById(userPaymentInfo.cardId);
             if (!existingCardResponse?.data) {
                 throw new HttpException('Card not found', HttpStatus.BAD_REQUEST);
             }
             cardPayload = { token: userPaymentInfo.cardId };
-            holderName = existingCardResponse.data.token;
+            holderName = existingCardResponse.data.holderName;
             holderDocument = existingCardResponse.data.holderDocument;
         } else {
             cardBrand = this.getCardMethod(userPaymentInfo.cardInfo.number);
