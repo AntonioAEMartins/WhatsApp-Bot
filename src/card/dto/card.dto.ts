@@ -1,3 +1,5 @@
+import { PaymentMethodCard } from "src/payment-gateway/dto/ipag-pagamentos.dto";
+
 export class HolderDto {
     name: string;
     document: string;
@@ -6,7 +8,7 @@ export class HolderDto {
 export class BaseCardDto {
     userId: string;
     holder: HolderDto;
-    brand: string;
+    brand: PaymentMethodCard;
     last4: string;
     token: string;
 }
