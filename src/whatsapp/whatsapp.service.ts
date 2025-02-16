@@ -445,7 +445,7 @@ export class WhatsAppService {
             sentMessages.push(
                 ...this.mapTextMessages(
                     [
-                        '*👋 Coti Pagamentos* – Bem-vindo(a)!\nTornamos o seu pagamento prático e sem complicações.\n\nMétodos Aceitos:\n- PIX\n- Cartão de Crédito (em breve!)',
+                        '*👋 Coti Pagamentos* – Bem-vindo(a)!\nTornamos o seu pagamento prático e sem complicações.\n\n*Formas de Pagamento Aceitas:*\n1. PIX\n2. Cartão de Crédito\n\n_Em caso de dúvidas sobre privacidade ou solicitação de remoção dos seus dados, entre em contato pelo e-mail:_ \nsuporte@astra1.com.br',
                     ],
                     from,
                     true,
