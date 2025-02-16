@@ -106,17 +106,55 @@ export class TransactionService {
 
 
     async getReceipt(id: string): Promise<SimpleResponseDto<TransactionDTO>> {
-        const transaction = await this.db.collection("transactions").findOne({ _id: new ObjectId(id) }, { projection: { _id: 1, tableId: 1, paymentMethod: 1, amountPaid: 1, expectedAmount: 1, status: 1, confirmedAt: 1 } });
+        const results = await this.db.collection("transactions").aggregate([
+            {
+                $match: { _id: new ObjectId(id) }
+            },
+            {
+                $lookup: {
+                    from: "cards",
+                    let: { cardIdStr: "$cardId" },
+                    pipeline: [
+                        {
+                            $match: {
+                                $expr: { $eq: ["$_id", { $toObjectId: "$$cardIdStr" }] }
+                            }
+                        },
+                        {
+                            $project: { last4: 1, _id: 0 }
+                        }
+                    ],
+                    as: "cardInfo"
+                }
+            },
+            {
+                $addFields: {
+                    cardLast4: { $arrayElemAt: ["$cardInfo.last4", 0] }
+                }
+            },
+            {
+                $project: {
+                    _id: 1,
+                    table_id: "$tableId",
+                    amountPaid: 1,
+                    status: 1,
+                    confirmedAt: 1,
+                    cardLast4: 1
+                }
+            }
+        ]).toArray();
 
-        if (!transaction) {
+        if (!results || results.length === 0) {
             throw new HttpException("Transaction not found", HttpStatus.NOT_FOUND);
         }
 
         return {
             msg: "Transaction found",
-            data: transaction as TransactionDTO,
-        }
+            data: results[0] as TransactionDTO,
+        };
     }
+
+
 
     async getTransactionStatus(transactionId: string): Promise<SimpleResponseDto<PaymentStatus>> {
         const transaction = await this.db.collection("transactions").findOne({ _id: new ObjectId(transactionId) });
