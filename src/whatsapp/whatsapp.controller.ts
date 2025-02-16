@@ -1,7 +1,9 @@
 // src/whatsapp/whatsapp.controller.ts
 
-import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { RequestStructure, ResponseStructure, ResponseStructureExtended, WhatsAppService } from './whatsapp.service';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { SimpleResponseDto } from 'src/request/request.dto';
 
 
 @Controller('whatsapp')
@@ -38,6 +40,20 @@ export class WhatsAppController {
     }));
 
     return transformedResponse;
+  }
+
+  @Post('receipt')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(FileInterceptor('file'))
+  async receiveReceipt(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('transactionId') transactionId: string,
+  ): Promise<SimpleResponseDto<string>> {
+    const response = await this.whatsappService.processReceipt(file, transactionId);
+    return {
+      msg: 'Receipt received',
+      data: response,
+    };
   }
 
 }

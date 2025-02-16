@@ -2649,5 +2649,41 @@ export class WhatsAppService {
         return Math.floor(value * 100) / 100;
     }
 
+
+    async processReceipt(file: Express.Multer.File, transactionId: string): Promise<string> {
+        this.logger.log(`[processReceipt] Iniciando processamento do comprovante para a transação ${transactionId}`);
+        this.logger.log(`[processReceipt] Arquivo enviado: ${file}`);
+        if (!file) {
+            throw new HttpException('Nenhum arquivo enviado', HttpStatus.BAD_REQUEST);
+        }
+        if (!transactionId) {
+            throw new HttpException('TransactionId é obrigatório', HttpStatus.BAD_REQUEST);
+        }
+
+        // Converte o buffer da imagem para uma string Base64
+        const base64Image = file.buffer.toString('base64');
+
+        // Busca a transação para obter as informações do usuário
+        const transactionResponse = await this.transactionService.getTransaction(transactionId);
+        const transaction = transactionResponse.data;
+        if (!transaction || !transaction.userId) {
+            throw new HttpException('Transação não encontrada ou sem informação de usuário', HttpStatus.NOT_FOUND);
+        }
+
+        // Monta a mensagem com o receipt (em Base64)
+        const receiptMessage: ResponseStructureExtended = {
+            type: 'image',
+            content: base64Image,
+            caption: 'Seu comprovante de pagamento',
+            to: transaction.userId, // Presume que o userId seja o identificador do WhatsApp
+            reply: false,
+            isError: false,
+        };
+
+        // Envia a mensagem diretamente para o GO
+        await this.sendMessagesDirectly([receiptMessage]);
+
+        return 'Comprovante enviado com sucesso para o usuário';
+    }
 }
 
