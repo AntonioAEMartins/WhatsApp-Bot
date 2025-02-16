@@ -51,4 +51,13 @@ export class CardService {
             },
         };
     }
+
+    async deleteCard(cardId: string, userId: string): Promise<SimpleResponseDto<{ _id: string }>> {
+        await this.db.collection("cards").deleteOne({ _id: new ObjectId(cardId), userId });
+
+        return {
+            msg: "Card deleted",
+            data: { _id: cardId },
+        };
+    }
 }

@@ -1585,12 +1585,13 @@ export class WhatsAppService {
             const savedCards = cardsResponse.data;
 
             if (savedCards && savedCards.length > 0) {
-                // Constrói a mensagem no novo formato
+                // Constrói a mensagem com instruções de deleção
                 let optionsMessage = '✨ Com qual cartão deseja prosseguir?\n\n';
                 savedCards.forEach((card, index) => {
                     optionsMessage += `${index + 1}- Final *${card.last4}* | Válido até ${card.expiry_month}/${card.expiry_year}\n`;
                 });
-                optionsMessage += `${savedCards.length + 1}- *💳 Novo Cartão*`;
+                optionsMessage += `${savedCards.length + 1}- *💳 Novo Cartão*\n\n`;
+                optionsMessage += `Para excluir um cartão salvo, digite por exemplo: *deletar 2* (onde 2 é o número do cartão).`;
 
                 const updatedContext: ConversationContextDTO = {
                     ...state.conversationContext,
@@ -1647,6 +1648,7 @@ export class WhatsAppService {
     }
 
 
+
     private async handleSelectSavedCard(
         from: string,
         userMessage: string,
@@ -1657,20 +1659,89 @@ export class WhatsAppService {
         const savedCards: CardDto[] = state.conversationContext.savedCards || [];
         const totalOptions = savedCards.length + 1; // inclui a opção "Novo Cartão"
 
-        // Tenta extrair a seleção do usuário
-        const selection = parseInt(userMessage.trim());
+        // Verifica se o usuário digitou "deletar", "remover", etc.
+        const normalizedInput = userMessage.trim().toLowerCase();
+        const deleteMatch = normalizedInput.match(/^(deletar|remover)\s+(\d+)/i);
+
+        if (deleteMatch) {
+            // Exemplo: "deletar 2"
+            const indexToDelete = parseInt(deleteMatch[2], 10);
+
+            if (isNaN(indexToDelete) || indexToDelete < 1 || indexToDelete > savedCards.length) {
+                sentMessages.push(
+                    ...this.mapTextMessages(
+                        [
+                            'Índice de cartão inválido. Por favor, tente novamente digitando: "deletar <número do cartão>".',
+                        ],
+                        from,
+                    ),
+                );
+                return sentMessages;
+            }
+
+            const cardToDelete = savedCards[indexToDelete - 1];
+            if (!cardToDelete) {
+                sentMessages.push(
+                    ...this.mapTextMessages(
+                        [
+                            'Não encontramos o cartão especificado. Por favor, tente novamente.',
+                        ],
+                        from,
+                    ),
+                );
+                return sentMessages;
+            }
+
+            // Deleta o cartão
+            await this.cardService.deleteCard(cardToDelete._id, state.userId);
+
+            // Atualiza a lista de cartões em memória
+            const updatedCardsResponse = await this.cardService.getCardsByUserId(state.userId);
+            const updatedCards = updatedCardsResponse.data || [];
+
+            let optionsMessage = '✅ Cartão deletado com sucesso!\n\n';
+            if (updatedCards.length > 0) {
+                optionsMessage += '✨ Estes são seus cartões atuais:\n\n';
+                updatedCards.forEach((card, index) => {
+                    optionsMessage += `${index + 1}- Final *${card.last4}* | Válido até ${card.expiry_month}/${card.expiry_year}\n`;
+                });
+                optionsMessage += `${updatedCards.length + 1}- *💳 Novo Cartão*\n\n`;
+                optionsMessage += `Para excluir um cartão salvo, digite por exemplo: *deletar 2* (onde 2 é o número do cartão).`;
+            } else {
+                optionsMessage += 'Você não possui mais cartões salvos.\n';
+                optionsMessage += 'Digite o número *1* para adicionar um novo cartão.';
+            }
+
+            // Atualiza novamente o contexto de cartões salvos
+            const updatedContext: ConversationContextDTO = {
+                ...state.conversationContext,
+                savedCards: updatedCards as CardDto[],
+            };
+            await this.conversationService.updateConversation(conversationId, {
+                userId: state.userId,
+                conversationContext: updatedContext,
+            });
+
+            sentMessages.push(...this.mapTextMessages([optionsMessage], from));
+            return sentMessages;
+        }
+
+        // Caso o usuário não tenha digitado "deletar", interpretamos como escolha normal (1, 2, 3, etc.)
+        const selection = parseInt(userMessage.trim(), 10);
         if (isNaN(selection) || selection < 1 || selection > totalOptions) {
             sentMessages.push(
                 ...this.mapTextMessages(
-                    ['Por favor, envie um número válido correspondente à opção desejada.'],
+                    [
+                        'Por favor, escolha uma opção válida ou use "deletar <n>" para remover um cartão.',
+                    ],
                     from,
                 ),
             );
             return sentMessages;
         }
 
+        // Opção de Novo Cartão
         if (selection === totalOptions) {
-            // Fluxo para novo cartão
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.WaitingForPayment,
@@ -1695,66 +1766,71 @@ export class WhatsAppService {
                 state,
                 transactionResponse.transactionResponse,
             );
-        } else {
-            // Fluxo para cartão salvo selecionado
-            const selectedCard = savedCards[selection - 1];
+            return sentMessages;
+        }
 
-            const updatedContext: ConversationContextDTO = {
+        // Fluxo para cartão salvo selecionado
+        const selectedCard = savedCards[selection - 1];
+
+        const updatedContext: ConversationContextDTO = {
+            ...state.conversationContext,
+            currentStep: ConversationStep.WaitingForPayment,
+            selectedCardId: selectedCard._id,
+        };
+        await this.conversationService.updateConversation(conversationId, {
+            userId: state.userId,
+            conversationContext: updatedContext,
+        });
+
+        const transactionResponse = await this.createTransaction(
+            state,
+            PaymentMethod.CREDIT_CARD,
+            state.conversationContext.userName,
+        );
+
+        this.logger.log(
+            `[handleSelectSavedCard] Transaction created using saved card: ${transactionResponse.transactionResponse._id}`,
+        );
+
+        // Monta o DTO apenas com transactionId e cardId
+        const userPaymentInfo: UserPaymentCreditInfoDto = {
+            transactionId: transactionResponse.transactionResponse._id.toString(),
+            cardId: selectedCard._id,
+        };
+
+        try {
+            // Tenta processar o pagamento direto, caso o fluxo seja assim
+            await this.ipagService.createCreditCardPayment(userPaymentInfo);
+        } catch (error) {
+            // Em caso de erro, reverte o fluxo para a seleção de cartão
+            const revertContext: ConversationContextDTO = {
                 ...state.conversationContext,
-                currentStep: ConversationStep.WaitingForPayment,
-                selectedCardId: selectedCard._id,
+                currentStep: ConversationStep.SelectSavedCard,
             };
+
             await this.conversationService.updateConversation(conversationId, {
                 userId: state.userId,
-                conversationContext: updatedContext,
+                conversationContext: revertContext,
             });
 
-            const transactionResponse = await this.createTransaction(
-                state,
-                PaymentMethod.CREDIT_CARD,
-                state.conversationContext.userName,
-            );
+            // Reconstrói a mensagem de opções com os cartões disponíveis
+            let optionsMessage = `Erro ao processar o pagamento: ${error.message}. Por favor, escolha um novo cartão:\n\n`;
+            savedCards.forEach((card, index) => {
+                optionsMessage += `${index + 1}- Final *${card.last4}* | Válido até ${card.expiry_month}/${card.expiry_year}\n`;
+            });
+            optionsMessage += `${savedCards.length + 1}- *💳 Novo Cartão*\n\n`;
+            optionsMessage += `Para excluir um cartão salvo, digite: "deletar n".`;
 
-            this.logger.log(
-                `[handleSelectSavedCard] Transaction created using saved card: ${transactionResponse.transactionResponse._id}`,
-            );
-
-            // Monta o DTO apenas com transactionId e cardId
-            const userPaymentInfo: UserPaymentCreditInfoDto = {
-                transactionId: transactionResponse.transactionResponse._id.toString(),
-                cardId: selectedCard._id,
-            };
-
-            try {
-                await this.ipagService.createCreditCardPayment(userPaymentInfo);
-            } catch (error) {
-                // Em caso de erro, reverte o fluxo para a seleção de cartão
-                const revertContext: ConversationContextDTO = {
-                    ...state.conversationContext,
-                    currentStep: ConversationStep.SelectSavedCard,
-                };
-
-                await this.conversationService.updateConversation(conversationId, {
-                    userId: state.userId,
-                    conversationContext: revertContext,
-                });
-
-                // Reconstrói a mensagem de opções com os cartões disponíveis no novo formato
-                let optionsMessage = `Erro ao processar o pagamento: ${error.message}. Por favor, escolha um novo cartão:\n\n`;
-                savedCards.forEach((card, index) => {
-                    optionsMessage += `${index + 1}- Final *${card.last4}* | Válido até ${card.expiry_month}/${card.expiry_year}\n`;
-                });
-                optionsMessage += `${savedCards.length + 1}- *💳 Novo Cartão*`;
-
-                sentMessages.push(...this.mapTextMessages([optionsMessage], from));
-            }
+            sentMessages.push(...this.mapTextMessages([optionsMessage], from));
+            return sentMessages;
         }
+
+        // Se chegou até aqui, significa que a ipagService.createCreditCardPayment() foi bem sucedida
+        // Normalmente você trataria a espera de callback ou algo similar, mas deixamos como está
+        // Agora basta retornar a mensagem final ou esperar a confirmação do Gateway
 
         return sentMessages;
     }
-
-
-
 
     private async handleCollectName(
         from: string,
