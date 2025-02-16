@@ -17,7 +17,7 @@ export class PaymentProcessor {
   @Process()
   async process(job: Job<PaymentProcessorDTO>): Promise<void> {
     try {
-      // Aqui, pegue o retorno que você quer de fato
+      await new Promise(resolve => setTimeout(resolve, 3000)); // Must wait for the receipt to be sent
       await this.whatsAppService.processPayment(job.data)
     } catch (error) {
       throw error;
