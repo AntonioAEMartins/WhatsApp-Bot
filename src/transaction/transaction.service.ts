@@ -1,12 +1,11 @@
 import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { MongoClient, Db, WithId, ObjectId, ClientSession } from 'mongodb';
+import { MongoClient, Db, ObjectId, ClientSession } from 'mongodb';
 import { ClientProvider } from 'src/db/db.module';
 import { SimpleResponseDto } from 'src/request/request.dto';
-import { CreateTransactionDTO, PaymentMethod, TransactionDTO } from './dto/transaction.dto';
+import { CreateTransactionDTO, ErrorDescriptionDTO, PaymentMethod, TransactionDTO } from './dto/transaction.dto';
 import { ActivePaymentStatuses, PaymentDescription, PaymentStatus } from 'src/conversation/dto/conversation.enums';
 import { ConversationDto } from 'src/conversation/dto/conversation.dto';
-import { IPagService } from 'src/payment-gateway/ipag.service';
-import { UserPaymentPixInfoDto } from 'src/payment-gateway/dto/ipag-pagamentos.dto';
+
 @Injectable()
 export class TransactionService {
 
@@ -155,8 +154,10 @@ export class TransactionService {
     }
 
 
-
-    async getTransactionStatus(transactionId: string): Promise<SimpleResponseDto<PaymentStatus>> {
+    async getTransactionStatus(transactionId: string): Promise<SimpleResponseDto<{
+        status: PaymentStatus;
+        errorDescription?: ErrorDescriptionDTO;
+    }>> {
         const transaction = await this.db.collection("transactions").findOne({ _id: new ObjectId(transactionId) });
 
         if (!transaction) {
@@ -165,7 +166,10 @@ export class TransactionService {
 
         return {
             msg: "Transaction status found",
-            data: transaction.status,
+            data: {
+                status: transaction.status,
+                errorDescription: transaction.errorDescription,
+            },
         }
     }
 
