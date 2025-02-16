@@ -1536,7 +1536,8 @@ export class WhatsAppService {
                     conversationContext: revertContext,
                 });
 
-                throw new Error('PIX generation failed');
+                // Adiciona uma mensagem de erro amigável
+                throw new Error('Desculpe, houve um problema ao gerar o PIX. Por favor, tente novamente ou escolha outro método de pagamento.');
             }
         }
 
