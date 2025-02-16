@@ -1003,7 +1003,7 @@ export class WhatsAppService {
         // add the contact of the user itself
         contacts.push({
             name: state.userId,
-            phone: state.userId,
+            phone: state.userId.includes('@s.whatsapp.net') ? state.userId : state.userId + '@s.whatsapp.net',
             expectedAmount: individualAmount,
             paidAmount: 0,
         });
@@ -1011,8 +1011,8 @@ export class WhatsAppService {
         const splitInfo: SplitInfoDTO = {
             numberOfPeople: state.conversationContext.splitInfo.numberOfPeople,
             participants: contacts.map((contact) => ({
-                name: contact.name,
-                phone: contact.phone,
+                name: contact.name.includes('@s.whatsapp.net') ? 'Cliente' : contact.name,
+                phone: contact.phone.includes('@s.whatsapp.net') ? contact.phone : contact.phone + '@s.whatsapp.net',
                 expectedAmount: contact.expectedAmount,
                 paidAmount: 0,
             }))
@@ -1974,13 +1974,25 @@ export class WhatsAppService {
                 },
             });
 
-            // Finaliza o pagamento da mesa
-            const tableId = parseInt(state.tableId, 10);
-            await this.tableService.finishPayment(tableId);
+            this.logger.log(`[processPayment] Updating amount paid and checking order status`);
 
-            // Notifica os atendentes que a mesa pagou com sucesso
-            const notifyWaiterMessages = await this.notifyWaiterTablePaymentComplete(state);
-            sentMessages.push(...notifyWaiterMessages);
+            const updateAmountResponse = await this.orderService.updateAmountPaidAndCheckOrderStatus(state.orderId, transaction.data.amountPaid, state.userId);
+            this.logger.log(`[processPayment] updateAmountResponse: ${updateAmountResponse}`);
+            const isFullPaymentAmountPaid = updateAmountResponse.data.isPaid;
+
+            this.logger.log(`[processPayment] isFullPaymentAmountPaid: ${isFullPaymentAmountPaid}`);
+
+            if (isFullPaymentAmountPaid) {
+                this.logger.log(`[processPayment] Full payment amount paid`);
+                const tableId = parseInt(state.tableId);
+                await this.tableService.finishPayment(tableId);
+                const notifyWaiterMessages = await this.notifyWaiterTablePaymentComplete(state);
+                sentMessages.push(...notifyWaiterMessages);
+            } else {
+                this.logger.log(`[processPayment] Partial payment amount paid`);
+                const notifyWaiterMessages = await this.notifyWaiterPaymentMade(state);
+                sentMessages.push(...notifyWaiterMessages);
+            }
         }
 
         // Envia as mensagens diretamente para o bot GO
@@ -2236,6 +2248,7 @@ export class WhatsAppService {
 
     private async notifyWaiterTablePaymentComplete(state: ConversationDto): Promise<ResponseStructureExtended[]> {
         const groupId = this.waiterGroupId;
+        this.logger.log(`[notifyWaiterTablePaymentComplete] Notificação de pagamento completo para o grupo: ${groupId}`);
 
         try {
             const { orderId, tableId } = state;
@@ -2281,6 +2294,7 @@ export class WhatsAppService {
 
     private async notifyWaiterPaymentMade(state: ConversationDto): Promise<ResponseStructureExtended[]> {
         const groupId = this.waiterGroupId;
+        this.logger.log(`[notifyWaiterPaymentMade] Notificação de pagamento para o grupo: ${groupId}`);
 
         try {
             const { orderId, tableId, conversationContext: { userAmount }, userId } = state;
@@ -2343,6 +2357,8 @@ export class WhatsAppService {
             });
 
             message = message.trimEnd();
+
+            this.logger.log(`[notifyWaiterPaymentMade] Mensagem de pagamento para o grupo: ${message}`);
 
             return this.mapTextMessages([message], groupId);
         } catch (error) {
