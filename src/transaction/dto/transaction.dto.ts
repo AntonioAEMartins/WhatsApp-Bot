@@ -45,6 +45,17 @@ export class PixInfoDTO {
     document: string;
 }
 
+export class ErrorDescriptionDTO {
+    @IsString()
+    errorCode: string;
+
+    @IsString()
+    userFriendlyMessage: string;
+
+    @IsString()
+    rawError: string;
+}
+
 export class BaseTransactionDTO {
     // Referência ao pedido desta transação
     @IsString()
@@ -114,6 +125,11 @@ export class BaseTransactionDTO {
     @IsOptional()
     @IsString()
     cardId?: string;
+
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => ErrorDescriptionDTO)
+    errorDescription?: ErrorDescriptionDTO;
 }
 
 export class CreateTransactionDTO extends BaseTransactionDTO {
