@@ -65,16 +65,17 @@ export class ConversationService {
             .findOne({
                 userId,
             }, {
-                sort: { "conversationContext.lastMessage": -1 },
+                sort: { updatedAt: -1 },
             });
 
-        this.logger.debug(`[getActiveConversation] is active conversation: ${conversation ? "true" : "false"}, last message: ${conversation?.conversationContext.lastMessage}`);
+        // this.logger.debug(`[getActiveConversation] is active conversation: ${conversation ? "true" : "false"}, last message: ${conversation?.conversationContext.lastMessage}`);
+        // this.logger.debug(`[getActiveConversation] conversationId: ${conversation?._id}`);
 
         if (conversation && conversation.conversationContext.lastMessage) {
             const timeDifference = now.getTime() - new Date(conversation.conversationContext.lastMessage).getTime();
-            this.logger.debug(
-                `[getActiveConversation] Time difference: ${timeDifference}, Threshold: ${this.timeThreshold}`
-            );
+            // this.logger.debug(
+            // `[getActiveConversation] Time difference: ${timeDifference}, Threshold: ${this.timeThreshold}`
+            // );
             if (timeDifference <= this.timeThreshold) {
                 return {
                     msg: "Active conversation found",
@@ -83,7 +84,7 @@ export class ConversationService {
             }
         }
 
-        this.logger.debug(`[getActiveConversation] No active conversation found for user ${userId}`);
+        // this.logger.debug(`[getActiveConversation] No active conversation found for user ${userId}`);
         return {
             msg: "No active conversation",
             data: null,
