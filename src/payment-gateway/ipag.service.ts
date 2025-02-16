@@ -148,7 +148,7 @@ export class IPagService {
             if (!existingCardResponse?.data) {
                 throw new HttpException('Card not found', HttpStatus.BAD_REQUEST);
             }
-            cardPayload = { token: userPaymentInfo.cardId };
+            cardPayload = { token: existingCardResponse.data.token };
             holderName = existingCardResponse.data.holderName;
             holderDocument = existingCardResponse.data.holderDocument;
         } else {
@@ -211,6 +211,8 @@ export class IPagService {
                     brand: cardBrand,
                     last4: userPaymentInfo.cardInfo.number.slice(-4),
                     token: userPaymentInfo.saveCard ? response.attributes.card.token : null,
+                    expiry_month: userPaymentInfo.cardInfo.expiry_month,
+                    expiry_year: userPaymentInfo.cardInfo.expiry_year,
                 });
             }
 
