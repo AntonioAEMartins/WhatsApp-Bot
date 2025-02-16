@@ -6,6 +6,7 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import { printConfig } from './print.config';
 import * as bodyParser from 'body-parser';
 import * as cors from 'cors';
+import { GlobalHttpExceptionFilter } from './request/exception.filter';
 dotenv.config()
 
 async function bootstrap() {
@@ -20,6 +21,8 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
+
+  app.useGlobalFilters(new GlobalHttpExceptionFilter());
 
   // Enable CORS for https://pay.astra1.com.br/
   app.use(cors({
