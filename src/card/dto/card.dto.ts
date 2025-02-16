@@ -11,6 +11,8 @@ export class BaseCardDto {
     brand: PaymentMethodCard;
     last4: string;
     token: string;
+    expiry_month: string;
+    expiry_year: string;
 }
 
 export class CardDto extends BaseCardDto {
