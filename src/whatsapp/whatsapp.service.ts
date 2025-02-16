@@ -182,108 +182,118 @@ export class WhatsAppService {
         };
 
         // Calculate message age to avoid processing old messages
-        const currentTime = Math.floor(Date.now() / 1000); // current time in seconds
-        const messageAge = currentTime - message.timestamp; // message timestamp is in seconds
+        const currentTime = Math.floor(Date.now() / 1000);
+        const messageAge = currentTime - message.timestamp;
         const maxAllowedAge = 30; // 30 seconds
 
         if (messageAge > maxAllowedAge) {
             this.logger.debug(`Ignoring old message from ${message.from}: ${message.body}`);
-            return; // Ignore old messagese
+            return;
         }
 
         const from = message.from;
 
-        // Handle incoming message and manage conversation state
+        // Handle incoming message and ensure user and conversation exist
         await this.handleIncomingMessage(from);
-
-        // Retrieve the user
-        let user = await this.userService.getUser(from).catch(() => null);
-        if (!user) {
-            this.logger.error(`User ${from} not found after handleIncomingMessage`);
-            return;
-        }
 
         // Retrieve the active conversation
         const activeConversationResponse = await this.conversationService.getActiveConversation(from);
-        const state = activeConversationResponse.data;
+        let state = activeConversationResponse.data;
+        const userMessage = message.body.trim().toLowerCase();
 
-        let requestResponse: ResponseStructureExtended[] = [];
+        // Se a conversa atual estiver finalizada (ou não existir) e o usuário enviar "pagar a comanda", cria nova conversa
+        const terminalStates = [
+            ConversationStep.Completed,
+            ConversationStep.IncompleteOrder,
+            ConversationStep.OrderNotFound,
+            ConversationStep.PaymentInvalid,
+            ConversationStep.PaymentAssistance,
+        ];
+        if ((!state || (state && terminalStates.includes(state.conversationContext.currentStep))) &&
+            userMessage.includes('pagar a comanda')) {
+            const newConversation: CreateConversationDto = {
+                userId: from,
+                conversationContext: {
+                    currentStep: ConversationStep.Initial,
+                    messages: [],
+                    lastMessage: new Date(),
+                },
+            };
+            const createdConversationResponse = await this.conversationService.createConversation(newConversation);
+            const newConversationId = await this.conversationService.getConversation(createdConversationResponse.data._id);
+            state = newConversationId.data;
+        }
 
         if (!state) {
             this.logger.debug(`No active conversation for user ${from}`);
-            requestResponse.push({
+            return [{
                 type: "text",
                 content: "Desculpe, não entendi sua solicitação. Se você gostaria de pagar uma comanda, por favor, use a frase 'Gostaria de pagar a comanda X'.",
                 caption: "",
                 to: from,
                 reply: true,
                 isError: false,
-            });
-            return;
+            }];
         }
 
-        const userMessage = message.body.trim().toLowerCase();
+        let requestResponse: ResponseStructureExtended[] = [];
 
+        // Processamento do fluxo de conversa conforme o currentStep
         switch (state.conversationContext.currentStep) {
             case ConversationStep.ProcessingOrder:
-                if (userMessage.toLowerCase().includes('pagar a comanda')) {
+                if (userMessage.includes('pagar a comanda')) {
                     state.conversationContext.currentStep = ConversationStep.Initial;
                     requestResponse = await this.handleOrderProcessing(from, userMessage, state, message);
                 }
                 break;
-
             case ConversationStep.ConfirmOrder:
                 requestResponse = await this.handleConfirmOrder(from, userMessage, state);
                 break;
-
             case ConversationStep.SplitBill:
                 requestResponse = await this.handleSplitBill(from, userMessage, state);
                 break;
-
             case ConversationStep.SplitBillNumber:
                 requestResponse = await this.handleSplitBillNumber(from, userMessage, state);
                 break;
-
             case ConversationStep.WaitingForContacts:
                 requestResponse = await this.handleWaitingForContacts(from, state, message);
                 break;
-
             case ConversationStep.ExtraTip:
                 requestResponse = await this.handleExtraTip(from, userMessage, state);
                 break;
-
             case ConversationStep.CollectCPF:
                 requestResponse = await this.handleCollectCPF(from, userMessage, state);
                 break;
-
             case ConversationStep.PaymentMethodSelection:
                 requestResponse = await this.handlePaymentMethodSelection(from, userMessage, state);
                 break;
-
             case ConversationStep.SelectSavedCard:
                 requestResponse = await this.handleSelectSavedCard(from, userMessage, state);
                 break;
-
             case ConversationStep.PixExpired:
                 requestResponse = await this.handlePixExpired(from, userMessage, state);
                 break;
-
             case ConversationStep.CollectName:
                 requestResponse = await this.handleCollectName(from, userMessage, state);
                 break;
-
             case ConversationStep.Feedback:
                 requestResponse = await this.handleFeedback(from, userMessage, state);
                 break;
-
             case ConversationStep.FeedbackDetail:
                 requestResponse = await this.handleFeedbackDetail(from, userMessage, state);
                 break;
-
             case ConversationStep.Completed:
-                // 
+                // Se a conversa estiver finalizada mas a mensagem não contiver a frase para iniciar nova conversa,
+                // pode-se enviar uma resposta padrão.
+                requestResponse.push({
+                    type: "text",
+                    content: "Sua última conversa foi finalizada. Se deseja pagar outra comanda, envie 'pagar a comanda X'.",
+                    caption: "",
+                    to: from,
+                    reply: true,
+                    isError: false,
+                });
                 break;
-
             default:
                 if (userMessage.includes('pagar a comanda')) {
                     requestResponse = await this.handleOrderProcessing(from, userMessage, state, message);
@@ -302,7 +312,8 @@ export class WhatsAppService {
         }
 
         return requestResponse;
-    };
+    }
+
 
 
     /**
@@ -1545,7 +1556,7 @@ export class WhatsAppService {
         const userChoice = userMessage.trim().toLowerCase();
 
         if (userChoice === '1' || userChoice.includes('pix')) {
-            // Fluxo PIX (permanece inalterado)
+            // Fluxo PIX
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.CollectName, // novo passo para coletar o nome
@@ -1560,19 +1571,25 @@ export class WhatsAppService {
             sentMessages.push(
                 ...this.mapTextMessages(
                     ['Por favor, informe seu nome completo para prosseguirmos com o pagamento via PIX.'],
-                    from
-                )
+                    from,
+                ),
             );
-        } else if (userChoice === '2' || userChoice.includes('cartão') || userChoice.includes('crédito')) {
+        } else if (
+            userChoice === '2' ||
+            userChoice.includes('cartão') ||
+            userChoice.includes('crédito')
+        ) {
+            // Obtém cartões salvos do usuário
             const cardsResponse = await this.cardService.getCardsByUserId(state.userId);
             const savedCards = cardsResponse.data;
 
             if (savedCards && savedCards.length > 0) {
-                let optionsMessage = 'Escolha o cartão que deseja utilizar:\n';
+                // Constrói a mensagem no novo formato
+                let optionsMessage = '✨ Com qual cartão deseja prosseguir?\n\n';
                 savedCards.forEach((card, index) => {
-                    optionsMessage += `👉 ${index + 1}. **** ${card.last4} \n`;
+                    optionsMessage += `${index + 1}- Final *${card.last4}* | Válido até ${card.expiry_month}/${card.expiry_year}\n`;
                 });
-                optionsMessage += `👉 ${savedCards.length + 1}. 💳 Novo Cartão`;
+                optionsMessage += `${savedCards.length + 1}- *💳 Novo Cartão*`;
 
                 const updatedContext: ConversationContextDTO = {
                     ...state.conversationContext,
@@ -1580,6 +1597,7 @@ export class WhatsAppService {
                     paymentMethod: PaymentMethod.CREDIT_CARD,
                     savedCards: savedCards as CardDto[],
                 };
+
                 await this.conversationService.updateConversation(conversationId, {
                     userId: state.userId,
                     conversationContext: updatedContext,
@@ -1587,11 +1605,13 @@ export class WhatsAppService {
 
                 sentMessages.push(...this.mapTextMessages([optionsMessage], from));
             } else {
+                // Não há cartões salvos: segue fluxo de novo cartão
                 const updatedContext: ConversationContextDTO = {
                     ...state.conversationContext,
                     currentStep: ConversationStep.WaitingForPayment,
                     paymentMethod: PaymentMethod.CREDIT_CARD,
                 };
+
                 await this.conversationService.updateConversation(conversationId, {
                     userId: state.userId,
                     conversationContext: updatedContext,
@@ -1600,25 +1620,31 @@ export class WhatsAppService {
                 const transactionResponse = await this.createTransaction(
                     state,
                     PaymentMethod.CREDIT_CARD,
-                    state.conversationContext.userName
+                    state.conversationContext.userName,
                 );
 
                 this.logger.log(
-                    `[handlePaymentMethodSelection] transactionResponse: ${transactionResponse.transactionResponse._id}`
+                    `[handlePaymentMethodSelection] Transaction created: ${transactionResponse.transactionResponse._id}`,
                 );
-                sentMessages = await this.handleCreditCardPayment(from, state, transactionResponse.transactionResponse);
+
+                sentMessages = await this.handleCreditCardPayment(
+                    from,
+                    state,
+                    transactionResponse.transactionResponse,
+                );
             }
         } else {
             sentMessages.push(
                 ...this.mapTextMessages(
                     ['Opção inválida. Por favor, escolha:\n1- PIX\n2- Cartão de Crédito'],
-                    from
-                )
+                    from,
+                ),
             );
         }
 
         return sentMessages;
     }
+
 
     private async handleSelectSavedCard(
         from: string,
@@ -1627,19 +1653,23 @@ export class WhatsAppService {
     ): Promise<ResponseStructureExtended[]> {
         let sentMessages: ResponseStructureExtended[] = [];
         const conversationId = state._id.toString();
-
-        // Recupera os cartões salvos do contexto da conversa
-        const savedCards: any[] = state.conversationContext.savedCards || [];
+        const savedCards: CardDto[] = state.conversationContext.savedCards || [];
         const totalOptions = savedCards.length + 1; // inclui a opção "Novo Cartão"
 
-        // Extrai a seleção do usuário (espera-se que seja um número)
+        // Tenta extrair a seleção do usuário
         const selection = parseInt(userMessage.trim());
         if (isNaN(selection) || selection < 1 || selection > totalOptions) {
-            sentMessages.push(...this.mapTextMessages(['Por favor, envie um número válido correspondente à opção desejada.'], from));
+            sentMessages.push(
+                ...this.mapTextMessages(
+                    ['Por favor, envie um número válido correspondente à opção desejada.'],
+                    from,
+                ),
+            );
             return sentMessages;
         }
 
         if (selection === totalOptions) {
+            // Fluxo para novo cartão
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.WaitingForPayment,
@@ -1652,14 +1682,22 @@ export class WhatsAppService {
             const transactionResponse = await this.createTransaction(
                 state,
                 PaymentMethod.CREDIT_CARD,
-                state.conversationContext.userName
+                state.conversationContext.userName,
             );
+
             this.logger.log(
-                `[handleSavedCardSelection] Transaction created for new card: ${transactionResponse.transactionResponse._id}`
+                `[handleSelectSavedCard] Transaction created for new card: ${transactionResponse.transactionResponse._id}`,
             );
-            sentMessages = await this.handleCreditCardPayment(from, state, transactionResponse.transactionResponse);
+
+            sentMessages = await this.handleCreditCardPayment(
+                from,
+                state,
+                transactionResponse.transactionResponse,
+            );
         } else {
+            // Fluxo para cartão salvo selecionado
             const selectedCard = savedCards[selection - 1];
+
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.WaitingForPayment,
@@ -1673,27 +1711,48 @@ export class WhatsAppService {
             const transactionResponse = await this.createTransaction(
                 state,
                 PaymentMethod.CREDIT_CARD,
-                state.conversationContext.userName
-            );
-            this.logger.log(
-                `[handleSavedCardSelection] Transaction created using saved card: ${transactionResponse.transactionResponse._id}`
+                state.conversationContext.userName,
             );
 
+            this.logger.log(
+                `[handleSelectSavedCard] Transaction created using saved card: ${transactionResponse.transactionResponse._id}`,
+            );
+
+            // Monta o DTO apenas com transactionId e cardId
             const userPaymentInfo: UserPaymentCreditInfoDto = {
                 transactionId: transactionResponse.transactionResponse._id.toString(),
                 cardId: selectedCard._id,
             };
 
             try {
-                const paymentResult = await this.ipagService.createCreditCardPayment(userPaymentInfo);
-                sentMessages.push(...this.mapTextMessages(['Pagamento realizado com sucesso!'], from));
+                await this.ipagService.createCreditCardPayment(userPaymentInfo);
             } catch (error) {
-                sentMessages.push(...this.mapTextMessages([`Erro ao processar o pagamento: ${error.message}`], from));
+                // Em caso de erro, reverte o fluxo para a seleção de cartão
+                const revertContext: ConversationContextDTO = {
+                    ...state.conversationContext,
+                    currentStep: ConversationStep.SelectSavedCard,
+                };
+
+                await this.conversationService.updateConversation(conversationId, {
+                    userId: state.userId,
+                    conversationContext: revertContext,
+                });
+
+                // Reconstrói a mensagem de opções com os cartões disponíveis no novo formato
+                let optionsMessage = `Erro ao processar o pagamento: ${error.message}. Por favor, escolha um novo cartão:\n\n`;
+                savedCards.forEach((card, index) => {
+                    optionsMessage += `${index + 1}- Final *${card.last4}* | Válido até ${card.expiry_month}/${card.expiry_year}\n`;
+                });
+                optionsMessage += `${savedCards.length + 1}- *💳 Novo Cartão*`;
+
+                sentMessages.push(...this.mapTextMessages([optionsMessage], from));
             }
         }
 
         return sentMessages;
     }
+
+
 
 
     private async handleCollectName(
@@ -1739,14 +1798,24 @@ export class WhatsAppService {
         } catch (error) {
             this.logger.error(`[handleCollectName] Error generating PIX: ${error.message}`);
 
-            // Mensagem ao usuário para retornar à seleção de método de pagamento
-            sentMessages.push(
-                ...this.mapTextMessages(
-                    [
-                        'Houve um erro na geração do PIX. Por favor, escolha novamente a forma de pagamento:\n\n1- PIX\n2- Cartão de Crédito'
-                    ],
-                    from
-                )
+
+            // Atualiza o contexto para seleção do método de pagamento
+            const revertContext: ConversationContextDTO = {
+                ...state.conversationContext,
+                currentStep: ConversationStep.PaymentMethodSelection,
+            };
+
+            await this.conversationService.updateConversation(conversationId, {
+                userId: state.userId,
+                conversationContext: revertContext,
+            });
+
+            sentMessages.push(...this.mapTextMessages(
+                [
+                    'Houve um erro na geração do PIX. Por favor, escolha novamente a forma de pagamento:\n\n1- PIX\n2- Cartão de Crédito'
+                ],
+                from
+            )
             );
         }
 
@@ -1771,7 +1840,7 @@ export class WhatsAppService {
                 `O valor final da conta é de *${formatToBRL(state.conversationContext.userAmount)}*.`,
                 `*Clique no link abaixo* para realizar o pagamento com Cartão de Crédito:`,
                 paymentLink,
-                `*Importante:* Não consegue clicar no link?\n\n*Salve* nosso contato na agenda.\nOu copie e cole em seu navegador.`
+                `*Não consegue clicar no link?*\n\n*Salve* nosso contato na agenda.\nOu copie e cole em seu navegador.`
             ],
             from
         ));
