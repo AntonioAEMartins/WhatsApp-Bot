@@ -271,11 +271,11 @@ export class IPagService {
         let transaction = await this.transactionService.getTransaction(transactionId);
 
         if (!transaction) {
-            throw new HttpException('Transaction not found', HttpStatus.NOT_FOUND);
+            throw new HttpException('Transação não encontrada', HttpStatus.NOT_FOUND);
         }
 
         if (transaction.data.status !== PaymentStatus.Pending) {
-            throw new HttpException('Transaction not pending', HttpStatus.BAD_REQUEST);
+            throw new HttpException('Transação não está pendente', HttpStatus.BAD_REQUEST);
         }
 
         return transaction.data;
