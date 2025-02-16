@@ -10,7 +10,7 @@ import { Queue } from 'bull';
 import { SimpleResponseDto } from 'src/request/request.dto';
 import { ConversationService } from 'src/conversation/conversation.service';
 import { PaymentProcessorDTO } from 'src/whatsapp/payment.processor';
-import { PaymentMethod, TransactionDTO } from 'src/transaction/dto/transaction.dto';
+import { ErrorDescriptionDTO, PaymentMethod, TransactionDTO } from 'src/transaction/dto/transaction.dto';
 import { CardService } from 'src/card/card.service';
 @Injectable()
 export class IPagService {
@@ -119,9 +119,11 @@ export class IPagService {
 
             return response;
         } catch (error) {
-            console.error('Error creating payment:', error);
             if (error instanceof HttpException) {
-                throw error;
+                const processedResponse = this.processTransactionResponse(error.getResponse());
+                if (processedResponse.type !== 'success') {
+                    throw new HttpException(this.getUserFriendlyPaymentError(processedResponse.type, processedResponse.erros[0]), HttpStatus.BAD_REQUEST);
+                }
             }
             throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
         }
@@ -167,7 +169,8 @@ export class IPagService {
 
         // Constrói o payload de pagamento conforme a documentação do iPag.
         const paymentData: CreatePaymentDto = {
-            amount: transaction.expectedAmount,
+            // amount: transaction.expectedAmount,
+            amount: 10.38,
             callback_url: 'https://webhook.astra1.com.br/ipag/callback',
             payment: {
                 type: PaymentType.card,
@@ -189,7 +192,9 @@ export class IPagService {
         };
 
         try {
+            console.log("[createCreditCardPayment] Making request");
             const response = await this.makeRequest('service/payment', 'POST', paymentData);
+            console.log("[createCreditCardPayment] Response", response);
 
             if (!this.isTransactionResponse(response)) {
                 throw new HttpException('Invalid transaction response', HttpStatus.BAD_REQUEST);
@@ -197,11 +202,14 @@ export class IPagService {
 
             const processedResponse = this.processTransactionResponse(response);
             if (processedResponse.type !== 'success') {
-                throw new HttpException(processedResponse.erros.join(' '), HttpStatus.BAD_REQUEST);
+                throw new HttpException(this.getUserFriendlyPaymentError(processedResponse.type, processedResponse.erros[0]), HttpStatus.BAD_REQUEST);
             }
+
+            console.log("[createCreditCardPayment] Processing response");
 
             let createdCard;
             if (!isTokenized) {
+                console.log("[createCreditCardPayment] Creating card");
                 createdCard = await this.cardService.createCard({
                     userId: transaction.userId,
                     holder: {
@@ -214,9 +222,13 @@ export class IPagService {
                     expiry_month: userPaymentInfo.cardInfo.expiry_month,
                     expiry_year: userPaymentInfo.cardInfo.expiry_year,
                 });
+                console.log("[createCreditCardPayment] Created card", createdCard);
             }
 
+            console.log("[createCreditCardPayment] Finalizing transaction");
+
             const finalCardId = userPaymentInfo.cardId || createdCard.data._id;
+            console.log("[createCreditCardPayment] Transaction ID", userPaymentInfo.transactionId);
             await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
                 ipagTransactionId: response.uuid,
                 cardId: finalCardId,
@@ -286,52 +298,80 @@ export class IPagService {
    */
 
     private processTransactionResponse(response: any): { type: string; erros: string[] } {
-
         // Verifica se a resposta possui a estrutura esperada
         if (!response || !response.attributes) {
             return { type: "acquirer", erros: ["Dados da transação inválidos."] };
         }
         const { gateway, acquirer, status } = response.attributes;
 
-        // 1. Validação do Gateway (sempre obrigatório)
-        if (!gateway || !gateway.code) {
-            return { type: "Gateway", erros: ["Código de gateway ausente."] };
-        }
-        if (!['P0', 'F0', 'F1'].includes(gateway.code)) {
-            return { type: "Gateway", erros: [gateway.message || "Erro no gateway."] };
+        // Validação do Gateway
+        if (!gateway || !gateway.code || gateway.code === "Gateway") {
+            return {
+                type: "Gateway",
+                erros: [`Código: Indefinido`],
+            };
         }
 
-        // 2. Verifica se o status da transação está presente
+        // Se o código for P5 e a mensagem indicar "quarentena", tenta extrair o código de retorno
+        if (gateway.code === "P5" && gateway.message && gateway.message.toLowerCase().includes("quarentena")) {
+            const match = gateway.message.match(/return code:\s*(\w+)/i);
+            if (match) {
+                const extractedCode = match[1]; // exemplo: "07"
+                // Se o código extraído não começar com "P", considere-o como erro da adquirente
+                if (!extractedCode.startsWith("P")) {
+                    return {
+                        type: "acquirer",
+                        erros: [`Código: ${extractedCode}`],
+                    };
+                }
+            }
+            // Caso não tenha extraído um código válido, mantém como erro do Gateway
+            return {
+                type: "Gateway",
+                erros: [`Código: ${gateway.code}`],
+            };
+        }
+
+        // Para outros códigos do Gateway que começam com "P" e não são de sucesso (P0, F0, F1)
+        if (gateway.code.startsWith("P") && !['P0', 'F0', 'F1'].includes(gateway.code)) {
+            return {
+                type: "Gateway",
+                erros: [`Código: ${gateway.code}`],
+            };
+        }
+
+        // Verifica se o status da transação está presente
         if (!status || typeof status.code === "undefined") {
             return { type: "acquirer", erros: ["Status da transação ausente."] };
         }
 
-        // 3. Tratamento dos diferentes códigos de status:
-        // - Código 2: A transação está aguardando pagamento
+        // Tratamento dos diferentes códigos de status
         if (status.code === 2) {
             return { type: "waiting", erros: [] };
         }
-
-        // - Código 1: Transação criada (ainda não iniciou o processo de pagamento)
         if (status.code === 1) {
             return { type: "created", erros: [] };
         }
-
-        // - Código 8: Pagamento capturado com sucesso
         if (status.code === 8) {
-            // Para o sucesso, é exigido que o adquirente possua um código válido
             if (!acquirer || !acquirer.code) {
                 return { type: "acquirer", erros: ["Código do adquirente ausente."] };
             }
             if (acquirer.code !== "00") {
-                return { type: "acquirer", erros: [acquirer.message || "Erro no adquirente."] };
+                return {
+                    type: "acquirer",
+                    erros: [`Código: ${acquirer.code}`],
+                };
             }
             return { type: "success", erros: [] };
         }
 
-        // Para qualquer outro código de status, retorna o erro informado (ou uma mensagem padrão)
+        // Caso o status não se encaixe nas categorias acima, tenta usar o código do adquirente (se existir)
+        if (acquirer && acquirer.code) {
+            return { type: "acquirer", erros: [`Código: ${acquirer.code}`] };
+        }
         return { type: "acquirer", erros: [status.message || "Transação não capturada."] };
     }
+
 
 
     /**
@@ -354,19 +394,17 @@ export class IPagService {
         ipAddress: string,
     ): Promise<{ type: string; errors: string[] }> {
         try {
-            // Valida IP, headers obrigatórios e assinatura
+            // Validate IP, required headers, and signature
             this.validateCallback(ipAddress, headers, rawBody);
 
-            // Processa os dados do callback utilizando a lógica já existente
+            // Process the callback using existing logic
             const result = this.processTransactionResponse(callbackData);
-
-            console.log("[processCallback] Result", result);
+            // console.log("[processCallback] Result", result);
 
             if (result.type === "success") {
-                console.log("[processCallback] Callback data is a transaction response");
-                if (this.isTransactionResponse(callbackData)) { // usa a type guard
+                // console.log("[processCallback] Callback data is a transaction response");
+                if (this.isTransactionResponse(callbackData)) {
                     const transaction = await this.transactionService.getTransactionByipagTransactionId(callbackData.uuid);
-
                     const conversation = await this.conversationService.getConversation(transaction.data.conversationId);
 
                     if (transaction.data.status !== PaymentStatus.Pending) {
@@ -374,6 +412,7 @@ export class IPagService {
                         return { type: "error", errors: ["Transaction not pending."] };
                     }
 
+                    // Update the transaction as accepted with the paid amount and confirmation time
                     await this.transactionService.updateTransaction(transaction.data._id.toString(), {
                         status: PaymentStatus.Accepted,
                         amountPaid: callbackData.attributes.amount,
@@ -389,22 +428,39 @@ export class IPagService {
                     this.paymentQueue.add(paymentProcessorDTO);
                     return { type: "success", errors: [] };
                 } else {
-                    // Se não for uma transação de sucesso, retorne um erro genérico
-                    console.error("[processCallback] Invalid transaction data in callback.");
+                    // console.error("[processCallback] Invalid transaction data in callback.");
                     return { type: "error", errors: ["Callback does not contain valid transaction data."] };
                 }
             } else {
-                console.error('[processCallback] Transaction error:', result.erros);
+                if (result.type === "Gateway" || result.type === "acquirer") {
+                    if (this.isTransactionResponse(callbackData)) {
+                        const transaction = await this.transactionService.getTransactionByipagTransactionId(callbackData.uuid);
+                        if (transaction.data.status === PaymentStatus.Pending) {
+                            // Build an error description as an object with multiple details.
+                            const errorDescription: ErrorDescriptionDTO = {
+                                errorCode: result.type,
+                                userFriendlyMessage: this.getUserFriendlyPaymentError(result.type, result.erros[0]),
+                                rawError: result.erros.join(' '),
+                            };
+
+                            // Update the transaction record with the error description and change status to Denied.
+                            await this.transactionService.updateTransaction(transaction.data._id.toString(), {
+                                errorDescription: errorDescription,
+                                status: PaymentStatus.Denied,
+                            });
+                            // Optionally, duplicate the transaction to allow a new attempt.
+                            await this.transactionService.duplicateTransaction(transaction.data._id.toString());
+                        }
+                    }
+                }
                 return { type: "error", errors: result.erros };
             }
         } catch (error) {
             console.error('Error handling callback:', error);
-            // Retorna um erro genérico para garantir o retorno de 200
+            // Return a generic error to ensure the HTTP response is 200
             return { type: "error", errors: [error.message || "Unexpected error occurred."] };
         }
     }
-
-
 
     isTransactionResponse(
         data: IPagTransactionResponse | IPagErrorResponse
@@ -516,5 +572,64 @@ export class IPagService {
             throw new HttpException('Invalid callback signature', HttpStatus.BAD_REQUEST);
         }
     }
+
+    /**
+ * Returns a user-friendly error message based on the Gateway and Acquirer error codes.
+ * Only errors that are likely caused by incorrect user input or insufficient funds are translated.
+ *
+ * @param gatewayCode - The error code returned in the "gateway" field.
+ * @param acquirerCode - (Optional) The error code returned in the "acquirer" field.
+ * @returns A user-friendly message string.
+ */
+    getUserFriendlyPaymentError(errorType: string, rawError: string): string {
+        console.log("[getUserFriendlyPaymentError] Error type:", errorType);
+        console.log("[getUserFriendlyPaymentError] Raw error:", rawError);
+
+        const gatewayErrorMessages: Record<string, string> = {
+            'P5': 'Contate a central do seu cartão para resolver o problema.',
+            'P6': 'Cartão expirado ou dados de vencimento incorretos. Verifique e tente novamente.',
+            'P7': 'Método de pagamento temporariamente desativado. Tente novamente mais tarde.',
+            'P2': 'Operação abortada. Tente novamente mais tarde.',
+            'P3': 'Operação recusada por limitações do processador. Verifique os dados e tente novamente.',
+            'P4': 'Operação recusada pelo processador. Verifique os dados informados.',
+            'P9': 'Pagamento iniciado, mas não concluído. Tente novamente.',
+        };
+
+        const acquirerErrorMessages: Record<string, string> = {
+            '07': 'Transação não permitida. Use um cartão de crédito.',
+            '14': 'Número do cartão inválido. Verifique e tente novamente.',
+            '15': 'Dados do titular inválidos. Verifique e tente novamente.',
+            '19': 'Erro na transação. Por favor, tente novamente.',
+            '38': 'Tentativas excedidas. Tente outro cartão.',
+            '51': 'Saldo insuficiente. Verifique seu limite e tente novamente.',
+            '54': 'Cartão expirado. Verifique os dados e tente novamente.',
+            '55': 'Senha inválida. Verifique e tente novamente.',
+            '61': 'Valor máximo excedido. Contate a central do seu cartão.',
+            '75': 'Tentativas de senha excedidas. Contate a central do seu cartão.',
+            '78': 'Cartão novo ou bloqueado. Contate a central do seu cartão.',
+        };
+
+        // Usa regex para extrair o código (exemplo: "Código: 07" → "07")
+        const codeMatch = rawError.match(/Código:\s*(\w+)/);
+        const errorCode = codeMatch ? codeMatch[1] : rawError.trim();
+
+        if (errorType === 'Gateway') {
+            if (gatewayErrorMessages[errorCode]) {
+                return gatewayErrorMessages[errorCode];
+            }
+            return 'Houve um problema com o pagamento. Por favor, tente novamente.';
+        }
+
+        if (errorType === 'acquirer') {
+            if (acquirerErrorMessages[errorCode]) {
+                return acquirerErrorMessages[errorCode];
+            }
+            return 'Houve um problema com o pagamento. Por favor, tente novamente.';
+        }
+
+        return 'Houve um problema com o seu pagamento. Por favor, tente novamente.';
+    }
+
+
 
 }
