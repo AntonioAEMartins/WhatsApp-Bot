@@ -80,6 +80,7 @@ export class TransactionService {
                     orderId: transaction.orderId,
                     conversationId: transaction.conversationId,
                     status: PaymentStatus.Pending,
+                    _id: { $ne: transaction._id }
                 });
 
             if (pendingTransaction) {
@@ -355,7 +356,7 @@ export class TransactionService {
             data: updatedTransaction.value as TransactionDTO,
         };
     }
-    
+
     async duplicateTransaction(
         transactionId: string
     ): Promise<SimpleResponseDto<{ transactionId: string }>> {
@@ -366,7 +367,7 @@ export class TransactionService {
                 .collection("transactions")
                 .findOne({ _id: transactionObjectId });
 
-                
+
             if (!originalTransaction) {
                 throw new HttpException("Transaction not found", HttpStatus.NOT_FOUND);
             }
