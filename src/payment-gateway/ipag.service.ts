@@ -191,9 +191,7 @@ export class IPagService {
         };
 
         try {
-            console.log("[createCreditCardPayment] Making request");
             const response = await this.makeRequest('service/payment', 'POST', paymentData);
-            console.log("[createCreditCardPayment] Response", response);
 
             if (!this.isTransactionResponse(response)) {
                 throw new HttpException('Invalid transaction response', HttpStatus.BAD_REQUEST);
@@ -204,11 +202,8 @@ export class IPagService {
                 throw new HttpException(this.getUserFriendlyPaymentError(processedResponse.type, processedResponse.erros[0]), HttpStatus.BAD_REQUEST);
             }
 
-            console.log("[createCreditCardPayment] Processing response");
-
             let createdCard;
             if (!isTokenized) {
-                console.log("[createCreditCardPayment] Creating card");
                 createdCard = await this.cardService.createCard({
                     userId: transaction.userId,
                     holder: {
@@ -221,13 +216,10 @@ export class IPagService {
                     expiry_month: userPaymentInfo.cardInfo.expiry_month,
                     expiry_year: userPaymentInfo.cardInfo.expiry_year,
                 });
-                console.log("[createCreditCardPayment] Created card", createdCard);
             }
 
-            console.log("[createCreditCardPayment] Finalizing transaction");
 
             const finalCardId = userPaymentInfo.cardId || createdCard.data._id;
-            console.log("[createCreditCardPayment] Transaction ID", userPaymentInfo.transactionId);
             await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
                 ipagTransactionId: response.uuid,
                 cardId: finalCardId,
@@ -398,10 +390,8 @@ export class IPagService {
 
             // Process the callback using existing logic
             const result = this.processTransactionResponse(callbackData);
-            // console.log("[processCallback] Result", result);
 
             if (result.type === "success") {
-                // console.log("[processCallback] Callback data is a transaction response");
                 if (this.isTransactionResponse(callbackData)) {
                     const transaction = await this.transactionService.getTransactionByipagTransactionId(callbackData.uuid);
                     const conversation = await this.conversationService.getConversation(transaction.data.conversationId);
@@ -581,9 +571,6 @@ export class IPagService {
  * @returns A user-friendly message string.
  */
     getUserFriendlyPaymentError(errorType: string, rawError: string): string {
-        console.log("[getUserFriendlyPaymentError] Error type:", errorType);
-        console.log("[getUserFriendlyPaymentError] Raw error:", rawError);
-
         const gatewayErrorMessages: Record<string, string> = {
             'P5': 'Contate a central do seu cartão para resolver o problema.',
             'P6': 'Cartão expirado ou dados de vencimento incorretos. Verifique e tente novamente.',
