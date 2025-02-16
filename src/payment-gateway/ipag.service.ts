@@ -169,8 +169,7 @@ export class IPagService {
 
         // Constrói o payload de pagamento conforme a documentação do iPag.
         const paymentData: CreatePaymentDto = {
-            // amount: transaction.expectedAmount,
-            amount: 10.38,
+            amount: transaction.expectedAmount,
             callback_url: 'https://webhook.astra1.com.br/ipag/callback',
             payment: {
                 type: PaymentType.card,
