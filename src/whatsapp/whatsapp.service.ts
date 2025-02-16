@@ -1586,7 +1586,7 @@ export class WhatsAppService {
 
             if (savedCards && savedCards.length > 0) {
                 // Constrói a mensagem com instruções de deleção
-                let optionsMessage = '✨ Com qual cartão deseja prosseguir?\n\n';
+                let optionsMessage = `✨ Com qual cartão deseja pagar o valor de *${formatToBRL(state.conversationContext.userAmount)}*?\n\n`;
                 savedCards.forEach((card, index) => {
                     optionsMessage += `${index + 1}- Final *${card.last4}* | Válido até ${card.expiry_month}/${card.expiry_year}\n`;
                 });
@@ -1791,6 +1791,10 @@ export class WhatsAppService {
         this.logger.log(
             `[handleSelectSavedCard] Transaction created using saved card: ${transactionResponse.transactionResponse._id}`,
         );
+
+        // const totalPaymentMessage = `O valor final da conta é de *${formatToBRL(state.conversationContext.userAmount)}*.`;
+        // const paymentMessage = "Iremos o pamento com o cartão *${selectedCard.last4}*.";
+        // sentMessages.push(...this.mapTextMessages([totalPaymentMessage, paymentMessage], from));
 
         // Monta o DTO apenas com transactionId e cardId
         const userPaymentInfo: UserPaymentCreditInfoDto = {
@@ -2752,27 +2756,23 @@ export class WhatsAppService {
             throw new HttpException('TransactionId é obrigatório', HttpStatus.BAD_REQUEST);
         }
 
-        // Converte o buffer da imagem para uma string Base64
         const base64Image = file.buffer.toString('base64');
 
-        // Busca a transação para obter as informações do usuário
         const transactionResponse = await this.transactionService.getTransaction(transactionId);
         const transaction = transactionResponse.data;
         if (!transaction || !transaction.userId) {
             throw new HttpException('Transação não encontrada ou sem informação de usuário', HttpStatus.NOT_FOUND);
         }
 
-        // Monta a mensagem com o receipt (em Base64)
         const receiptMessage: ResponseStructureExtended = {
             type: 'image',
             content: base64Image,
             caption: 'Seu comprovante de pagamento',
-            to: transaction.userId, // Presume que o userId seja o identificador do WhatsApp
+            to: transaction.userId,
             reply: false,
             isError: false,
         };
-
-        // Envia a mensagem diretamente para o GO
+        
         await this.sendMessagesDirectly([receiptMessage]);
 
         return 'Comprovante enviado com sucesso para o usuário';
