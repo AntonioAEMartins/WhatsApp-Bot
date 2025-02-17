@@ -2284,7 +2284,7 @@ export class WhatsAppService {
             statusTitle: transaction.status === PaymentStatus.Accepted ? 'Pagamento concluído' : 'Pagamento cancelado',
             amount: formatToBRL(transaction.amountPaid),
             tableId: transaction.tableId,
-            dateTime: new Date(transaction.createdAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/(\d{2}\/\d{2}\/\d{4}), (\d{2}:\d{2})/, '$2, $1'),
+            dateTime: new Date(transaction.confirmedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/(\d{2}\/\d{2}\/\d{4}), (\d{2}:\d{2})/, '$2, $1'),
             statusLabel: transaction.status === PaymentStatus.Accepted ? 'Confirmado' : 'Cancelado',
             cardLast4: cardLast4,
             whatsAppLink: "https://wa.me/551132803247",
