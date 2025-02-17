@@ -1,6 +1,4 @@
-import { Injectable, OnModuleInit, Logger, Inject, HttpException, HttpStatus } from '@nestjs/common';
-import WAWebJS, { Client, CreateGroupResult, LocalAuth, Message, MessageMedia } from 'whatsapp-web.js';
-import * as qrcode from 'qrcode-terminal';
+import { Injectable, Logger, Inject, HttpException, HttpStatus } from '@nestjs/common';
 import { TableService } from 'src/table/table.service';
 import {
     BaseConversationDto,
@@ -8,7 +6,6 @@ import {
     ConversationDto,
     CreateConversationDto,
     FeedbackDTO,
-    MessageDTO,
     ParticipantDTO,
     SplitInfoDTO,
 } from '../conversation/dto/conversation.dto';
@@ -20,37 +17,21 @@ import { ConversationStep, MessageType, PaymentStatus } from 'src/conversation/d
 import { OrderService } from 'src/order/order.service';
 import { CreateOrderDTO } from 'src/order/dto/order.dto';
 import { TransactionService } from 'src/transaction/transaction.service';
-import { CreateTransactionDTO, PaymentMethod, PaymentProofDTO, TransactionDTO } from 'src/transaction/dto/transaction.dto';
+import { CreateTransactionDTO, PaymentMethod, TransactionDTO } from 'src/transaction/dto/transaction.dto';
 import { GroupMessageKeys, GroupMessages } from './utils/group.messages.utils';
 import { WhatsAppUtils } from './whatsapp.utils';
 import { PaymentProcessorDTO } from './payment.processor';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
-import { CreateWhatsAppGroupDTO, WhatsAppGroupDTO, WhatsAppParticipantsDTO } from './dto/whatsapp.dto';
-import { Db, MongoClient, ObjectId } from 'mongodb';
+import { Db, MongoClient } from 'mongodb';
 import { ClientProvider } from 'src/db/db.module';
-import { SimpleResponseDto } from 'src/request/request.dto';
-import { isError } from 'util';
 import { UserPaymentCreditInfoDto, UserPaymentPixInfoDto } from 'src/payment-gateway/dto/ipag-pagamentos.dto';
 import { IPagService } from 'src/payment-gateway/ipag.service';
 import { Cron } from '@nestjs/schedule';
 import { CardService } from 'src/card/card.service';
 import { CardDto } from 'src/card/dto/card.dto';
-
-// Resposta para um Request do GO
-//[{
-// "type": image or text,
-// "content": "string", (text or byte array)
-// "caption": "string",
-// "to": "string",
-// "reply": boolean, (always the same as array and to the same as from)
-// },{
-// "type": image or text,
-// "content": "string", (text or byte array)
-// "caption": "string",
-// "to": "string",
-// "reply": boolean, (always the same as array and to the same as from)
-// }] 
+import { GenReceiptService, ReceiptTemplateData } from 'src/gen-receipt/gen.receipt.service';
+import { MessageMedia } from 'whatsapp-web.js';
 
 interface SendMessageParams {
     from: string;
@@ -69,7 +50,7 @@ export interface RequestStructure {
 }
 
 export interface ResponseStructure {
-    type: "image" | "text";
+    type: "image" | "text" | "document";
     content: string;
     caption: string;
     to: string;
@@ -110,6 +91,7 @@ export class WhatsAppService {
         private readonly utilsService: WhatsAppUtils,
         private readonly ipagService: IPagService,
         private readonly cardService: CardService,
+        private readonly genReceiptService: GenReceiptService,
         @InjectQueue('payment') private readonly paymentQueue: Queue,
         @Inject('DATABASE_CONNECTION') private db: Db, clientProvider: ClientProvider
     ) {
@@ -1958,16 +1940,26 @@ export class WhatsAppService {
                 )
             );
         } else {
-            sentMessages.push(
-                ...this.mapTextMessages(
-                    [
-                        '*👋  Coti Pagamentos* - Pagamento Confirmado ✅\n\nEsperamos que sua experiência tenha sido excelente.',
-                        'Como você se sentiria se não pudesse mais usar o nosso serviço?\n\nEscolha uma das opções abaixo',
-                        '1- Muito decepcionado\n2- Um pouco decepcionado\n3- Não faria diferença',
-                    ],
-                    from
-                )
+
+            const confirmationMessage = this.mapTextMessages(
+                ['*👋  Coti Pagamentos* - Pagamento Confirmado ✅\n\nEsperamos que sua experiência tenha sido excelente.'],
+                from
             );
+
+            const receiptMessagesPromise = this.generateReceiptPdf(transaction.data);
+
+            const feedbackMessage = this.mapTextMessages(
+                [
+                    'Como você se sentiria se não pudesse mais usar o nosso serviço?\n\nEscolha uma das opções abaixo',
+                    '1- Muito decepcionado\n2- Um pouco decepcionado\n3- Não faria diferença',
+                ],
+                from
+            );
+
+            const receiptMessages = await receiptMessagesPromise;
+
+            sentMessages.push(...confirmationMessage, ...receiptMessages, ...feedbackMessage);
+
 
             // Atualiza o estado da conversa para a etapa de Feedback
             await this.conversationService.updateConversation(state._id.toString(), {
@@ -2264,7 +2256,7 @@ export class WhatsAppService {
 
             if (extraTip > 0) {
                 tipMessage = extraTip > 15
-                    ? `MAIS R$ ${extraTip.toFixed(2)} de Gorjeta 🎉`
+                    ? `MAIS ${formatToBRL(extraTip)} de Gorjeta 🎉`
                     : `MAIS ${Math.ceil((extraTip / totalAmount) * 100).toFixed(2)}% de Gorjeta 🎉`;
             }
 
@@ -2279,6 +2271,42 @@ export class WhatsAppService {
         }
     }
 
+    private async generateReceiptPdf(transaction: TransactionDTO): Promise<ResponseStructureExtended[]> {
+        let cardLast4 = '';
+        if (transaction.paymentMethod !== PaymentMethod.PIX) {
+            const cardLast4Response = await this.cardService.getCardLast4(transaction.cardId);
+            cardLast4 = cardLast4Response.data;
+        }
+        this.logger.log(`[generateReceiptPdf] Gerando comprovante de pagamento para a transação: ${transaction._id}`);
+
+        const receiptData: ReceiptTemplateData = {
+            isPIX: transaction.paymentMethod === PaymentMethod.PIX,
+            statusTitle: transaction.status === PaymentStatus.Accepted ? 'Pagamento concluído' : 'Pagamento cancelado',
+            amount: formatToBRL(transaction.amountPaid),
+            tableId: transaction.tableId,
+            dateTime: new Date(transaction.createdAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/(\d{2}\/\d{2}\/\d{4}), (\d{2}:\d{2})/, '$2, $1'),
+            statusLabel: transaction.status === PaymentStatus.Accepted ? 'Confirmado' : 'Cancelado',
+            cardLast4: cardLast4,
+            whatsAppLink: "https://wa.me/551132803247",
+            privacyLink: "https://astra1.com.br/privacy-policy/",
+            termsLink: "https://astra1.com.br/terms-of-service/",
+        }
+
+        const pdfBuffer = await this.genReceiptService.generatePdf(receiptData);
+
+        this.logger.log(`[generateReceiptPdf] Comprovante de pagamento gerado com sucesso`);
+
+        const message: ResponseStructureExtended = {
+            type: "document",
+            content: pdfBuffer.toString('base64'),
+            caption: "Comprovante de pagamento",
+            to: transaction.userId,
+            reply: false,
+            isError: false,
+        }
+
+        return [message];
+    }
 
     /**
      * Sends payment confirmation details to the attendants or restaurant group chat.
@@ -2772,7 +2800,7 @@ export class WhatsAppService {
             reply: false,
             isError: false,
         };
-        
+
         await this.sendMessagesDirectly([receiptMessage]);
 
         return 'Comprovante enviado com sucesso para o usuário';

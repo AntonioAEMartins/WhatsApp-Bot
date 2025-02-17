@@ -12,7 +12,7 @@ import { OrderModule } from './order/order.module';
 import { IPagModule } from './payment-gateway/ipag.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { CardModule } from './card/card.module';
-
+import { PdfModule } from '@gboutte/nestjs-pdf';
 @Module({
   imports: [
     WhatsAppModule,
@@ -25,7 +25,7 @@ import { CardModule } from './card/card.module';
     OrderModule,
     IPagModule,
     ScheduleModule.forRoot(),
-    CardModule
+    CardModule,
   ],
   controllers: [AppController],
   providers: [AppService],

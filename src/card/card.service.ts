@@ -35,6 +35,15 @@ export class CardService {
         };
     }
 
+    async getCardLast4(cardId: string): Promise<SimpleResponseDto<string>> {
+        const card = await this.db.collection("cards").findOne({ _id: new ObjectId(cardId) }, { projection: { last4: 1 } });
+
+        return {
+            msg: "Card found",
+            data: card.last4,
+        };
+    }
+
     async getCardById(cardId: string): Promise<SimpleResponseDto<{ token: string, holderName: string, holderDocument: string }>> {
         const cardToken = await this.db.collection("cards").findOne({ _id: new ObjectId(cardId) }, { projection: { token: 1, holder: 1 } });
 

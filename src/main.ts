@@ -26,7 +26,8 @@ async function bootstrap() {
 
   // Enable CORS for https://pay.astra1.com.br/
   app.use(cors({
-    origin: 'https://pay.astra1.com.br',
+    // origin: 'https://pay.astra1.com.br',
+    origin: '*',
   }));
 
   // Swagger setup

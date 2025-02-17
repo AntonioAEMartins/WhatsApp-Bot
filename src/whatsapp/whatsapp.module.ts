@@ -13,7 +13,7 @@ import { BullModule } from '@nestjs/bull';
 import { DatabaseModule } from 'src/db/db.module';
 import { IPagModule } from 'src/payment-gateway/ipag.module';
 import { CardModule } from 'src/card/card.module';
-
+import { GenReceiptModule } from 'src/gen-receipt/gen.receipt.module';
 @Module({
   imports: [
     TableModule, LangchainModule, UserModule, ConversationModule,
@@ -27,6 +27,7 @@ import { CardModule } from 'src/card/card.module';
     BullModule.registerQueue({
       name: 'payment',
     }),
+    GenReceiptModule
   ],
   providers: [WhatsAppService, WhatsAppUtils, PaymentProcessor],
   controllers: [WhatsAppController],
