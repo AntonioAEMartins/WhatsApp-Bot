@@ -319,21 +319,21 @@ export class WhatsAppService {
             user = await this.userService.createUser(newUser);
         }
 
-        const activeConversationResponse = await this.conversationService
-            .getActiveConversation(userId)
-            .catch(() => null);
+        // const activeConversationResponse = await this.conversationService
+        //     .getActiveConversation(userId)
+        //     .catch(() => null);
 
-        if (!activeConversationResponse?.data) {
-            const newConversation: CreateConversationDto = {
-                userId,
-                conversationContext: {
-                    currentStep: ConversationStep.Initial,
-                    messages: [],
-                    lastMessage: new Date(),
-                },
-            };
-            await this.conversationService.createConversation(newConversation);
-        }
+        // if (!activeConversationResponse?.data) {
+        //     const newConversation: CreateConversationDto = {
+        //         userId,
+        //         conversationContext: {
+        //             currentStep: ConversationStep.Initial,
+        //             messages: [],
+        //             lastMessage: new Date(),
+        //         },
+        //     };
+        //     await this.conversationService.createConversation(newConversation);
+        // }
     }
 
     private async handleOrderProcessing(
@@ -1981,7 +1981,7 @@ export class WhatsAppService {
             if (isFullPaymentAmountPaid) {
                 this.logger.log(`[processPayment] Full payment amount paid`);
                 const tableId = parseInt(state.tableId);
-                await this.tableService.finishPayment(tableId);
+                await this.tableService.finishPayment(tableId, transaction.data.paymentMethod);
                 const notifyWaiterMessages = await this.notifyWaiterTablePaymentComplete(state);
                 sentMessages.push(...notifyWaiterMessages);
             } else {
