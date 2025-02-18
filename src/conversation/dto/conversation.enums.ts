@@ -3,6 +3,9 @@ export enum PaymentStatus {
   Accepted = 'accepted',
   Denied = 'denied',
   Expired = 'expired',
+  PreAuthorized = 'pre_authorized',
+  Waiting = 'waiting',
+  Created = 'created',
 }
 
 export enum PaymentDescription {
