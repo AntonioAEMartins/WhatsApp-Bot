@@ -1,5 +1,5 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { CreatePaymentDto, PaymentMethodCard, PaymentMethodPix, PaymentType, UserPaymentCreditInfoDto, UserPaymentPixInfoDto } from './dto/ipag-pagamentos.dto';
+import { CreatePaymentDto, LibraryCardType, PaymentMethodCard, PaymentMethodPix, PaymentType, UserPaymentCreditInfoDto, UserPaymentPixInfoDto } from './dto/ipag-pagamentos.dto';
 import { IPagErrorResponse, IPagTransactionResponse } from './types/ipag-response.types';
 import { CreateEstablishmentDto, CreateSellerDto } from './dto/ipag-marketplace.dto';
 import { TransactionService } from 'src/transaction/transaction.service';
@@ -12,6 +12,10 @@ import { ConversationService } from 'src/conversation/conversation.service';
 import { PaymentProcessorDTO } from 'src/whatsapp/payment.processor';
 import { ErrorDescriptionDTO, PaymentMethod, TransactionDTO } from 'src/transaction/dto/transaction.dto';
 import { CardService } from 'src/card/card.service';
+import * as payform from 'payform';
+
+
+
 @Injectable()
 export class IPagService {
     private readonly baseURL: string;
@@ -546,14 +550,36 @@ export class IPagService {
             return null;
         }
 
-        // Remover espaços e traços do número do cartão
         cardNumber = cardNumber.replace(/[\s-]/g, '');
 
-        // Expressões regulares para identificar as bandeiras dos cartões
-        const cardPatterns = {
+        const libResult = payform.parseCardType(cardNumber) as LibraryCardType | null;
+        console.log("[getCardMethod] Library result:", libResult);
+
+        const libToPaymentMap: Record<LibraryCardType, PaymentMethodCard | null> = {
+            [LibraryCardType.visa]: PaymentMethodCard.visa,
+            [LibraryCardType.mastercard]: PaymentMethodCard.mastercard,
+            [LibraryCardType.elo]: PaymentMethodCard.elo,
+            [LibraryCardType.amex]: PaymentMethodCard.amex,
+            [LibraryCardType.diners]: PaymentMethodCard.diners,
+            [LibraryCardType.discover]: PaymentMethodCard.discover,
+            [LibraryCardType.hipercard]: PaymentMethodCard.hipercard,
+            [LibraryCardType.hiper]: PaymentMethodCard.hiper,
+            [LibraryCardType.jcb]: PaymentMethodCard.jcb,
+            [LibraryCardType.aura]: PaymentMethodCard.aura,
+            [LibraryCardType.visaelectron]: PaymentMethodCard.visaelectron,
+            [LibraryCardType.maestro]: PaymentMethodCard.maestro,
+            [LibraryCardType.dankort]: null,
+            [LibraryCardType.forbrugsforeningen]: null,
+            [LibraryCardType.laser]: null,
+        };
+
+        const mappedLibResult = libResult ? libToPaymentMap[libResult] : null;
+
+        let regexResult: PaymentMethodCard | null = null;
+        const cardPatterns: { [key: string]: RegExp } = {
             elo: /^(?:4011\d{12}|431274\d{10}|438935\d{10}|451416\d{10}|457393\d{10}|45763[1-2]\d{10}|504175\d{10}|506699\d{10}|5067(?:[0-6]\d|7[0-8])\d{9}|509\d{3}\d{10}|627780\d{10}|636297\d{10}|636368\d{10}|636369\d{10}|6500(?:3[1-3]|3[5-9]|4\d|5[0-1])\d{10}|650(?:4(?:0[5-9]|\d{2})|5(?:[0-2]\d|3[0-8]|4[1-9]|[5-8]\d|9[0-8]))\d{10}|6507(?:0\d|1[0-8]|2[0-7])\d{10}|6509(?:0[1-9]|1\d|20)\d{10}|6516(?:5[2-9]|[6-7]\d)\d{10}|6550(?:[0-1]\d|2[1-9]|[3-4]\d|5[0-8])\d{10})$/,
             visa: /^4[0-9]{12}(?:[0-9]{3})?$/,
-            mastercard: /^(5[1-5][0-9]{14}|2(?:2[2-9][0-9]{2}|[3-6][0-9]{3}|7[01][0-9]{2}|720)[0-9]{12}|5899[0-9]{12})$/,
+            mastercard: /^(?:5[1-5][0-9]{14}|2(?:2[2-9][0-9]{2}|[3-6][0-9]{3}|7[01][0-9]{2}|720)[0-9]{12})$/,
             amex: /^3[47][0-9]{13}$/,
             discover: /^6(?:011|5[0-9]{2})[0-9]{12}$/,
             diners: /^3(?:0[0-5]|[68][0-9])[0-9]{11}$/,
@@ -563,15 +589,17 @@ export class IPagService {
             maestro: /^(5018|5020|5038|5893|6304|6759|676[1-3])\d{8,15}$/,
         };
 
-        // Iterar sobre os padrões para encontrar correspondência
         for (const [brand, pattern] of Object.entries(cardPatterns)) {
             if (pattern.test(cardNumber)) {
-                return brand as PaymentMethodCard;
+                regexResult = brand as PaymentMethodCard;
+                break;
             }
         }
 
-        return null; // Retorna null se nenhuma correspondência for encontrada
+        return mappedLibResult ? mappedLibResult : regexResult;
     }
+
+
 
     /**
      * Valida os dados do callback: IP de origem, headers obrigatórios e assinatura.
