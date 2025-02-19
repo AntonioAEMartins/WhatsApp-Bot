@@ -2261,7 +2261,7 @@ export class WhatsAppService {
             if (extraTip > 0) {
                 tipMessage = extraTip > 15
                     ? `MAIS ${formatToBRL(extraTip)} de Gorjeta 🎉`
-                    : `MAIS ${Math.ceil((extraTip / totalAmount) * 100).toFixed(2)}% de Gorjeta 🎉`;
+                    : `MAIS ${((extraTip / totalAmount) * 100).toFixed(2)}% de Gorjeta 🎉`;
             }
 
             const message = tipMessage
