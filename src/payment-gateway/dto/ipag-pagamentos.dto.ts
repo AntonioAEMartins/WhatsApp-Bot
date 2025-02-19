@@ -35,6 +35,24 @@ export enum PaymentMethodCard {
     maestro = 'maestro',
 }
 
+export enum LibraryCardType {
+    visa = 'visa',
+    mastercard = 'mastercard',
+    elo = 'elo',
+    amex = 'amex',
+    diners = 'diners',
+    discover = 'discover',
+    hipercard = 'hipercard',
+    hiper = 'hiper',
+    jcb = 'jcb',
+    aura = 'aura',
+    visaelectron = 'visaelectron',
+    maestro = 'maestro',
+    dankort = 'dankort',
+    forbrugsforeningen = 'forbrugsforeningen',
+    laser = 'laser',
+}
+
 export enum PaymentMethodPix {
     pix = 'pix',
 }
