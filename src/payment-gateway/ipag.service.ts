@@ -88,6 +88,7 @@ export class IPagService {
 
         const paymentData: CreatePaymentDto = {
             amount: transaction.expectedAmount,
+            callback_url: 'https://webhook.astra1.com.br/ipag/callback',
             payment: {
                 type: PaymentType.pix,
                 method: PaymentMethodPix.pix,
@@ -117,8 +118,6 @@ export class IPagService {
                 paymentData,
             )) as IPagTransactionResponse;
 
-            console.log("[createPIXPayment] response", response);
-
             await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
                 ipagTransactionId: response.uuid,
                 pixInfo: {
@@ -126,8 +125,6 @@ export class IPagService {
                     document: userPaymentInfo.customerInfo.cpf_cnpj,
                 },
             });
-
-            console.log("[createPIXPayment] transaction updated");
 
             return response;
         } catch (error) {
@@ -208,24 +205,34 @@ export class IPagService {
         console.log("[createCreditCardPayment] paymentData", paymentData);
 
         try {
-            const response = await this.makeRequest('service/payment', 'POST', paymentData);
+            console.log("[createCreditCardPayment] paymentData", paymentData);
 
+            // Cria a transação no iPag
+            const response = await this.makeRequest('service/payment', 'POST', paymentData);
             console.log("[createCreditCardPayment] response", response);
 
+            // Verifica se a resposta do iPag é válida
             if (!this.isTransactionResponse(response)) {
                 throw new HttpException('Invalid transaction response', HttpStatus.BAD_REQUEST);
             }
 
+            // Processa a resposta para checar status (capturado, pré-autorizado etc.)
             const processedResponse = this.processTransactionResponse(response);
 
-            if (processedResponse.type !== 'success' && processedResponse.type !== 'pre_authorized' && processedResponse.type !== 'waiting' && processedResponse.type !== 'created') {
+            // Se o status não for 'success', 'pre_authorized', 'waiting' ou 'created', trata como erro
+            if (
+                processedResponse.type !== 'success' &&
+                processedResponse.type !== 'pre_authorized' &&
+                processedResponse.type !== 'waiting' &&
+                processedResponse.type !== 'created'
+            ) {
                 throw new HttpException(
                     this.getUserFriendlyPaymentError(processedResponse.type, processedResponse.erros[0]),
-                    HttpStatus.BAD_REQUEST
+                    HttpStatus.BAD_REQUEST,
                 );
             }
 
-
+            // Cria o cartão, caso não seja tokenizado e o cliente deseje salvá-lo
             let createdCard;
             if (!isTokenized) {
                 createdCard = await this.cardService.createCard({
@@ -242,12 +249,48 @@ export class IPagService {
                 });
             }
 
-
-            const finalCardId = userPaymentInfo.cardId || createdCard.data._id;
+            // Atualiza a transação com o ID interno da iPag e o ID do cartão
+            const finalCardId = userPaymentInfo.cardId || createdCard?.data?._id;
             await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
                 ipagTransactionId: response.uuid,
                 cardId: finalCardId,
             });
+
+            // Função auxiliar para finalizar pagamento com status "Accepted"
+            const finalizePayment = async () => {
+                const transactionRecord = await this.transactionService.getTransaction(userPaymentInfo.transactionId);
+                const conversationRecord = await this.conversationService.getConversation(transactionRecord.data.conversationId);
+
+                // Marca a transação como aceita
+                await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
+                    amountPaid: response.attributes.amount,
+                    status: PaymentStatus.Accepted,
+                    confirmedAt: new Date(),
+                });
+
+                // Dispara a fila, caso necessário
+                const paymentProcessorDTO: PaymentProcessorDTO = {
+                    transactionId: transactionRecord.data._id.toString(),
+                    from: conversationRecord.data.userId,
+                    state: conversationRecord.data,
+                };
+                this.paymentQueue.add(paymentProcessorDTO);
+            };
+
+            // Se o status vier como "success" (capturado), já finaliza
+            if (processedResponse.type === 'success') {
+                await finalizePayment();
+            }
+            // Se vier como "pre_authorized", faz a captura e, se concluído, finaliza
+            else if (processedResponse.type === 'pre_authorized') {
+                const captureResp = await this.capturePayment(response.uuid);
+                const captureProcessed = this.processTransactionResponse(captureResp);
+
+                if (captureProcessed.type === 'success') {
+                    await finalizePayment();
+                }
+            }
+            // Se for "waiting" ou "created", não fazemos nada extra agora (aguardando callback ou fluxo futuro)
 
             return {
                 msg: 'Payment created',
@@ -260,6 +303,7 @@ export class IPagService {
             }
             throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
         }
+
     }
 
 
@@ -704,6 +748,9 @@ export class IPagService {
     private async capturePayment(ipagTransactionId: string): Promise<IPagTransactionResponse | IPagErrorResponse> {
         const endpoint = `service/capture?id=${ipagTransactionId}`;
         const response = await this.makeRequest(endpoint, 'POST');
+
+        console.log("[capturePayment] response", response);
+
         return response;
     }
 
