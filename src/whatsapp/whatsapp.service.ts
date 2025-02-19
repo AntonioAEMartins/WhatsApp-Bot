@@ -550,7 +550,7 @@ export class WhatsAppService {
             const createOrderData: CreateOrderDTO = {
                 tableId,
                 items: orderDetails.orders,
-                totalAmount: orderDetails.total,
+                totalAmount: this.formatToTwoDecimalPlaces(orderDetails.total),
                 appliedDiscount: orderDetails.discount,
                 amountPaidSoFar: 0,
             };
