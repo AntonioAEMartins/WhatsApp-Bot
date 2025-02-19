@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { IsArray, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, ValidateNested } from "class-validator";
+import { IsArray, IsDate, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, ValidateNested } from "class-validator";
 import { ObjectId } from "mongodb";
 import { PaymentDescription, PaymentStatus } from "src/conversation/dto/conversation.enums";
 
@@ -130,6 +130,10 @@ export class BaseTransactionDTO {
     @ValidateNested()
     @Type(() => ErrorDescriptionDTO)
     errorDescription?: ErrorDescriptionDTO;
+
+    @IsOptional()
+    @IsDate()
+    reminderSentAt?: Date;
 }
 
 export class CreateTransactionDTO extends BaseTransactionDTO {
