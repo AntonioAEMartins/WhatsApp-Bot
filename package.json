@@ -38,6 +38,7 @@
     "dotenv": "^16.4.5",
     "langchain": "^0.3.5",
     "mongodb": "^6.10.0",
+    "payform": "^1.4.0",
     "pdf-poppler": "^0.2.1",
     "puppeteer": "^21.1.0",
     "puppeteer-core": "^23.6.1",
