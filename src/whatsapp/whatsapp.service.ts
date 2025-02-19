@@ -168,7 +168,7 @@ export class WhatsAppService {
             for (const transaction of staleTransactions) {
                 if (transaction.reminderSentAt) {
                     continue;
-                } 
+                }
 
                 const conversationResp = await this.conversationService.getConversation(transaction.conversationId);
                 const conversation = conversationResp.data;
@@ -280,7 +280,12 @@ export class WhatsAppService {
                 }
                 break;
             case ConversationStep.ConfirmOrder:
-                requestResponse = await this.handleConfirmOrder(from, userMessage, state);
+                if (userMessage.includes('pagar a comanda')) {
+                    state.conversationContext.currentStep = ConversationStep.Initial;
+                    requestResponse = await this.handleOrderProcessing(from, userMessage, state, message);
+                } else {
+                    requestResponse = await this.handleConfirmOrder(from, userMessage, state);
+                }
                 break;
             case ConversationStep.SplitBill:
                 requestResponse = await this.handleSplitBill(from, userMessage, state);
