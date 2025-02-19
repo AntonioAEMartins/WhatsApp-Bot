@@ -160,11 +160,16 @@ export class WhatsAppService {
             //    getPendingTransactionsOlderThan(minutes, statuses?).
             //    Caso não tenha, você pode implementar com um find direto no banco ou ajustar conforme a sua estrutura.
             const { data: staleTransactions } = await this.transactionService.getPendingTransactionsOlderThan(
+                10,
                 3,
                 [PaymentStatus.Pending, PaymentStatus.Waiting, PaymentStatus.Created]
             );
 
             for (const transaction of staleTransactions) {
+                if (transaction.reminderSentAt) {
+                    continue;
+                } 
+
                 const conversationResp = await this.conversationService.getConversation(transaction.conversationId);
                 const conversation = conversationResp.data;
 
@@ -174,7 +179,6 @@ export class WhatsAppService {
                     );
                     continue;
                 }
-
 
                 const sentMessages: ResponseStructureExtended[] = [
                     {
@@ -187,8 +191,11 @@ export class WhatsAppService {
                     },
                 ];
 
-
                 await this.sendMessagesDirectly(sentMessages);
+
+                await this.transactionService.updateTransaction(transaction._id.toString(), {
+                    reminderSentAt: new Date(),
+                });
             }
         } catch (error) {
             this.logger.error(`[handlePendingPaymentsReminder] Error: ${error.message}`, error.stack);
