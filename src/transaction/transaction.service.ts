@@ -164,7 +164,14 @@ export class TransactionService {
             throw new HttpException("Transaction not found", HttpStatus.NOT_FOUND);
         }
 
-        const transactionStatus = transaction.status === PaymentStatus.PreAuthorized ? PaymentStatus.Pending : transaction.status;
+        let transactionStatus = transaction.status;
+        if (transaction.status === PaymentStatus.PreAuthorized) {
+            transactionStatus = PaymentStatus.Pending;
+        } else if (transaction.status === PaymentStatus.Waiting) {
+            transactionStatus = PaymentStatus.Pending;
+        } else if (transaction.status === PaymentStatus.Created) {
+            transactionStatus = PaymentStatus.Pending;
+        }
 
         return {
             msg: "Transaction status found",
