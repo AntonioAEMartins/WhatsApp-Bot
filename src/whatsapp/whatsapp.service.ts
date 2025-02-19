@@ -1553,7 +1553,7 @@ export class WhatsAppService {
 
             sentMessages.push(
                 ...this.mapTextMessages(
-                    ['Por favor, informe seu nome completo para prosseguirmos com o pagamento via PIX.'],
+                    ['😊 Qual é o seu *nome completo?* Para continuarmos com o pagamento via PIX.'],
                     from,
                 ),
             );
@@ -1800,7 +1800,7 @@ export class WhatsAppService {
             });
 
             // Reconstrói a mensagem de opções com os cartões disponíveis
-            let optionsMessage = `Erro ao processar o pagamento: ${error.message}. Por favor, escolha um novo cartão:\n\n`;
+            let optionsMessage = `*Ops! 😕* Tivemos um problema ao processar o pagamento. Por favor, escolha um novo cartão:\n\n`;
             savedCards.forEach((card, index) => {
                 optionsMessage += `${index + 1}- Final *${card.last4}* | Válido até ${card.expiry_month}/${card.expiry_year}\n`;
             });
@@ -1981,7 +1981,11 @@ export class WhatsAppService {
             if (isFullPaymentAmountPaid) {
                 this.logger.log(`[processPayment] Full payment amount paid`);
                 const tableId = parseInt(state.tableId);
-                await this.tableService.finishPayment(tableId, transaction.data.paymentMethod);
+                try {
+                    await this.tableService.finishPayment(tableId, transaction.data.paymentMethod);
+                } catch (error) {
+                    this.logger.error(`[processPayment] Error finishing payment: ${error.message}`);
+                }
                 const notifyWaiterMessages = await this.notifyWaiterTablePaymentComplete(state);
                 sentMessages.push(...notifyWaiterMessages);
             } else {
