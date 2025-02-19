@@ -182,6 +182,8 @@ export class TransactionService {
         }
     }
 
+
+
     async getExpiredPIXTransactions(): Promise<SimpleResponseDto<TransactionDTO[]>> {
         const now = new Date(); // Data e hora atual
 
@@ -209,6 +211,21 @@ export class TransactionService {
             msg: "Transaction found",
             data: transaction as TransactionDTO,
         }
+    }
+
+    async getPendingTransactionsOlderThan(minutes: number, statuses?: PaymentStatus[]): Promise<SimpleResponseDto<TransactionDTO[]>> {
+        const now = new Date();
+        const threshold = new Date(now.getTime() - minutes * 60 * 1000);
+
+        const transactions = await this.db.collection("transactions").find({
+            status: { $in: statuses || [PaymentStatus.Pending, PaymentStatus.Waiting, PaymentStatus.Created] },
+            createdAt: { $lt: threshold }
+        }).toArray();
+
+        return {
+            msg: "Pending transactions found",
+            data: transactions as TransactionDTO[],
+        };
     }
 
     async updateTransaction(

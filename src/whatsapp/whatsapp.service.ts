@@ -152,6 +152,50 @@ export class WhatsAppService {
         }
     }
 
+    @Cron('0 * * * * *') // executa a cada 1 minuto
+    public async handlePendingPaymentsReminder(): Promise<void> {
+        try {
+            // 1) Busque as transações “pendentes” com mais de 3 minutos de criação
+            //    Aqui supomos que seu TransactionService tenha um método específico:
+            //    getPendingTransactionsOlderThan(minutes, statuses?).
+            //    Caso não tenha, você pode implementar com um find direto no banco ou ajustar conforme a sua estrutura.
+            const { data: staleTransactions } = await this.transactionService.getPendingTransactionsOlderThan(
+                3,
+                [PaymentStatus.Pending, PaymentStatus.Waiting, PaymentStatus.Created]
+            );
+
+            for (const transaction of staleTransactions) {
+                const conversationResp = await this.conversationService.getConversation(transaction.conversationId);
+                const conversation = conversationResp.data;
+
+                if (!conversation) {
+                    this.logger.warn(
+                        `[handlePendingPaymentsReminder] Conversation not found for transaction ${transaction._id}`
+                    );
+                    continue;
+                }
+
+
+                const sentMessages: ResponseStructureExtended[] = [
+                    {
+                        type: 'text',
+                        content: `*👋 Coti Pagamentos* - Olá! Notamos que seu pagamento da comanda *${conversation.tableId}* ainda não foi finalizado.`,
+                        caption: '',
+                        to: conversation.userId,
+                        reply: false,
+                        isError: false,
+                    },
+                ];
+
+
+                await this.sendMessagesDirectly(sentMessages);
+            }
+        } catch (error) {
+            this.logger.error(`[handlePendingPaymentsReminder] Error: ${error.message}`, error.stack);
+        }
+    }
+
+
 
     public async handleProcessMessage(request: RequestStructure): Promise<ResponseStructureExtended[]> {
         const fromPerson = request.from;
