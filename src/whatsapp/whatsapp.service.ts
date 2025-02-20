@@ -45,7 +45,7 @@ interface SendMessageParams {
 
 export interface RequestStructure {
     from: string;
-    type: "image" | "text" | "vcard";
+    type: "image" | "text" | "vcard" | "document";
     content: string;
 }
 
@@ -103,7 +103,6 @@ export class WhatsAppService {
         const transactions = await this.transactionService.getExpiredPIXTransactions();
 
         for (const transaction of transactions.data) {
-            // Obtém a conversa associada à transação
             const conversation = await this.conversationService.getConversation(transaction.conversationId);
 
             if (!conversation.data) {
@@ -115,7 +114,7 @@ export class WhatsAppService {
 
             sentMessages.push({
                 type: "text",
-                content: "*👋 Coti Pagamentos* - Seu PIX expirou 😭",
+                content: "*👋 Astra Pay* - Seu PIX expirou 😭",
                 caption: "",
                 to: conversation.data.userId,
                 reply: false,
@@ -131,7 +130,6 @@ export class WhatsAppService {
                 isError: false,
             });
 
-            // Inicia uma sessão de transação no Mongo
             await this.conversationService.updateConversation(
                 conversation.data._id.toString(),
                 {
@@ -147,7 +145,6 @@ export class WhatsAppService {
                 transaction._id.toString(),
                 { status: PaymentStatus.Expired }
             );
-            // Envia as mensagens para o bot GO fora do escopo da transação
             await this.sendMessagesDirectly(sentMessages);
         }
     }
@@ -155,10 +152,6 @@ export class WhatsAppService {
     @Cron('0 * * * * *') // executa a cada 1 minuto
     public async handlePendingPaymentsReminder(): Promise<void> {
         try {
-            // 1) Busque as transações “pendentes” com mais de 3 minutos de criação
-            //    Aqui supomos que seu TransactionService tenha um método específico:
-            //    getPendingTransactionsOlderThan(minutes, statuses?).
-            //    Caso não tenha, você pode implementar com um find direto no banco ou ajustar conforme a sua estrutura.
             const { data: staleTransactions } = await this.transactionService.getPendingTransactionsOlderThan(
                 10,
                 3,
@@ -183,7 +176,7 @@ export class WhatsAppService {
                 const sentMessages: ResponseStructureExtended[] = [
                     {
                         type: 'text',
-                        content: `*👋 Coti Pagamentos* - Olá! Notamos que seu pagamento da comanda *${conversation.tableId}* ainda não foi finalizado.`,
+                        content: `*👋 Astra Pay* - Olá! Notamos que seu pagamento da comanda *${conversation.tableId}* ainda não foi finalizado.`,
                         caption: '',
                         to: conversation.userId,
                         reply: false,
@@ -226,15 +219,108 @@ export class WhatsAppService {
 
         const from = message.from;
 
-        // Handle incoming message and ensure user and conversation exist
+        // Garante que usuário e conversa existam
         await this.handleIncomingMessage(from);
 
-        // Retrieve the active conversation
+        // Recupera a conversa ativa
         const activeConversationResponse = await this.conversationService.getActiveConversation(from);
         let state = activeConversationResponse.data;
+
+        this.logger.debug(`[handleProcessMessage] Request type: ${request.type}`);
+        if (request.type === 'image' || request.type === 'document') {
+            this.logger.debug(`[handleProcessMessage] Image or document received from ${from}`);
+            if (!state) {
+                return [
+                    {
+                        type: "text",
+                        content: "Desculpe, não entendi sua solicitação. Se você gostaria de pagar uma comanda, por favor, use a frase 'Gostaria de pagar a comanda X'.",
+                        caption: "",
+                        to: from,
+                        reply: true,
+                        isError: false
+                    }
+                ];
+            }
+
+            const currentStep = state.conversationContext.currentStep;
+
+            if (currentStep === ConversationStep.WaitingForPayment) {
+                return [];
+            }
+
+            if (
+                currentStep === ConversationStep.Feedback ||
+                currentStep === ConversationStep.FeedbackDetail
+            ) {
+                // Mensagem imediata de acknowledgment
+                const immediateReply: ResponseStructureExtended = {
+                    type: "text",
+                    content: "Comprovante recebido!",
+                    caption: "",
+                    to: from,
+                    reply: true,
+                    isError: false
+                };
+
+                let feedbackReplication: ResponseStructureExtended[] = [];
+                if (currentStep === ConversationStep.Feedback) {
+                    feedbackReplication = this.mapTextMessages(
+                        [
+                            'Por favor, escolha uma das opções abaixo e envie apenas o número ou a descrição correspondente:',
+                            '1- Muito decepcionado\n2- Um pouco decepcionado\n3- Não faria diferença',
+                        ],
+                        from,
+                        false
+                    );
+                } else {
+                    const feedback = state.conversationContext.feedback;
+                    if (!feedback?.mustHaveScore) {
+                        feedbackReplication = this.mapTextMessages(
+                            ["Pode nos contar um pouco mais sobre o motivo da sua escolha?"],
+                            from,
+                            false
+                        );
+                    } else {
+                        if (
+                            feedback.mustHaveScore === 'Muito decepcionado' ||
+                            feedback.mustHaveScore === 'Um pouco decepcionado'
+                        ) {
+                            feedbackReplication = this.mapTextMessages(
+                                [
+                                    "Em quais outros restaurantes você gostaria de pagar na mesa com a Astra? ✨"
+                                ],
+                                from,
+                                false
+                            );
+                        } else {
+                            feedbackReplication = this.mapTextMessages(
+                                [
+                                    "Obrigado pelo feedback! Se precisar de algo mais, estamos aqui."
+                                ],
+                                from,
+                                false
+                            );
+                        }
+                    }
+                }
+
+                return [immediateReply, ...feedbackReplication];
+            }
+
+            return [
+                {
+                    type: "text",
+                    content: "Comprovante recebido! Qualquer dúvida, estamos à disposição.",
+                    caption: "",
+                    to: from,
+                    reply: true,
+                    isError: false,
+                }
+            ];
+        }
+
         const userMessage = message.body.trim().toLowerCase();
 
-        // Se a conversa atual estiver finalizada (ou não existir) e o usuário enviar "pagar a comanda", cria nova conversa
         const terminalStates = [
             ConversationStep.Completed,
             ConversationStep.IncompleteOrder,
@@ -242,8 +328,10 @@ export class WhatsAppService {
             ConversationStep.PaymentInvalid,
             ConversationStep.PaymentAssistance,
         ];
-        if ((!state || (state && terminalStates.includes(state.conversationContext.currentStep))) &&
-            userMessage.includes('pagar a comanda')) {
+        if (
+            (!state || (state && terminalStates.includes(state.conversationContext.currentStep))) &&
+            userMessage.includes('pagar a comanda')
+        ) {
             const newConversation: CreateConversationDto = {
                 userId: from,
                 conversationContext: {
@@ -259,19 +347,20 @@ export class WhatsAppService {
 
         if (!state) {
             this.logger.debug(`No active conversation for user ${from}`);
-            return [{
-                type: "text",
-                content: "Desculpe, não entendi sua solicitação. Se você gostaria de pagar uma comanda, por favor, use a frase 'Gostaria de pagar a comanda X'.",
-                caption: "",
-                to: from,
-                reply: true,
-                isError: false,
-            }];
+            return [
+                {
+                    type: "text",
+                    content: "Desculpe, não entendi sua solicitação. Se você gostaria de pagar uma comanda, por favor, use a frase 'Gostaria de pagar a comanda X'.",
+                    caption: "",
+                    to: from,
+                    reply: true,
+                    isError: false,
+                }
+            ];
         }
 
         let requestResponse: ResponseStructureExtended[] = [];
 
-        // Processamento do fluxo de conversa conforme o currentStep
         switch (state.conversationContext.currentStep) {
             case ConversationStep.ProcessingOrder:
                 if (userMessage.includes('pagar a comanda')) {
@@ -287,15 +376,18 @@ export class WhatsAppService {
                     requestResponse = await this.handleConfirmOrder(from, userMessage, state);
                 }
                 break;
-            // case ConversationStep.SplitBill:
-            //     requestResponse = await this.handleSplitBill(from, userMessage, state);
-            //     break;
-            // case ConversationStep.SplitBillNumber:
-            //     requestResponse = await this.handleSplitBillNumber(from, userMessage, state);
-            //     break;
-            // case ConversationStep.WaitingForContacts:
-            //     requestResponse = await this.handleWaitingForContacts(from, state, message);
-            //     break;
+            /*
+            // Se você reativar a lógica de "dividir conta", deixá-la aqui
+            case ConversationStep.SplitBill:
+                requestResponse = await this.handleSplitBill(from, userMessage, state);
+                break;
+            case ConversationStep.SplitBillNumber:
+                requestResponse = await this.handleSplitBillNumber(from, userMessage, state);
+                break;
+            case ConversationStep.WaitingForContacts:
+                requestResponse = await this.handleWaitingForContacts(from, state, message);
+                break;
+            */
             case ConversationStep.ExtraTip:
                 requestResponse = await this.handleExtraTip(from, userMessage, state);
                 break;
@@ -351,6 +443,7 @@ export class WhatsAppService {
 
         return requestResponse;
     }
+
 
 
 
@@ -436,7 +529,7 @@ export class WhatsAppService {
             sentMessages.push(
                 ...this.mapTextMessages(
                     [
-                        '*👋 Coti Pagamentos* – Bem-vindo(a)!\nTornamos o seu pagamento prático e sem complicações.\n\n*Formas de Pagamento Aceitas:*\n1. PIX\n2. Cartão de Crédito\n\n_Em caso de dúvidas sobre privacidade ou solicitação de remoção dos seus dados, entre em contato pelo e-mail:_ \nsuporte@astra1.com.br',
+                        '*👋 Astra Pay* – Bem-vindo(a)!\nTornamos o seu pagamento prático e sem complicações.\n\n*Formas de Pagamento Aceitas:*\n1. PIX\n2. Cartão de Crédito\n\n_Em caso de dúvidas sobre privacidade ou solicitação de remoção dos seus dados, entre em contato pelo e-mail:_ \nsuporte@astra1.com.br',
                     ],
                     from,
                     true,
@@ -483,7 +576,7 @@ export class WhatsAppService {
             sentMessages.push(
                 ...this.mapTextMessages(
                     [
-                        '*👋 Coti Pagamentos* – Bem-vindo(a)!\nTornamos o seu pagamento prático e sem complicações.\n\n*Formas de Pagamento Aceitas:*\n1. PIX\n2. Cartão de Crédito\n\n_Em caso de dúvidas sobre privacidade ou solicitação de remoção dos seus dados, entre em contato pelo e-mail:_ \nsuporte@astra1.com.br',
+                        '*👋 Astra Pay* – Bem-vindo(a)!\nTornamos o seu pagamento prático e sem complicações.\n\n*Formas de Pagamento Aceitas:*\n1. PIX\n2. Cartão de Crédito\n\n_Em caso de dúvidas sobre privacidade ou solicitação de remoção dos seus dados, entre em contato pelo e-mail:_ \nsuporte@astra1.com.br',
                     ],
                     from,
                     true,
@@ -496,37 +589,18 @@ export class WhatsAppService {
             return sentMessages;
         }
 
-        // Se outra pessoa já está processando a comanda, verifique se ela está na fase de divisão.
-        const step = otherState?.conversationContext?.currentStep;
-        const splittingSteps = [
-            ConversationStep.SplitBill,
-            ConversationStep.SplitBillNumber,
-            ConversationStep.WaitingForContacts,
-        ];
-
-        if (step && splittingSteps.includes(step)) {
-            // Apenas notifica que a comanda está em divisão.
-            sentMessages.push(
-                ...this.mapTextMessages(
-                    [
-                        '*👋 Coti Pagamentos* - A comanda está sendo dividida. Aguarde a finalização para continuar.',
-                    ],
-                    from,
-                    true,
-                ),
-            );
-        } else {
-            sentMessages.push(
-                ...this.mapTextMessages(
-                    ['Desculpe, esta comanda já está sendo processada por outra pessoa.'],
-                    from,
-                    true,
-                ),
-            );
-        }
+        // Se outra pessoa já está processando a comanda e não está inativa
+        sentMessages.push(
+            ...this.mapTextMessages(
+                ['Desculpe, esta comanda já está sendo processada por outra pessoa.'],
+                from,
+                true,
+            ),
+        );
 
         return sentMessages;
     }
+
 
 
     /**
@@ -578,7 +652,7 @@ export class WhatsAppService {
                 this.logger.error(`[handleProcessingOrder] No content found for table ${tableId}. User: ${from}`);
                 sentMessages.push(
                     ...this.mapTextMessages(
-                        ['*👋 Coti Pagamentos* - Não há pedidos cadastrados em sua comanda. Por favor, tente novamente mais tarde.'],
+                        ['*👋 Astra Pay* - Não há pedidos cadastrados em sua comanda. Por favor, tente novamente mais tarde.'],
                         from,
                         true,
                         false,
@@ -653,19 +727,32 @@ export class WhatsAppService {
  * - Sends appropriate follow-up messages based on the user's response.
  */
 
-    private mapTextMessages(messages: string[], to: string, reply: boolean = false, toGroup: boolean = false, isError: boolean = false): ResponseStructureExtended[] {
-        return messages.map((message) => {
-            const content = toGroup ? `${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}\n${message}` : message;
+    private mapTextMessages(
+        messages: string[],
+        to: string,
+        reply: boolean = false,
+        toGroup: boolean = false,
+        isError: boolean = false
+    ): ResponseStructureExtended[] {
+        return messages.map((message, index) => {
+            const content = toGroup
+                ? `${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}\n${message}`
+                : message;
+
+            const isFirst = index === 0;
+            const replyFlag = isFirst ? reply : false;
+
             return {
-                type: 'text' as 'text',
+                type: 'text',
                 content,
                 caption: '',
                 to,
-                reply: reply,
-                isError: isError,
+                reply: replyFlag,
+                isError,
             };
         });
     }
+
 
 
     private async handleConfirmOrder(
@@ -678,22 +765,15 @@ export class WhatsAppService {
         const negativeResponses = ['2', 'não', 'nao', 'não está correta', 'incorreta', 'não correta'];
 
         const updatedContext: ConversationContextDTO = { ...state.conversationContext };
-
         const tableId = parseInt(state.tableId, 10);
 
         if (positiveResponses.some((response) => userMessage.includes(response))) {
+            if (!updatedContext.userAmount || updatedContext.userAmount <= 0) {
+                updatedContext.userAmount = updatedContext.totalOrderAmount;
+            }
+
 
             const notifyWaiterMessages = this.notifyWaiterTableStartedPayment(tableId);
-
-            // sentMessages.push(
-            //     ...this.mapTextMessages(
-            //         [
-            //             '👍 Você gostaria de dividir a conta?\n\n1- Não\n2- Sim, em partes iguais',
-            //         ],
-            //         from,
-            //     ),
-            //     ...notifyWaiterMessages,
-            // );
 
             sentMessages.push(
                 ...this.mapTextMessages(
@@ -703,7 +783,6 @@ export class WhatsAppService {
                     from,
                 ),
             );
-
             this.retryRequestWithNotification({
                 from,
                 requestFunction: () => this.tableService.startPayment(tableId),
@@ -711,7 +790,6 @@ export class WhatsAppService {
                 sendDelayNotification: false,
                 groupMessage: GroupMessages[GroupMessageKeys.PREBILL_ERROR](state.tableId),
             });
-
 
             updatedContext.currentStep = ConversationStep.ExtraTip;
 
@@ -726,11 +804,9 @@ export class WhatsAppService {
             );
 
             const notifyWaiterMessages = this.notifyWaiterWrongOrder(tableId);
-
             sentMessages.push(...notifyWaiterMessages);
 
             updatedContext.currentStep = ConversationStep.IncompleteOrder;
-
         } else {
             sentMessages.push(
                 ...this.mapTextMessages(
@@ -746,6 +822,7 @@ export class WhatsAppService {
 
         return sentMessages;
     }
+
 
     /**
      * Step 3: Split Bill
@@ -1096,7 +1173,7 @@ export class WhatsAppService {
         for (const contact of contacts) {
             const contactId = `${contact.phone}@s.whatsapp.net`;
             const messages = [
-                `*👋 Coti Pagamentos* - Olá! Você foi incluído na divisão do pagamento da comanda *${state.tableId}* no restaurante Cris Parrilla.`,
+                `*👋 Astra Pay* - Olá! Você foi incluído na divisão do pagamento da comanda *${state.tableId}* no restaurante Cris Parrilla.`,
                 `Sua parte na conta é de *${formatToBRL(individualAmount)}*.`,
                 'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
             ];
@@ -1245,7 +1322,8 @@ export class WhatsAppService {
             ...state.conversationContext,
             currentStep: ConversationStep.CollectCPF,
             userAmount: totalAmountWithTip,
-            tipAmount: totalAmountWithTip - userAmount,
+            tipAmount: this.formatToTwoDecimalPlaces(totalAmountWithTip - userAmount),
+            tipPercent: tipPercent,
         };
 
         await this.conversationService.updateConversation(state._id.toString(), {
@@ -1502,7 +1580,7 @@ export class WhatsAppService {
             sentMessages.push(
                 ...this.mapTextMessages(
                     [
-                        '*👋  Coti Pagamentos* - Pagamento Cancelado ❌',
+                        '*👋  Astra Pay* - Pagamento Cancelado ❌',
                         'Como você se sentiria se não pudesse mais usar o nosso serviço?\n\nEscolha uma das opções abaixo:',
                         '1- Muito decepcionado',
                         '2- Um pouco decepcionado',
@@ -1815,6 +1893,7 @@ export class WhatsAppService {
                 state,
                 transactionResponse.transactionResponse,
             );
+            this.logger.log(`[handleSelectSavedCard] Sent messages: ${JSON.stringify(sentMessages)}`);
             return sentMessages;
         }
 
@@ -1975,8 +2054,6 @@ export class WhatsAppService {
             from
         ));
 
-
-
         // Atualiza o estado da conversa, se necessário (ex.: permanecer no WaitingForPayment aguardando o comprovante)
         const conversationId = state._id.toString();
         const updatedContext: ConversationContextDTO = {
@@ -1988,6 +2065,8 @@ export class WhatsAppService {
             userId: state.userId,
             conversationContext: updatedContext,
         });
+
+        this.logger.log(`[handleCreditCardPayment] Updated context}`);
 
         return sentMessages;
     }
@@ -2002,14 +2081,14 @@ export class WhatsAppService {
         if (transaction.data.status !== PaymentStatus.Accepted) {
             sentMessages.push(
                 ...this.mapTextMessages(
-                    ['*👋  Coti Pagamentos* - Erro ao processar o pagamento ❌\n\nPor favor, tente novamente mais tarde.'],
+                    ['*👋  Astra Pay* - Erro ao processar o pagamento ❌\n\nPor favor, tente novamente mais tarde.'],
                     from
                 )
             );
         } else {
 
             const confirmationMessage = this.mapTextMessages(
-                ['*👋  Coti Pagamentos* - Pagamento Confirmado ✅\n\nEsperamos que sua experiência tenha sido excelente.'],
+                ['*👋  Astra Pay* - Pagamento Confirmado ✅\n\nEsperamos que sua experiência tenha sido excelente.'],
                 from
             );
 
@@ -2221,7 +2300,7 @@ export class WhatsAppService {
                 sentMessages = this.mapTextMessages(
                     [
                         'Obrigado pelo seu feedback detalhado!',
-                        'Em quais outros restaurantes você gostaria de pagar na mesa com a Coti?',
+                        'Em qual outro restaurante você *gostaria de pagar* com a *Astra*?',
                     ],
                     from
                 );
@@ -2257,7 +2336,7 @@ export class WhatsAppService {
             const recommended = userMessage.trim();
             if (!recommended) {
                 sentMessages = this.mapTextMessages(
-                    ['Por favor, conte em quais outros restaurantes você gostaria de usar a Coti.'],
+                    ['Em qual outro restaurante você *gostaria de pagar* com a *Astra*?'],
                     from
                 );
 
@@ -2308,7 +2387,7 @@ export class WhatsAppService {
 
     private async notifyWaiterTableSplit(state: ConversationDto): Promise<ResponseStructureExtended[]> {
         const groupId = this.waiterGroupId;
-        const message = `👋 Coti Pagamentos - Mesa ${state.tableId} irá compartilhar o pagamento`;
+        const message = `👋 Astra Pay - Mesa ${state.tableId} irá compartilhar o pagamento`;
 
         return this.mapTextMessages([message], groupId);
     }
@@ -2328,12 +2407,12 @@ export class WhatsAppService {
             if (extraTip > 0) {
                 tipMessage = extraTip > 15
                     ? `MAIS ${formatToBRL(extraTip)} de Gorjeta 🎉`
-                    : `MAIS ${((extraTip / totalAmount) * 100).toFixed(2)}% de Gorjeta 🎉`;
+                    : `MAIS ${state.conversationContext.tipPercent}% de Gorjeta 🎉`;
             }
 
             const message = tipMessage
-                ? `*👋 Coti Pagamentos* - ${tipMessage}\n\nA mesa ${tableId} pagou com sucesso 🚀`
-                : `*👋 Coti Pagamentos* - Mesa ${tableId} pagou com sucesso 🚀`;
+                ? `*👋 Astra Pay* - ${tipMessage}\n\nA mesa ${tableId} pagou com sucesso 🚀`
+                : `*👋 Astra Pay* - Mesa ${tableId} pagou com sucesso 🚀`;
 
             return this.mapTextMessages([message], groupId);
         } catch (error) {
@@ -2416,7 +2495,7 @@ export class WhatsAppService {
                 const totalPaidByUser = totalPaid.totalPaid || 0;
                 const userRemainingAmount = userAmount - totalPaidByUser;
 
-                message += `*👋 Coti Pagamentos* - STATUS Mesa ${tableId}\n\n`;
+                message += `*👋 Astra Pay* - STATUS Mesa ${tableId}\n\n`;
                 message += `Divisão de pagamento: Não\n`;
                 message += `Deveria pagar: R$ ${totalAmount.toFixed(2)}\n`;
                 message += `Pagou: R$ ${totalPaidByUser.toFixed(2)}`;
@@ -2435,7 +2514,7 @@ export class WhatsAppService {
             const numberOfPeople = splitInfo.numberOfPeople;
             const participants: ParticipantDTO[] = splitInfo.participants;
 
-            message += `*👋 Coti Pagamentos* - STATUS Mesa ${tableId}\n\n`;
+            message += `*👋 Astra Pay* - STATUS Mesa ${tableId}\n\n`;
             message += `Total: R$ ${totalAmount.toFixed(2)}\n\n`;
             message += `👥 Divisão entre ${numberOfPeople} pessoa${numberOfPeople > 1 ? 's' : ''}:\n\n`;
 
@@ -2553,7 +2632,7 @@ export class WhatsAppService {
 
         this.logger.log(`[notifyWaiterTableStartedPayment] Notificação de início de pagamentos para a mesa ${tableNumber}`);
 
-        const message = `👋 *Coti Pagamentos* - A mesa ${tableNumber} iniciou o processo de pagamentos.`;
+        const message = `👋 *Astra Pay* - A mesa ${tableNumber} iniciou o processo de pagamentos.`;
         return this.mapTextMessages([message], groupId);
 
     }
@@ -2563,7 +2642,7 @@ export class WhatsAppService {
 
         this.logger.log(`[notifyRefundRequestToWaiter] Notificação de estorno para a mesa ${tableNumber}`);
 
-        const message = `👋 *Coti Pagamentos* - A mesa ${tableNumber} solicitou um estorno de *${formatToBRL(refundAmount)}*.`;
+        const message = `👋 *Astra Pay* - A mesa ${tableNumber} solicitou um estorno de *${formatToBRL(refundAmount)}*.`;
         return this.mapTextMessages([message], groupId);
     }
 
@@ -2572,7 +2651,7 @@ export class WhatsAppService {
 
         this.logger.log(`[notifyWaiterWrongOrder] Notificação de pedido errado para a mesa ${tableNumber}`);
 
-        const message = `👋 *Coti Pagamentos* - A Mesa ${tableNumber} relatou um problema com os pedidos da comanda.\n\nPor favor, dirija-se à mesa para verificar.`;
+        const message = `👋 *Astra Pay* - A Mesa ${tableNumber} relatou um problema com os pedidos da comanda.\n\nPor favor, dirija-se à mesa para verificar.`;
         return this.mapTextMessages([message], groupId);
     }
 
@@ -2716,7 +2795,7 @@ export class WhatsAppService {
         const errorMessage = this.generateStageErrorMessage(state);
         sentMessages.push(...this.mapTextMessages([errorMessage], from, true, false, true));
 
-        const waiterErrorMessage = `👋 *Coti Pagamentos* - Erro ao processar a Mesa ${state.tableId}.\n\nSe direcione para a mesa para verificar o problema.`;
+        const waiterErrorMessage = `👋 *Astra Pay* - Erro ao processar a Mesa ${state.tableId}.\n\nSe direcione para a mesa para verificar o problema.`;
         sentMessages.push(...this.mapTextMessages([waiterErrorMessage], this.waiterGroupId));
 
         const response: retryRequestResponse = {
