@@ -118,6 +118,10 @@ export class ConversationContextDTO {
 
   @IsOptional()
   @IsNumber()
+  tipPercent?: number;
+
+  @IsOptional()
+  @IsNumber()
   excessPaymentAmount?: number;
 
   @IsOptional()
