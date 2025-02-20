@@ -1356,10 +1356,11 @@ export class WhatsAppService {
             `O valor final da sua conta é: *${formatToBRL(finalAmount)}*`,
             'Segue abaixo a chave PIX para pagamento 👇',
             pixKey ? pixKey : '00020101021126480014br.gov.bcb.pix0126emporiocristovao@gmail.com5204000053039865802BR5917Emporio Cristovao6009SAO PAULO622905251H4NXKD6ATTA8Z90GR569SZ776304CE19',
-            'Por favor, envie o comprovante! 📄✅'
+            '*Copie a chave PIX completa*\n\nCertifique-se de copiar todos os caracteres corretamente para evitar erros no pagamento.',
         ];
         return this.mapTextMessages(messages, from);
     }
+
 
 
     /**
