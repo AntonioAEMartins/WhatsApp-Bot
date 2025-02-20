@@ -287,15 +287,15 @@ export class WhatsAppService {
                     requestResponse = await this.handleConfirmOrder(from, userMessage, state);
                 }
                 break;
-            case ConversationStep.SplitBill:
-                requestResponse = await this.handleSplitBill(from, userMessage, state);
-                break;
-            case ConversationStep.SplitBillNumber:
-                requestResponse = await this.handleSplitBillNumber(from, userMessage, state);
-                break;
-            case ConversationStep.WaitingForContacts:
-                requestResponse = await this.handleWaitingForContacts(from, state, message);
-                break;
+            // case ConversationStep.SplitBill:
+            //     requestResponse = await this.handleSplitBill(from, userMessage, state);
+            //     break;
+            // case ConversationStep.SplitBillNumber:
+            //     requestResponse = await this.handleSplitBillNumber(from, userMessage, state);
+            //     break;
+            // case ConversationStep.WaitingForContacts:
+            //     requestResponse = await this.handleWaitingForContacts(from, state, message);
+            //     break;
             case ConversationStep.ExtraTip:
                 requestResponse = await this.handleExtraTip(from, userMessage, state);
                 break;
@@ -685,15 +685,25 @@ export class WhatsAppService {
 
             const notifyWaiterMessages = this.notifyWaiterTableStartedPayment(tableId);
 
+            // sentMessages.push(
+            //     ...this.mapTextMessages(
+            //         [
+            //             '👍 Você gostaria de dividir a conta?\n\n1- Não\n2- Sim, em partes iguais',
+            //         ],
+            //         from,
+            //     ),
+            //     ...notifyWaiterMessages,
+            // );
+
             sentMessages.push(
                 ...this.mapTextMessages(
                     [
-                        '👍 Você gostaria de dividir a conta?\n\n1- Não\n2- Sim, em partes iguais',
+                        'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
                     ],
                     from,
                 ),
-                ...notifyWaiterMessages,
             );
+
             this.retryRequestWithNotification({
                 from,
                 requestFunction: () => this.tableService.startPayment(tableId),
@@ -703,7 +713,7 @@ export class WhatsAppService {
             });
 
 
-            updatedContext.currentStep = ConversationStep.SplitBill;
+            updatedContext.currentStep = ConversationStep.ExtraTip;
 
         } else if (negativeResponses.some((response) => userMessage.includes(response))) {
             sentMessages.push(
