@@ -400,6 +400,9 @@ export class WhatsAppService {
             case ConversationStep.SelectSavedCard:
                 requestResponse = await this.handleSelectSavedCard(from, userMessage, state);
                 break;
+            case ConversationStep.WaitingForPayment:
+                // pass
+                break;
             case ConversationStep.PixExpired:
                 requestResponse = await this.handlePixExpired(from, userMessage, state);
                 break;
@@ -2434,26 +2437,41 @@ export class WhatsAppService {
             statusTitle: transaction.status === PaymentStatus.Accepted ? 'Pagamento concluído' : 'Pagamento cancelado',
             amount: formatToBRL(transaction.amountPaid),
             tableId: transaction.tableId,
-            dateTime: new Date(transaction.confirmedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/(\d{2}\/\d{2}\/\d{4}), (\d{2}:\d{2})/, '$2, $1'),
+            dateTime: new Date(transaction.confirmedAt)
+                .toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })
+                .replace(/(\d{2}\/\d{2}\/\d{4}), (\d{2}:\d{2})/, '$2, $1'),
             statusLabel: transaction.status === PaymentStatus.Accepted ? 'Confirmado' : 'Cancelado',
             cardLast4: cardLast4,
             whatsAppLink: "https://wa.me/551132803247",
             privacyLink: "https://astra1.com.br/privacy-policy/",
             termsLink: "https://astra1.com.br/terms-of-service/",
-        }
+        };
 
-        const pdfBuffer = await this.genReceiptService.generatePdf(receiptData);
+        let pdfBuffer: Buffer | null = null;
+        const maxAttempts = 5;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                pdfBuffer = await this.genReceiptService.generatePdf(receiptData);
+                break; // Success, exit the loop
+            } catch (error) {
+                this.logger.error(`[generateReceiptPdf] Attempt ${attempt} failed: ${error.message}`);
+                if (attempt === maxAttempts) {
+                    this.logger.error(`[generateReceiptPdf] All ${maxAttempts} attempts failed. Returning empty message.`);
+                    return [];
+                }
+            }
+        }
 
         this.logger.log(`[generateReceiptPdf] Comprovante de pagamento gerado com sucesso`);
 
         const message: ResponseStructureExtended = {
             type: "document",
-            content: pdfBuffer.toString('base64'),
+            content: pdfBuffer!.toString('base64'),
             caption: "Comprovante de pagamento",
             to: transaction.userId,
             reply: false,
             isError: false,
-        }
+        };
 
         return [message];
     }
