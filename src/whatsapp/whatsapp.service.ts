@@ -149,7 +149,7 @@ export class WhatsAppService {
         }
     }
 
-    @Cron('0 * * * * *') // executa a cada 1 minuto
+    @Cron('10 * * * * *') // executa a cada 10 segundos
     public async handlePendingPaymentsReminder(): Promise<void> {
         try {
             const { data: staleTransactions } = await this.transactionService.getPendingTransactionsOlderThan(
@@ -176,7 +176,15 @@ export class WhatsAppService {
                 const sentMessages: ResponseStructureExtended[] = [
                     {
                         type: 'text',
-                        content: `*👋 Astra Pay* - Olá! Notamos que seu pagamento da comanda *${conversation.tableId}* ainda não foi finalizado.`,
+                        content: `*👋 Astra Pay* - Seu pagamento da comanda *${conversation.tableId}* ainda não foi finalizado.`,
+                        caption: '',
+                        to: conversation.userId,
+                        reply: false,
+                        isError: false,
+                    },
+                    {
+                        type: 'text',
+                        content: 'Ocorreu algum problema com o pagamento? Poderia nos contar mais sobre o que aconteceu?',
                         caption: '',
                         to: conversation.userId,
                         reply: false,
@@ -189,13 +197,106 @@ export class WhatsAppService {
                 await this.transactionService.updateTransaction(transaction._id.toString(), {
                     reminderSentAt: new Date(),
                 });
+
+                await this.conversationService.updateConversation(transaction.conversationId, {
+                    userId: conversation.userId,
+                    conversationContext: {
+                        ...conversation.conversationContext,
+                        currentStep: ConversationStep.DelayedPayment,
+                        delayedReminderSentAt: new Date(),
+                    },
+                });
             }
         } catch (error) {
             this.logger.error(`[handlePendingPaymentsReminder] Error: ${error.message}`, error.stack);
         }
     }
 
+    @Cron('10 * * * * *') // executa a cada 10 segundos
+    public async handleUserInactivityCheck(): Promise<void> {
+        try {
+            const activeConversationsResponse = await this.conversationService.getAllActiveConversations();
+            const activeConversations = activeConversationsResponse.data || [];
 
+            this.logger.debug(`[handleUserInactivityCheck] Active conversations: ${activeConversations.length}`);
+
+            for (const conversation of activeConversations) {
+                const { currentStep, lastMessage, reminderSentAt } = conversation.conversationContext;
+                if (!lastMessage) {
+                    continue;
+                }
+
+                const now = Date.now();
+                const lastMessageTime = new Date(lastMessage).getTime();
+                const diffInMinutes = Math.floor((now - lastMessageTime) / (1000 * 60));
+
+                this.logger.debug(`[handleUserInactivityCheck] Conversation ID: ${conversation._id}, Time difference: ${diffInMinutes} minutes`);
+
+                if (ConversationStep.UserAbandoned === currentStep) {
+                    continue;
+                }
+
+                if (diffInMinutes >= 30) {
+                    const messages = [
+                        '*👋 Astra Pay* - Tudo bem por aí?',
+                        'Percebemos que você não concluiu o pagamento.',
+                        'Poderia nos dizer o que aconteceu?'
+                    ];
+
+                    const sentMessages = this.mapTextMessages(messages, conversation.userId);
+
+                    await this.conversationService.updateConversation(conversation._id.toString(), {
+                        userId: conversation.userId,
+                        conversationContext: {
+                            ...conversation.conversationContext,
+                            currentStep: ConversationStep.UserAbandoned,
+                        },
+                    });
+
+                    await this.sendMessagesDirectly(sentMessages);
+                    continue;
+                }
+
+                const stepsWithoutInactivityCheck = [
+                    ConversationStep.WaitingForPayment,
+                    ConversationStep.PaymentMethodSelection,
+                    ConversationStep.Feedback,
+                    ConversationStep.FeedbackDetail,
+                    ConversationStep.Completed,
+                    ConversationStep.UserAbandoned,
+                ];
+
+                if (stepsWithoutInactivityCheck.includes(currentStep)) {
+                    continue;
+                }
+
+                if (diffInMinutes >= 5 && !reminderSentAt) {
+                    const reminderMessage = this.getStepReminderMessage(conversation.conversationContext.currentStep);
+                    const reminderMessages = this.mapTextMessages(
+                        [
+                            '*👋 Astra Pay* - Está tudo bem?',
+                            reminderMessage,
+                        ],
+                        conversation.userId
+                    );
+
+                    const updatedContext: ConversationContextDTO = {
+                        ...conversation.conversationContext,
+                        reminderSentAt: new Date(),
+                    };
+                    await this.conversationService.updateConversation(conversation._id.toString(), {
+                        userId: conversation.userId,
+                        conversationContext: updatedContext,
+                    });
+
+                    await this.sendMessagesDirectly(reminderMessages);
+                }
+            }
+
+        } catch (error) {
+            this.logger.error(`[handleUserInactivityCheck] Error: ${error.message}`, error.stack);
+        }
+    }
 
     public async handleProcessMessage(request: RequestStructure): Promise<ResponseStructureExtended[]> {
         const fromPerson = request.from;
@@ -414,6 +515,12 @@ export class WhatsAppService {
                 break;
             case ConversationStep.FeedbackDetail:
                 requestResponse = await this.handleFeedbackDetail(from, userMessage, state);
+                break;
+            case ConversationStep.DelayedPayment:
+                requestResponse = await this.handleDelayedPayment(from, userMessage, state);
+                break;
+            case ConversationStep.UserAbandoned:
+                requestResponse = await this.handleUserAbandoned(from, userMessage, state);
                 break;
             case ConversationStep.Completed:
                 // Se a conversa estiver finalizada mas a mensagem não contiver a frase para iniciar nova conversa,
@@ -1887,16 +1994,12 @@ export class WhatsAppService {
                 state.conversationContext.userName,
             );
 
-            this.logger.log(
-                `[handleSelectSavedCard] Transaction created for new card: ${transactionResponse.transactionResponse._id}`,
-            );
-
             sentMessages = await this.handleCreditCardPayment(
                 from,
                 state,
                 transactionResponse.transactionResponse,
             );
-            this.logger.log(`[handleSelectSavedCard] Sent messages: ${JSON.stringify(sentMessages)}`);
+            // this.logger.log(`[handleSelectSavedCard] Sent messages: ${JSON.stringify(sentMessages)}`);
             return sentMessages;
         }
 
@@ -1917,10 +2020,6 @@ export class WhatsAppService {
             state,
             PaymentMethod.CREDIT_CARD,
             state.conversationContext.userName,
-        );
-
-        this.logger.log(
-            `[handleSelectSavedCard] Transaction created using saved card: ${transactionResponse.transactionResponse._id}`,
         );
 
         // const totalPaymentMessage = `O valor final da conta é de *${formatToBRL(state.conversationContext.userAmount)}*.`;
@@ -2383,6 +2482,82 @@ export class WhatsAppService {
                 },
             });
         }
+
+        return sentMessages;
+    }
+
+    private async handleUserAbandoned(
+        from: string,
+        userMessage: string,
+        state: ConversationDto,
+    ): Promise<ResponseStructureExtended[]> {
+        const sentMessages: ResponseStructureExtended[] = [];
+        const conversationId = state._id.toString();
+
+        if (!state.conversationContext.feedback) {
+            state.conversationContext.feedback = {};
+        }
+
+        state.conversationContext.feedback.userAbandoned = userMessage.trim();
+
+        sentMessages.push(
+            ...this.mapTextMessages(
+                [
+                    'Obrigado por nos contar. 😢\n' +
+                    'Anotamos sua resposta e sentiremos falta de concluir seu pedido por aqui.'
+                ],
+                from
+            ),
+            ...this.mapTextMessages(
+                [
+                    'Se mudar de ideia ou precisar de ajuda, é só mandar outra mensagem!'
+                ],
+                from
+            )
+        );
+
+        const updatedContext: ConversationContextDTO = {
+            ...state.conversationContext,
+            currentStep: ConversationStep.Completed,
+        };
+
+        await this.conversationService.updateConversation(conversationId, {
+            userId: state.userId,
+            conversationContext: updatedContext,
+        });
+
+        return sentMessages;
+    }
+
+    private async handleDelayedPayment(from: string, userMessage: string, state: ConversationDto): Promise<ResponseStructureExtended[]> {
+        const sentMessages: ResponseStructureExtended[] = [];
+        const conversationId = state._id.toString();
+
+        if (!state.conversationContext.feedback) {
+            state.conversationContext.feedback = {};
+        }
+
+        state.conversationContext.feedback.delayedPayment = userMessage.trim();
+
+        const updatedContext: ConversationContextDTO = {
+            ...state.conversationContext,
+            currentStep: ConversationStep.WaitingForPayment,
+        };
+
+        await this.conversationService.updateConversation(conversationId, {
+            userId: state.userId,
+            conversationContext: updatedContext,
+        });
+
+        sentMessages.push(
+            ...this.mapTextMessages(
+                [
+                    'Obrigado por nos contar. 😢\n' +
+                    'Anotamos sua resposta'
+                ],
+                from
+            ),
+        );
 
         return sentMessages;
     }
@@ -2973,5 +3148,24 @@ export class WhatsAppService {
 
         return 'Comprovante enviado com sucesso para o usuário';
     }
-}
 
+    getStepReminderMessage(step: ConversationStep): string {
+        const stepMessages: Partial<Record<ConversationStep, string>> = {
+            [ConversationStep.CollectName]: 'Notamos que você ainda não nos deu seu *Nome Completo* para continuarmos seu pagamento.',
+            [ConversationStep.ProcessingOrder]: 'Estamos processando seu pedido. Por favor, aguarde um momento.',
+            [ConversationStep.ConfirmOrder]: 'Notamos que você ainda não confirmou seu pedido. Ele está correto?\n\n1- Sim 2- Não',
+            [ConversationStep.SplitBill]: 'Estamos aguardando a confirmação da divisão da conta.',
+            [ConversationStep.WaitingForContacts]: 'Estamos aguardando os contatos para dividir a conta.',
+            [ConversationStep.ExtraTip]: 'Gostaria de adicionar uma gorjeta extra?',
+            [ConversationStep.CollectCPF]: 'Notamos que você ainda não nos deu seu CPF para continuarmos o pagamento.',
+            [ConversationStep.PixExpired]: 'Seu PIX expirou. Gostaria de gerar um novo?\n\n1- Sim 2- Não',
+            [ConversationStep.PaymentMethodSelection]: 'Por favor, escolha um método de pagamento para continuar.',
+            // [ConversationStep.WaitingForPayment]: 'Estamos aguardando a confirmação do pagamento.',
+            // [ConversationStep.Feedback]: 'Notamos que você ainda não nos deu seu Feedback. Queremos saber como foi sua experiência.',
+            // [ConversationStep.FeedbackDetail]: 'Poderia nos dar mais detalhes sobre seu feedback?',
+        };
+
+        return stepMessages[step] || 'Estamos aguardando sua ação para continuar.';
+    }
+
+}
