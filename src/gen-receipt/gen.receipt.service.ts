@@ -24,6 +24,7 @@ export class GenReceiptService {
 				bottom: '0px',
 				left: '0px',
 			},
+			args: ['--no-sandbox', '--disable-setuid-sandbox'],
 		};
 		// Cria o PDF usando o template, as opções e os dados fornecidos
 		const logoPath = path.join(process.cwd(), 'src', 'gen-receipt', 'templates', 'images', 'astra_logo.png');
