@@ -213,14 +213,14 @@ export class TransactionService {
         }
     }
 
-    async getPendingTransactionsOlderThan(youngerThanMinutes: number, olderThanMinutes: number, statuses?: PaymentStatus[]): Promise<SimpleResponseDto<TransactionDTO[]>> {
+    async getPendingTransactionsOlderThan(olderThanMinutes: number, youngerThanMinutes: number, statuses?: PaymentStatus[]): Promise<SimpleResponseDto<TransactionDTO[]>> {
         const now = new Date();
-        const youngerThanThreshold = new Date(now.getTime() - youngerThanMinutes * 60 * 1000);
         const olderThanThreshold = new Date(now.getTime() - olderThanMinutes * 60 * 1000);
+        const youngerThanThreshold = new Date(now.getTime() - youngerThanMinutes * 60 * 1000);
 
         const transactions = await this.db.collection("transactions").find({
             status: { $in: statuses || [PaymentStatus.Pending, PaymentStatus.Waiting, PaymentStatus.Created] },
-            createdAt: { $lt: youngerThanThreshold, $gt: olderThanThreshold }
+            createdAt: { $gt: olderThanThreshold, $lt: youngerThanThreshold }
         }).toArray();
 
         return {
