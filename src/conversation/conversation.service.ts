@@ -16,6 +16,7 @@ export class ConversationService {
         ConversationStep.OrderNotFound,
         ConversationStep.PaymentInvalid,
         ConversationStep.PaymentAssistance,
+        ConversationStep.EmptyOrder,
     ];
     constructor(@Inject('DATABASE_CONNECTION') private db: Db, clientProvider: ClientProvider) {
         this.mongoClient = clientProvider.getClient();

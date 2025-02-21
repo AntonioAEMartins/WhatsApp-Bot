@@ -345,7 +345,7 @@ export class WhatsAppService {
 
             const currentStep = state.conversationContext.currentStep;
 
-            if (currentStep === ConversationStep.WaitingForPayment) {
+            if (currentStep === ConversationStep.WaitingForPayment || currentStep === ConversationStep.EmptyOrder) {
                 return [];
             }
 
@@ -428,6 +428,7 @@ export class WhatsAppService {
             ConversationStep.OrderNotFound,
             ConversationStep.PaymentInvalid,
             ConversationStep.PaymentAssistance,
+            ConversationStep.EmptyOrder,
         ];
         if (
             (!state || (state && terminalStates.includes(state.conversationContext.currentStep))) &&
@@ -769,6 +770,12 @@ export class WhatsAppService {
                         true,
                     ),
                 );
+
+                await this.conversationService.updateConversationWithErrorStatus(
+                    conversationId,
+                    ConversationStep.EmptyOrder,
+                );
+
                 return sentMessages;
             }
 
