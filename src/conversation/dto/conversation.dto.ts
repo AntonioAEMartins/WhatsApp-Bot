@@ -73,6 +73,14 @@ export class FeedbackDTO {
   @IsString()
   @IsOptional()
   recommendedRestaurants?: string;
+
+  @IsString()
+  @IsOptional()
+  userAbandoned?: string;
+
+  @IsString()
+  @IsOptional()
+  delayedPayment?: string;
 }
 
 export class ConversationContextDTO {
@@ -154,6 +162,14 @@ export class ConversationContextDTO {
   @IsString()
   @IsOptional()
   selectedCardId?: string;
+
+  @IsDate()
+  @IsOptional()
+  reminderSentAt?: Date;
+
+  @IsDate()
+  @IsOptional()
+  delayedReminderSentAt?: Date;
 }
 
 export class BaseConversationDto {
