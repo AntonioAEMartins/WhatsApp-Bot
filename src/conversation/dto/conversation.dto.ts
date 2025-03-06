@@ -4,6 +4,8 @@ import { IsString, IsNumber, IsArray, IsOptional, ValidateNested, IsEnum, IsDate
 import { Type } from 'class-transformer';
 import { ObjectId } from 'mongodb';
 import { ConversationStep, MessageType, PaymentStatus } from './conversation.enums';
+import { PaymentMethod } from 'src/transaction/dto/transaction.dto';
+import { CardDto } from 'src/card/dto/card.dto';
 
 
 
@@ -71,6 +73,14 @@ export class FeedbackDTO {
   @IsString()
   @IsOptional()
   recommendedRestaurants?: string;
+
+  @IsString()
+  @IsOptional()
+  userAbandoned?: string;
+
+  @IsString()
+  @IsOptional()
+  delayedPayment?: string;
 }
 
 export class ConversationContextDTO {
@@ -100,7 +110,7 @@ export class ConversationContextDTO {
   @IsOptional()
   @IsString()
   @Matches(/^\d+$/, { message: 'cpf deve conter apenas números.' })
-  cpf?: string;
+  documentNumber?: string;
 
   @IsOptional()
   @IsString()
@@ -113,6 +123,10 @@ export class ConversationContextDTO {
   @IsOptional()
   @IsNumber()
   tipAmount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  tipPercent?: number;
 
   @IsOptional()
   @IsNumber()
@@ -131,6 +145,31 @@ export class ConversationContextDTO {
   @ValidateNested({ each: true })
   @Type(() => MessageDTO)
   messages: MessageDTO[];
+
+  @IsEnum(PaymentMethod)
+  @IsOptional()
+  paymentMethod?: PaymentMethod;
+
+  @IsString()
+  @IsOptional()
+  userName?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CardDto)
+  savedCards?: CardDto[];
+
+  @IsString()
+  @IsOptional()
+  selectedCardId?: string;
+
+  @IsDate()
+  @IsOptional()
+  reminderSentAt?: Date;
+
+  @IsDate()
+  @IsOptional()
+  delayedReminderSentAt?: Date;
 }
 
 export class BaseConversationDto {

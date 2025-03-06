@@ -1,20 +1,18 @@
 export enum PaymentStatus {
   Pending = 'pending',
-  Confirmed = 'confirmed',
-  Overpaid = 'overpaid',
-  Underpaid = 'underpaid',
-  Partial = 'partial',
-  Incomplete = 'incomplete',
+  Accepted = 'accepted',
+  Denied = 'denied',
+  Expired = 'expired',
+  PreAuthorized = 'pre_authorized',
+  Waiting = 'waiting',
+  Created = 'created',
 }
 
 export enum PaymentDescription {
-  Overpaid = 'overpaid',
-  Underpaid = 'underpaid',
-  Partial = 'partial',
-  Incomplete = 'incomplete',
+  Failed = 'failed',
 }
 
-export const ActivePaymentStatuses = [PaymentStatus.Pending, PaymentStatus.Partial];
+export const ActivePaymentStatuses = [PaymentStatus.Pending];
 
 export enum MessageType {
   User = 'user',
@@ -24,6 +22,7 @@ export enum MessageType {
 
 export enum ConversationStep {
   Initial = 'initial',
+  CollectName = 'collect_name',
   ProcessingOrder = 'processing_order',
   ConfirmOrder = 'confirm_order',
   SplitBill = 'split_bill',
@@ -31,6 +30,8 @@ export enum ConversationStep {
   WaitingForContacts = 'waiting_for_contacts',
   ExtraTip = 'extra_tip',
   CollectCPF = 'collect_cpf',
+  PixExpired = 'pix_expired',
+  PaymentMethodSelection = 'payment_method_selection',
   WaitingForPayment = 'waiting_for_payment',
   AwaitingUserDecision = 'awaiting_user_decision',
   PaymentReminder = 'payment_reminder',
@@ -40,8 +41,12 @@ export enum ConversationStep {
   Completed = 'completed',
   IncompleteOrder = 'incomplete_order',
   OrderNotFound = 'order_not_found',
+  EmptyOrder = 'empty_order',
   PaymentDeclined = 'payment_declined',
   PaymentInvalid = 'payment_invalid',
   PaymentAssistance = 'payment_assistance',
   OverpaymentDecision = 'overpayment_decision',
+  SelectSavedCard = 'select_saved_card',
+  UserAbandoned = 'user_abandoned',
+  DelayedPayment = 'delayed_payment',
 }

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { PaymentMethod } from 'src/transaction/dto/transaction.dto';
 
 @Injectable()
 export class TableService {
@@ -43,9 +44,9 @@ export class TableService {
         return await response.json();
     }
 
-    async finishPayment(id: number): Promise<any> {
+    async finishPayment(id: number, payment_method: PaymentMethod): Promise<any> {
 
-        const response = await fetch(`${this.url}/tables/${id}/close`, {
+        const response = await fetch(`${this.url}/tables/${id}/close/${payment_method}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
@@ -75,5 +76,4 @@ export class TableService {
 
         return await response.json();
     }
-
 }
