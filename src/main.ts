@@ -2,11 +2,16 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import * as dotenv from 'dotenv';
-import { ValidationPipe } from '@nestjs/common';
-
+import { Logger, ValidationPipe } from '@nestjs/common';
+import { printConfig } from './print.config';
+import * as bodyParser from 'body-parser';
+import * as cors from 'cors';
+import { GlobalHttpExceptionFilter } from './request/exception.filter';
 dotenv.config()
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
+
   const app = await NestFactory.create(AppModule);
 
   app.useGlobalPipes(
@@ -17,8 +22,13 @@ async function bootstrap() {
     }),
   );
 
-  // app.enableShutdownHooks();
+  app.useGlobalFilters(new GlobalHttpExceptionFilter());
 
+  // Enable CORS for https://pay.astra1.com.br/
+  app.use(cors({
+    // origin: 'https://pay.astra1.com.br',
+    origin: '*',
+  }));
 
   // Swagger setup
   const config = new DocumentBuilder()
@@ -28,9 +38,19 @@ async function bootstrap() {
     .addTag('your-tag')
     .build();
 
+  app.use(
+    bodyParser.json({
+      verify: (req: any, res, buf, encoding) => {
+        req.rawBody = buf.toString('utf8');
+      },
+    }),
+  );
+
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document);
 
-  await app.listen(3005);
+  await app.listen(3005, '127.0.0.1');
+
+  printConfig();
 }
 bootstrap();

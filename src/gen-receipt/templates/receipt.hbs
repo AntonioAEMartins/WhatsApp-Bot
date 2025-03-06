@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Recibo de Pagamento - Astra Pay</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      font-family: sans-serif;
+      box-sizing: border-box;
+    }
+
+    body {
+      background-color: #FFF;
+      color: #000;
+    }
+
+    /* Cabeçalho verde */
+    .header {
+      background-color: #b2fbc8;
+      /* Ajuste para a cor exata do seu Flutter */
+      padding: 24px 16px;
+      text-align: center;
+    }
+
+    .icon-container {
+      width: 60px;
+      height: 60px;
+      margin: 0 auto 8px auto;
+      border-radius: 50%;
+      background-color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Ícone “check” dentro do círculo branco */
+    .icon-container svg {
+      width: 32px;
+      height: 32px;
+      fill: #4CAF50;
+    }
+
+    .header h2 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    /* Valor em destaque (Ex: R$ 150,50) */
+    .header .amount {
+      font-size: 24px;
+      font-weight: bold;
+    }
+
+    /* Conteúdo principal com largura máxima de 400px */
+    .content {
+      padding: 24px 16px;
+      max-width: 400px;
+      margin: 0 auto;
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 16px;
+    }
+
+    .details-list {
+      margin-bottom: 24px;
+    }
+
+    .details-item {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    /* Removendo o negrito das labels */
+    .details-item label {
+      font-weight: normal;
+    }
+
+    /* Badge para “Concluído” com ícone verde */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: #4CAF50;
+    }
+
+    .status-badge svg {
+      width: 16px;
+      height: 16px;
+      fill: #4CAF50;
+    }
+
+    .instructions {
+      margin-bottom: 24px;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    /* Área que envolve o botão */
+    .cta-wrapper {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    /* Botão para voltar ao WhatsApp (ocupa todo o espaço) */
+    .cta-button {
+      display: inline-flex;
+      /* Alinhar imagem e texto no mesmo eixo */
+      align-items: center;
+      /* Centraliza verticalmente */
+      justify-content: center;
+      /* Centraliza horizontalmente */
+      gap: 8px;
+      /* Espaçamento entre imagem e texto */
+      width: 100%;
+      /* Ocupa 100% da área disponível */
+      background-color: #32CD32;
+      /* Verde WhatsApp */
+      color: #fff;
+      text-decoration: none;
+      padding: 14px 24px;
+      border-radius: 4px;
+      font-weight: bold;
+      font-size: 16px;
+      border: none;
+      cursor: pointer;
+    }
+
+    .cta-button:hover {
+      background-color: #28a428;
+    }
+
+    /* Rodapé */
+    .footer {
+      text-align: center;
+      margin-top: 24px;
+      margin-bottom: 16px;
+    }
+
+    .footer .astra {
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    /* Links sublinhados */
+    .links {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .links a {
+      color: #666;
+      text-decoration: underline;
+      margin: 0 8px;
+    }
+
+    .links a:hover {
+      text-decoration: underline;
+    }
+
+    .astra-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Cabeçalho verde -->
+  <div class="header">
+    <div class="icon-container">
+      <svg xmlns="http://www.w3.org/2000/svg" height="24" width="24" viewBox="0 0 24 24">
+        <path d="M0 0h24v24H0z" fill="none"></path>
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 
+                 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 
+                 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z">
+        </path>
+      </svg>
+    </div>
+
+    <h2>{{statusTitle}}</h2>
+    <p class="amount">{{amount}}</p>
+  </div>
+
+  <!-- Área de conteúdo principal -->
+  <div class="content">
+    <h3 class="section-title">Detalhes do pagamento</h3>
+    <div class="details-list">
+      <div class="details-item">
+        <label>Número da mesa/comanda</label>
+        <span>{{tableId}}</span>
+      </div>
+      <div class="details-item">
+        <label>Data</label>
+        <span>{{dateTime}}</span>
+      </div>
+      <div class="details-item">
+        <label>Status do pagamento</label>
+        <span class="status-badge">
+          <svg xmlns="http://www.w3.org/2000/svg" height="24" width="24" viewBox="0 0 24 24">
+            <path d="M0 0h24v24H0z" fill="none"></path>
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10
+                     10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 
+                     1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z">
+            </path>
+          </svg>
+          {{statusLabel}}
+        </span>
+      </div>
+
+      {{!-- Exibe a linha do Cartão SOMENTE se não for PIX (isPIX é false) --}}
+      {{#unless isPIX}}
+      <div class="details-item">
+        <label>Cartão utilizado (final)</label>
+        <span>{{cardLast4}}</span>
+      </div>
+      {{/unless}}
+
+      <div class="details-item">
+        <label>Valor</label>
+        <span>{{amount}}</span>
+      </div>
+    </div>
+
+    <h3 class="section-title">Comprovante</h3>
+    <p class="instructions">
+      Devolva a sua comanda!<br><br>
+      Apresente essa tela para um de nossos atendentes para validarmos o seu pagamento.
+    </p>
+
+    <!-- Rodapé -->
+    <div class="footer">
+      <img src="{{astraLogo}}" alt="Astra" style="height:160px;">
+
+      <div class="links">
+        <a href="{{privacyLink}}">Privacidade</a>
+        <a href="{{termsLink}}">Termos</a>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>

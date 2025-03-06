@@ -2,8 +2,6 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
-import { WhatsAppController } from './whatsapp/whatsapp.controller';
-import { WhatsAppService } from './whatsapp/whatsapp.service';
 import { TableModule } from './table/table.module';
 import { LangchainModule } from './langchain/langchain.module';
 import { DatabaseModule } from './db/db.module';
@@ -11,8 +9,10 @@ import { ConversationModule } from './conversation/conversation.module';
 import { UserModule } from './user/user.module';
 import { TransactionModule } from './transaction/transaction.module';
 import { OrderModule } from './order/order.module';
-import { BullModule } from '@nestjs/bull';
-
+import { IPagModule } from './payment-gateway/ipag.module';
+import { ScheduleModule } from '@nestjs/schedule';
+import { CardModule } from './card/card.module';
+import { PdfModule } from '@gboutte/nestjs-pdf';
 @Module({
   imports: [
     WhatsAppModule,
@@ -23,7 +23,9 @@ import { BullModule } from '@nestjs/bull';
     UserModule,
     TransactionModule,
     OrderModule,
-    
+    IPagModule,
+    ScheduleModule.forRoot(),
+    CardModule,
   ],
   controllers: [AppController],
   providers: [AppService],

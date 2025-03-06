@@ -8,7 +8,7 @@ import { PaymentProofDTO, TransactionDTO } from "src/transaction/dto/transaction
 import { TransactionService } from "src/transaction/transaction.service";
 import { UserService } from "src/user/user.service";
 import { Client, LocalAuth, Message } from "whatsapp-web.js";
-import { WhatsAppService } from "./whatsapp.service";
+import { RequestMessage, WhatsAppService } from "./whatsapp.service";
 
 
 @Injectable()
@@ -48,8 +48,8 @@ export class WhatsAppUtils {
      * Functionality:
      * - Returns true if 'comprovante' is mentioned or if the message has media.
      */
-    public userSentProof(userMessage: string, message: Message): boolean {
-        return userMessage.includes('comprovante') || message.hasMedia;
+    public userSentProof(userMessage: string, message: RequestMessage): boolean {
+        return userMessage.includes('comprovante') || message.type === 'image';
     }
 
     /**
@@ -131,8 +131,8 @@ export class WhatsAppUtils {
      * - Supports both single and multiple vCard types.
      */
 
-    public isVcardMessage(message: Message): boolean {
-        return message.type === 'vcard' || message.type === 'multi_vcard';
+    public isVcardMessage(message: RequestMessage): boolean {
+        return message.type === 'vcard';
     }
 
     /**
@@ -186,25 +186,27 @@ export class WhatsAppUtils {
      * - Sanitizes phone numbers by removing non-numeric characters.
      */
 
-    public extractContactsFromVcards(message: Message, remainingContactsNeeded: number): ParticipantDTO[] {
-        const vcardDataArray = message.vCards;
+    public extractContactsFromVcards(message: RequestMessage, remainingContactsNeeded: number): ParticipantDTO[] {
+        const vcardDataArray = message.body.split(/END:VCARD\s*/).filter(vcard => vcard.trim().length > 0);
+
         const vcardDataArrayLimited = vcardDataArray.slice(0, remainingContactsNeeded);
 
         return vcardDataArrayLimited.map((vcardData) => {
-            const vcardName = vcardData.split('FN:')[1]?.split('\n')[0] || 'Nome não informado';
-            let vcardPhone = vcardData.split('waid=')[1]?.split(':')[1]?.split('\n')[0] || '';
-            vcardPhone = vcardPhone.replace(/\D/g, '');
+            const nameMatch = vcardData.match(/FN:(.*)/);
+            const phoneMatch = vcardData.match(/waid=(\d+)/);
 
-            const participant: ParticipantDTO = {
+            const vcardName = nameMatch ? nameMatch[1].trim() : 'Nome não informado';
+            const vcardPhone = phoneMatch ? phoneMatch[1].trim() : '';
+
+            return {
                 name: vcardName,
                 phone: vcardPhone,
                 expectedAmount: 0,
                 paidAmount: 0
-            }
-
-            return participant;
+            } as ParticipantDTO;
         });
     }
+
 
     /**
      * Utility: Add Extracted Contacts to State

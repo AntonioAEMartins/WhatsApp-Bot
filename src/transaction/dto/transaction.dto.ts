@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { IsArray, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, ValidateNested } from "class-validator";
+import { IsArray, IsDate, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, ValidateNested } from "class-validator";
 import { ObjectId } from "mongodb";
 import { PaymentDescription, PaymentStatus } from "src/conversation/dto/conversation.enums";
 
@@ -32,6 +32,30 @@ export class PaymentProofDTO {
     id_transacao: string;
 }
 
+export enum PaymentMethod {
+    PIX = 'pix',
+    CREDIT_CARD = 'credit_card'
+}
+
+export class PixInfoDTO {
+    @IsString()
+    name: string;
+
+    @IsString()
+    document: string;
+}
+
+export class ErrorDescriptionDTO {
+    @IsString()
+    errorCode: string;
+
+    @IsString()
+    userFriendlyMessage: string;
+
+    @IsString()
+    rawError: string;
+}
+
 export class BaseTransactionDTO {
     // Referência ao pedido desta transação
     @IsString()
@@ -46,6 +70,10 @@ export class BaseTransactionDTO {
     @IsString()
     @IsOptional()
     conversationId?: string;
+
+    @IsEnum(PaymentMethod)
+    @IsOptional()
+    paymentMethod: PaymentMethod;
 
     @IsString()
     @IsOptional()
@@ -73,6 +101,9 @@ export class BaseTransactionDTO {
     confirmedAt?: Date;
 
     @IsOptional()
+    expiresAt?: Date;
+
+    @IsOptional()
     createdAt?: Date;
 
     @IsOptional()
@@ -81,6 +112,28 @@ export class BaseTransactionDTO {
     @IsOptional()
     @IsEnum(PaymentDescription)
     description?: PaymentDescription;
+
+    @IsOptional()
+    @IsString()
+    ipagTransactionId?: string;
+
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => PixInfoDTO)
+    pixInfo?: PixInfoDTO;
+
+    @IsOptional()
+    @IsString()
+    cardId?: string;
+
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => ErrorDescriptionDTO)
+    errorDescription?: ErrorDescriptionDTO;
+
+    @IsOptional()
+    @IsDate()
+    reminderSentAt?: Date;
 }
 
 export class CreateTransactionDTO extends BaseTransactionDTO {

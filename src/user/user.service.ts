@@ -80,8 +80,6 @@ export class UserService {
         };
     }
 
-
-
     async createUser(createUser: CreateUserDto): Promise<SimpleResponseDto<UserDto>> {
 
         const userExists = await this.db.collection("users").findOne({ userId: createUser.userId });
@@ -101,6 +99,19 @@ export class UserService {
         return {
             msg: "User created",
             data: createUser
+        }
+    }
+
+    async updateUserName(userId: string, userName: string): Promise<SimpleResponseDto<UserDto>> {
+        const user = await this.db.collection("users").findOneAndUpdate(
+            { userId: userId },
+            { $set: { userName: userName } },
+            { returnDocument: "after" }
+        );
+
+        return {
+            msg: "User name updated",
+            data: user.value as UserDto
         }
     }
 

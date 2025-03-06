@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { PaymentMethod } from 'src/transaction/dto/transaction.dto';
 
 @Injectable()
 export class TableService {
@@ -6,7 +7,8 @@ export class TableService {
     private readonly url: string;
 
     constructor() {
-        this.url = process.env.POS_BACKEND_URL;
+        const posBackendUrl = process.env.ENVIRONMENT === 'homologation' ? process.env.POS_HOM_BACKEND_URL : process.env.ENVIRONMENT === 'production' ? process.env.POS_PROD_BACKEND_URL : process.env.POS_DEV_BACKEND_URL;
+        this.url = posBackendUrl;
     }
 
     async orderTable(id: number): Promise<any> {
@@ -35,8 +37,6 @@ export class TableService {
             },
         });
 
-        console.log("Start Payment Response: ", response);
-
         if (!response.ok) {
             throw new Error('Failed to start payment');
         }
@@ -44,9 +44,9 @@ export class TableService {
         return await response.json();
     }
 
-    async finishPayment(id: number): Promise<any> {
+    async finishPayment(id: number, payment_method: PaymentMethod): Promise<any> {
 
-        const response = await fetch(`${this.url}/tables/${id}/close`, {
+        const response = await fetch(`${this.url}/tables/${id}/close/${payment_method}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
@@ -76,5 +76,4 @@ export class TableService {
 
         return await response.json();
     }
-
 }
