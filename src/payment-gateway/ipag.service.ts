@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { CreatePaymentDto, LibraryCardType, PaymentMethodCard, PaymentMethodPix, PaymentType, UserPaymentCreditInfoDto, UserPaymentPixInfoDto } from './dto/ipag-pagamentos.dto';
 import { IPagErrorResponse, IPagTransactionResponse } from './types/ipag-response.types';
 import { CreateEstablishmentDto, CreateSellerDto } from './dto/ipag-marketplace.dto';
@@ -14,14 +14,13 @@ import { ErrorDescriptionDTO, PaymentMethod, TransactionDTO } from 'src/transact
 import { CardService } from 'src/card/card.service';
 import * as payform from 'payform';
 
-
-
 @Injectable()
 export class IPagService {
     private readonly baseURL: string;
     private readonly apiId: string;
     private readonly apiKey: string;
     private readonly ipagSplitSellerId: string;
+    private readonly logger = new Logger(IPagService.name);
 
     constructor(
         @InjectQueue('payment') private readonly paymentQueue: Queue,
@@ -76,6 +75,86 @@ export class IPagService {
     async createPIXPayment(
         userPaymentInfo: UserPaymentPixInfoDto,
     ): Promise<IPagTransactionResponse> {
+        // In sandbox mode, create a mock PIX key without going through the payment gateway
+        if (process.env.ENVIRONMENT === 'sandbox') {
+            this.logger.log(`[createPIXPayment] SANDBOX MODE - Creating mock PIX for transaction ${userPaymentInfo.transactionId}`);
+
+            // Get the transaction to fetch the expected amount
+            const transaction = await this.transactionService.getTransaction(userPaymentInfo.transactionId);
+            const expectedAmount = transaction.data.expectedAmount;
+
+            // Generate a mock PIX QR code that looks similar to real one
+            const mockQRCode = `00020101021126580014br.gov.bcb.pix0136sandbox.mock.pix.key@sandbox.com5204000053039865802BR5913SANDBOX MOCK6009SAO PAULO62290525${this.generateRandomString(20)}6304${this.generateRandomString(4)}`;
+
+            // Schedule automatic completion after 10 seconds
+            setTimeout(() => {
+                this.simulateTransactionCompletion(userPaymentInfo.transactionId)
+                    .then(() => this.logger.log(`[createPIXPayment] SANDBOX MODE - Auto-completed transaction ${userPaymentInfo.transactionId}`))
+                    .catch(error => this.logger.error(`[createPIXPayment] SANDBOX MODE - Error auto-completing transaction: ${error.message}`));
+            }, 10000);
+
+            const now = new Date();
+
+            return {
+                id: 123456,
+                uuid: `sandbox-${this.generateRandomString(10)}`,
+                resource: 'transaction',
+                attributes: {
+                    history: [],
+                    seller_id: 'sandbox-seller',
+                    order_id: transaction.data.orderId,
+                    amount: expectedAmount,
+                    installments: 1,
+                    tid: `sandbox-${this.generateRandomString(8)}`,
+                    authorization_id: `sandbox-auth-${this.generateRandomString(6)}`,
+                    status: { code: 1, message: 'pending' },
+                    method: 'pix',
+                    captured_amount: 0,
+                    captured_at: '',
+                    url_authentication: '',
+                    callback_url: '',
+                    created_at: now.toISOString(),
+                    updated_at: now.toISOString(),
+                    acquirer: { name: 'sandbox', message: 'Waiting for payment', code: '00', merchant_id: 'sandbox-merchant' },
+                    gateway: { code: 'P0', message: 'Success' },
+                    pix: {
+                        link: `https://sandbox.payment.link/${userPaymentInfo.transactionId}`,
+                        qrcode: mockQRCode
+                    },
+                    customer: {
+                        name: userPaymentInfo.customerInfo.name,
+                        cpf_cnpj: userPaymentInfo.customerInfo.cpf_cnpj,
+                        email: userPaymentInfo.customerInfo.email || '',
+                        phone: userPaymentInfo.customerInfo.phone || '',
+                        billing_address: {
+                            street: '',
+                            number: '',
+                            district: '',
+                            complement: '',
+                            city: '',
+                            state: '',
+                            zipcode: '',
+                            country: 'BR'
+                        },
+                        shipping_address: {
+                            street: '',
+                            number: '',
+                            district: '',
+                            complement: '',
+                            city: '',
+                            state: '',
+                            zipcode: '',
+                            country: 'BR'
+                        }
+                    },
+                    products: []
+                },
+
+            };
+        }
+
+        // Regular production/homologation/development flow
+        const endpoint = '/service/resources/payments';
         // Valida a transação para PIX – se não estiver Pending e for Failed, cria nova transação e continua;
         // se estiver em outro status, lança exceção.
         console.log("[createPIXPayment] userPaymentInfo", userPaymentInfo);
@@ -110,7 +189,6 @@ export class IPagService {
 
         console.log("[createPIXPayment] paymentData", paymentData);
 
-        const endpoint = 'service/payment';
         try {
             const response = (await this.makeRequest(
                 endpoint,
@@ -142,7 +220,102 @@ export class IPagService {
     async createCreditCardPayment(
         userPaymentInfo: UserPaymentCreditInfoDto,
     ): Promise<SimpleResponseDto<{ msg: string }>> {
-        // Valida a transação e garante que ela está no estado adequado.
+        // Verificação de ambiente sandbox
+        if (process.env.ENVIRONMENT === 'sandbox') {
+            this.logger.log(`[createCreditCardPayment] SANDBOX MODE - Processing credit card payment for transaction ${userPaymentInfo.transactionId}`);
+
+            const transaction = await this.validateTransaction(
+                userPaymentInfo.transactionId,
+                PaymentMethod.CREDIT_CARD,
+                false,
+            );
+
+            let cardNumber: string;
+
+            if (userPaymentInfo.cardId) {
+                const existingCardResponse = await this.cardService.getCardById(userPaymentInfo.cardId);
+                if (!existingCardResponse?.data) {
+                    throw new HttpException('Card not found', HttpStatus.BAD_REQUEST);
+                }
+                cardNumber = existingCardResponse.data.last4;
+            } else {
+                cardNumber = userPaymentInfo.cardInfo.number.slice(-4);
+            }
+
+            // Pegar o último dígito
+            const lastDigit = parseInt(cardNumber.slice(-1));
+            const isOdd = lastDigit % 2 !== 0;
+
+            // Se o último dígito for par, simulamos rejeição
+            if (!isOdd) {
+                await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
+                    errorDescription: {
+                        errorCode: 'sandbox-rejection',
+                        userFriendlyMessage: 'Cartão com final par rejeitado em ambiente sandbox',
+                        rawError: 'Sandbox mode: even-ending cards are always rejected',
+                    },
+                    // status: PaymentStatus.Denied,
+                });
+
+                // Duplicamos a transação para permitir uma nova tentativa
+                // await this.transactionService.duplicateTransaction(userPaymentInfo.transactionId);
+
+                throw new HttpException('Cartão com final par rejeitado em ambiente sandbox', HttpStatus.BAD_REQUEST);
+            }
+
+            // Se chegou aqui, o último dígito é ímpar, simulamos aprovação
+            const now = new Date();
+            const mockTransactionId = `sandbox-${this.generateRandomString(10)}`;
+
+            // Atualizamos a transação com as informações de sucesso
+
+
+            // Dispara processo de conclusão (mesma lógica usada nos fluxos reais)
+            const conversation = await this.conversationService.getConversation(transaction.conversationId);
+            const paymentProcessorDTO: PaymentProcessorDTO = {
+                transactionId: transaction._id.toString(),
+                from: conversation.data.userId,
+                state: conversation.data,
+            };
+
+            this.paymentQueue.add(paymentProcessorDTO);
+
+            let createdCardId: SimpleResponseDto<{
+                _id: string;
+            }>;
+            // Se o usuário pediu para salvar o cartão e não é tokenizado
+            if (!userPaymentInfo.cardId && userPaymentInfo.saveCard) {
+                createdCardId = await this.cardService.createCard({
+                    userId: transaction.userId,
+                    holder: {
+                        name: userPaymentInfo.customerInfo.name,
+                        document: userPaymentInfo.customerInfo.cpf_cnpj,
+                    },
+                    brand: this.getCardMethod(userPaymentInfo.cardInfo.number),
+                    last4: cardNumber,
+                    token: `sandbox-token-${this.generateRandomString(8)}`,
+                    expiry_month: userPaymentInfo.cardInfo.expiry_month,
+                    expiry_year: userPaymentInfo.cardInfo.expiry_year,
+                });
+            }
+
+            const cardId = userPaymentInfo.cardId || createdCardId.data._id;
+
+            await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
+                ipagTransactionId: mockTransactionId,
+                amountPaid: transaction.expectedAmount,
+                status: PaymentStatus.Accepted,
+                confirmedAt: now,
+                cardId: cardId,
+            });
+
+            return {
+                msg: 'Payment created',
+                data: { msg: 'Payment created' },
+            };
+        }
+
+        // Regular production/homologation/development flow
         const transaction = await this.validateTransaction(
             userPaymentInfo.transactionId,
             PaymentMethod.CREDIT_CARD,
@@ -303,10 +476,7 @@ export class IPagService {
             }
             throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
         }
-
     }
-
-
 
     /**
      * Valida a transação com base no ID e no método de pagamento.
@@ -340,7 +510,6 @@ export class IPagService {
 
         return transaction.data;
     }
-
 
     /**
      * Processa os dados da transação (callback) de forma granular e retorna
@@ -445,10 +614,6 @@ export class IPagService {
         return { type: "acquirer", erros: [status.message || "Transação não capturada."] };
     }
 
-
-
-
-
     /**
    * Endpoint para receber callbacks do iPag.
    * 
@@ -552,7 +717,6 @@ export class IPagService {
         }
     }
 
-
     isTransactionResponse(
         data: IPagTransactionResponse | IPagErrorResponse
     ): data is IPagTransactionResponse {
@@ -587,7 +751,6 @@ export class IPagService {
             throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
         }
     }
-
 
     getCardMethod(cardNumber: string): PaymentMethodCard | null {
         if (!cardNumber) {
@@ -642,8 +805,6 @@ export class IPagService {
 
         return mappedLibResult ? mappedLibResult : regexResult;
     }
-
-
 
     /**
      * Valida os dados do callback: IP de origem, headers obrigatórios e assinatura.
@@ -756,7 +917,7 @@ export class IPagService {
 
     async simulateTransactionCompletion(transactionId: string): Promise<SimpleResponseDto<TransactionDTO>> {
 
-        if (process.env.ENVIRONMENT !== 'development' && process.env.ENVIRONMENT !== 'homologation') {
+        if (process.env.ENVIRONMENT === 'production') {
             throw new HttpException("This feature is only available in development or homologation mode", HttpStatus.BAD_REQUEST);
         }
 
@@ -767,6 +928,7 @@ export class IPagService {
 
         await this.transactionService.updateTransaction(transactionId, {
             status: PaymentStatus.Accepted,
+            amountPaid: transaction.data.expectedAmount,
             confirmedAt: new Date(),
         });
 
@@ -783,5 +945,14 @@ export class IPagService {
         return { msg: "Transaction completed", data: transaction.data };
     }
 
+    // Helper to generate random strings for mock data
+    private generateRandomString(length: number): string {
+        const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let result = '';
+        for (let i = 0; i < length; i++) {
+            result += characters.charAt(Math.floor(Math.random() * characters.length));
+        }
+        return result;
+    }
 
 }

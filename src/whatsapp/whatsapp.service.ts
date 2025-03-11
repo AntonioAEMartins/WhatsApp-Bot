@@ -78,9 +78,11 @@ export class WhatsAppService {
     private readonly logger = new Logger(WhatsAppService.name);
     private readonly mongoClient: MongoClient;
 
-    private readonly waiterGroupId = process.env.ENVIRONMENT === 'homologation' ? process.env.WAITER_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.WAITER_PROD_GROUP_ID : process.env.WAITER_DEV_GROUP_ID;
-    private readonly paymentProofGroupId = process.env.ENVIRONMENT === 'homologation' ? process.env.PAYMENT_PROOF_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.PAYMENT_PROOF_PROD_GROUP_ID : process.env.PAYMENT_PROOF_DEV_GROUP_ID;
-    private readonly refundGroupId = process.env.ENVIRONMENT === 'homologation' ? process.env.REFUND_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.REFUND_PROD_GROUP_ID : process.env.REFUND_DEV_GROUP_ID;
+    private readonly waiterGroupId = process.env.ENVIRONMENT === 'homologation' || process.env.ENVIRONMENT === 'sandbox' ? process.env.WAITER_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.WAITER_PROD_GROUP_ID : process.env.WAITER_DEV_GROUP_ID;
+    private readonly paymentProofGroupId = process.env.ENVIRONMENT === 'homologation' || process.env.ENVIRONMENT === 'sandbox' ? process.env.PAYMENT_PROOF_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.PAYMENT_PROOF_PROD_GROUP_ID : process.env.PAYMENT_PROOF_DEV_GROUP_ID;
+    private readonly refundGroupId = process.env.ENVIRONMENT === 'homologation' || process.env.ENVIRONMENT === 'sandbox' ? process.env.REFUND_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.REFUND_PROD_GROUP_ID : process.env.REFUND_DEV_GROUP_ID;
+
+    private readonly goRelayUrl = process.env.ENVIRONMENT === 'sandbox' ? 'http://localhost:3110/send-messages' : "http://localhost:3105/send-messages"
 
     constructor(
         private readonly tableService: TableService,
@@ -2149,7 +2151,8 @@ export class WhatsAppService {
     ): Promise<ResponseStructureExtended[]> {
         let sentMessages: ResponseStructureExtended[] = [];
         // Aqui você pode obter o link de pagamento do gateway (por exemplo, de uma variável de ambiente)
-        const paymentLink = `${process.env.CREDIT_CARD_PAYMENT_LINK}?transactionId=${transactionResponse._id}`;
+        const isSandbox = process.env.ENVIRONMENT === 'sandbox';
+        const paymentLink = `${process.env.CREDIT_CARD_PAYMENT_LINK}?transactionId=${transactionResponse._id}${isSandbox ? '&environment=sandbox' : ''}`;
         this.logger.log(`[handleCreditCardPayment] paymentLink: ${paymentLink}`);
 
         // Envia uma mensagem com o link de pagamento
@@ -2256,10 +2259,9 @@ export class WhatsAppService {
 
 
     private async sendMessagesDirectly(messages: ResponseStructureExtended[]): Promise<void> {
-        const goBotUrl = process.env.GO_BOT_URL || "http://localhost:3105/send-messages";
 
         try {
-            const response = await fetch(goBotUrl, {
+            const response = await fetch(this.goRelayUrl, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(messages),
@@ -2609,6 +2611,7 @@ export class WhatsAppService {
     private async generateReceiptPdf(transaction: TransactionDTO): Promise<ResponseStructureExtended[]> {
         // Verificar se estamos em ambiente de produção e se precisamos usar a versão mock
         const isProduction = process.env.ENVIRONMENT === 'production';
+        const isSandbox = process.env.ENVIRONMENT === 'sandbox';
         const needsMock = isProduction && (!transaction.cardId && transaction.paymentMethod !== PaymentMethod.PIX);
 
         let cardLast4 = '';
@@ -2619,8 +2622,8 @@ export class WhatsAppService {
             } catch (error) {
                 this.logger.warn(`[generateReceiptPdf] Não foi possível obter os últimos 4 dígitos do cartão: ${error.message}`);
             }
-        } else if (needsMock && transaction.paymentMethod !== PaymentMethod.PIX) {
-            // Usar dados mockados para o cartão em ambiente de produção
+        } else if (needsMock && transaction.paymentMethod !== PaymentMethod.PIX && !isSandbox) {
+            // Usar dados mockados para o cartão em ambiente de produção, mas não em sandbox
             cardLast4 = '1234'; // Valor mockado para os últimos 4 dígitos
         }
 
@@ -2629,9 +2632,9 @@ export class WhatsAppService {
         const receiptData: ReceiptTemplateData = {
             isPIX: transaction.paymentMethod === PaymentMethod.PIX,
             statusTitle: transaction.status === PaymentStatus.Accepted ? 'Pagamento concluído' : 'Pagamento cancelado',
-            amount: needsMock ? 'R$ 100,00' : formatToBRL(transaction.amountPaid),
-            tableId: needsMock ? '42' : transaction.tableId,
-            dateTime: needsMock ?
+            amount: needsMock && !isSandbox ? 'R$ 100,00' : formatToBRL(transaction.amountPaid),
+            tableId: needsMock && !isSandbox ? '42' : transaction.tableId,
+            dateTime: needsMock && !isSandbox ?
                 new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })
                     .replace(/(\d{2}\/\d{2}\/\d{4}), (\d{2}:\d{2})/, '$2, $1') :
                 new Date(transaction.confirmedAt)

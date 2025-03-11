@@ -9,6 +9,9 @@ const logger = new Logger('Configuration');
 export function printConfig(): void {
     logger.log('=================================');
     logger.log(`🚀 Environment: ${process.env.ENVIRONMENT}`);
+    if (process.env.ENVIRONMENT === 'sandbox') {
+        logger.log(`Running on Port: ${process.env.SANDBOX_PORT}`);
+    }
     logger.log('=================================');
 
     // PoS Backend URL
@@ -22,6 +25,9 @@ export function printConfig(): void {
             break;
         case 'production':
             posBackendUrl = process.env.POS_PROD_BACKEND_URL;
+            break;
+        case 'sandbox':
+            posBackendUrl = process.env.POS_SANDBOX_BACKEND_URL;
             break;
     }
     logger.log(`🔗 PoS Backend URL: ${posBackendUrl}`);
@@ -38,6 +44,9 @@ export function printConfig(): void {
         case 'production':
             cloudServiceUrl = process.env.CS_PROD_BACKEND_URL;
             break;
+        case 'sandbox':
+            cloudServiceUrl = process.env.CS_SANDBOX_BACKEND_URL;
+            break;
     }
     logger.log(`🌐 Cloud Service URL: ${cloudServiceUrl}`);
 
@@ -52,6 +61,9 @@ export function printConfig(): void {
             break;
         case 'production':
             iPagUrl = process.env.IPAG_BASE_PROD_URL;
+            break;
+        case 'sandbox':
+            iPagUrl = process.env.IPAG_BASE_SANDBOX_URL;
             break;
     }
     logger.log(`💳 iPag URL: ${iPagUrl}`);
@@ -69,6 +81,8 @@ export function printConfig(): void {
         logger.log(`  Host: ${process.env.MONGO_PROD_HOST}`);
         logger.log(`  Port: ${process.env.MONGO_PROD_PORT}`);
         logger.log(`  DB: ${process.env.MONGO_PROD_DB}`);
+    } else if (process.env.ENVIRONMENT === 'sandbox') {
+        logger.log(`  DB (Running Locally with PoS): ${process.env.MONGO_SANDBOX_DB}`);
     } else {
         logger.warn("⚠️ Undefined Environment");
     }
