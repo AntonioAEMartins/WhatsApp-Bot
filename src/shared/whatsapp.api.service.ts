@@ -93,10 +93,10 @@ export class WhatsAppApiService {
       return result.data;
     } catch (error) {
       this.logger.error(`Erro ao enviar mensagem para WhatsApp: ${error?.message || error}`);
-      throw new HttpException(
-        error?.response?.data || 'Erro ao enviar mensagem ao WhatsApp',
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
+      // throw new HttpException(
+        // error?.response?.data || 'Erro ao enviar mensagem ao WhatsApp',
+        // HttpStatus.INTERNAL_SERVER_ERROR
+      // );
     }
   }
 
