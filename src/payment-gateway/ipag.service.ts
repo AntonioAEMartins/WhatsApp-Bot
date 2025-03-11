@@ -10,7 +10,7 @@ import { ConversationService } from 'src/conversation/conversation.service';
 import { ErrorDescriptionDTO, PaymentMethod, PaymentProcessorDTO, TransactionDTO } from 'src/transaction/dto/transaction.dto';
 import { CardService } from 'src/card/card.service';
 import * as payform from 'payform';
-import { WhatsAppService } from 'src/whatsapp/whatsapp.service';
+import { MessageService } from 'src/message/message.service';
 
 @Injectable()
 export class IPagService {
@@ -24,7 +24,7 @@ export class IPagService {
         private readonly transactionService: TransactionService,
         private readonly conversationService: ConversationService,
         private readonly cardService: CardService,
-        @Inject(forwardRef(() => WhatsAppService)) private readonly whatsAppService: WhatsAppService
+        @Inject(forwardRef(() => MessageService)) private readonly messageService: MessageService
     ) {
         // You can set these values using environment variables for security
         this.ipagSplitSellerId = process.env.ENVIRONMENT === 'development' ? process.env.IPAG_DEV_VENDOR : process.env.ENVIRONMENT === 'homologation' ? process.env.IPAG_DEV_VENDOR : process.env.IPAG_CP_VENDOR;
@@ -315,7 +315,7 @@ export class IPagService {
 
             this.logger.log(`[createCreditCardPayment] SANDBOX MODE - Payment processor DTO: ${JSON.stringify(paymentProcessorDTO)}`);
 
-            await this.whatsAppService.processPayment(paymentProcessorDTO);
+            await this.messageService.processPayment(paymentProcessorDTO);
 
             this.logger.log(`[createCreditCardPayment] SANDBOX MODE - Payment created`);
 
@@ -457,7 +457,7 @@ export class IPagService {
                     from: conversationRecord.data.userId,
                     state: conversationRecord.data,
                 };
-                await this.whatsAppService.processPayment(paymentProcessorDTO);
+                await this.messageService.processPayment(paymentProcessorDTO);
             };
 
             // Se o status vier como "success" (capturado), já finaliza
@@ -681,7 +681,7 @@ export class IPagService {
                         };
 
                         // Dispara fluxo de "aceite" ou próximo passo no funil
-                        await this.whatsAppService.processPayment(paymentProcessorDTO);
+                        await this.messageService.processPayment(paymentProcessorDTO);
                         return { type: "success", errors: [] };
                     } else {
                         await this.transactionService.updateTransaction(transaction.data._id.toString(), {
@@ -955,7 +955,7 @@ export class IPagService {
 
         this.logger.log(`[simulateTransactionCompletion] Payment processor DTO ${JSON.stringify(paymentProcessorDTO)}`);
 
-        await this.whatsAppService.processPayment(paymentProcessorDTO);
+        await this.messageService.processPayment(paymentProcessorDTO);
 
         return { msg: "Transaction completed", data: transaction.data };
     }

@@ -4,7 +4,7 @@ import { IPagController } from './ipag.controller';
 import { TransactionModule } from 'src/transaction/transaction.module';
 import { ConversationModule } from 'src/conversation/conversation.module';
 import { CardModule } from 'src/card/card.module';
-import { WhatsAppModule } from 'src/whatsapp/whatsapp.module';
+import { MessageModule } from 'src/message/message.module';
 
 @Module({
   providers: [IPagService],
@@ -14,7 +14,7 @@ import { WhatsAppModule } from 'src/whatsapp/whatsapp.module';
     TransactionModule,
     ConversationModule,
     CardModule,
-    forwardRef(() => WhatsAppModule),
+    forwardRef(() => MessageModule),
   ]
 })
 export class IPagModule { }

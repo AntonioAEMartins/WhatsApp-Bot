@@ -93,6 +93,7 @@ export class MessageService {
         @Inject(forwardRef(() => IPagService)) private readonly ipagService: IPagService,
         private readonly cardService: CardService,
         private readonly genReceiptService: GenReceiptService,
+        private readonly whatsappApi: WhatsAppApiService,
         @Inject('DATABASE_CONNECTION') private db: Db, clientProvider: ClientProvider
     ) {
         this.mongoClient = clientProvider.getClient();
@@ -2257,23 +2258,7 @@ export class MessageService {
 
 
     private async sendMessagesDirectly(messages: ResponseStructureExtended[]): Promise<void> {
-
-        try {
-            const response = await fetch(this.goRelayUrl, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(messages),
-            });
-
-            if (!response.ok) {
-                const errText = await response.text();
-                this.logger.error(`Falha ao enviar mensagens para o bot GO. Status: ${response.status}, erro: ${errText}`);
-            } else {
-                this.logger.debug("Mensagens enviadas com sucesso para o bot GO.");
-            }
-        } catch (error) {
-            this.logger.error(`Erro ao enviar mensagens para o bot GO: ${error.message}`);
-        }
+        await this.whatsappApi.sendWhatsAppMessages(messages);
     }
 
 
@@ -2994,17 +2979,17 @@ export class MessageService {
                     `Attempt ${attempts} failed for user ${from} at stage ${state.conversationContext.currentStep}. Error: ${error}`
                 );
 
-                // if (attempts === delayNotificationThreshold && sendDelayNotification) {
-                //     const delayMessage = this.getDelayMessage(state.conversationContext.currentStep);
-                //     sentMessages.push(...this.mapTextMessages([delayMessage], from));
-                // }
+                if (attempts === delayNotificationThreshold && sendDelayNotification) {
+                    const delayMessage = this.getDelayMessage(state);
+                    this.whatsappApi.sendWhatsAppMessages([delayMessage]);
+                }
 
                 if (attempts < maxRetries) {
                     await new Promise((resolve) => setTimeout(resolve, delayBetweenRetries));
                 }
 
-                // const notifyAuthMessages = await this.notifyWaiterAuthenticationStatus(groupMessage, state);
-                // sentMessages.push(...notifyAuthMessages);
+                const notifyAuthMessages = await this.notifyWaiterAuthenticationStatus(groupMessage, state);
+                // this.whatsappApi.sendWhatsAppMessages(notifyAuthMessages);
             }
         }
 
@@ -3037,28 +3022,71 @@ export class MessageService {
      */
 
     private getDelayMessage(
-        currentStep: ConversationStep,
-    ): string {
-        switch (currentStep) {
+        conversation: ConversationDto,
+    ): ResponseStructureExtended {
+        switch (conversation.conversationContext.currentStep) {
             case ConversationStep.ProcessingOrder:
-                return `🔄 O processamento da sua comanda está demorando um pouco mais que o esperado.\n\n Por favor, aguarde um instante enquanto verificamos os detalhes para você! 😊`;
+                return {
+                    type: 'text',
+                    content: `🔄 O processamento da sua comanda está demorando um pouco mais que o esperado.\n\n Por favor, aguarde um instante enquanto verificamos os detalhes para você! 😊`,
+                    to: conversation.userId,
+                    reply: false,
+                    isError: false,
+                    caption: '',
+                };
 
             case ConversationStep.ConfirmOrder:
-                return `🔄 Estamos confirmando os detalhes da sua comanda, mas parece que está demorando um pouco mais do que o habitual.\n\n Por favor, mantenha-se à vontade, logo finalizaremos! 😄`;
+                return {
+                    type: 'text',
+                    content: `🔄 Estamos confirmando os detalhes da sua comanda, mas parece que está demorando um pouco mais do que o habitual.\n\n Por favor, mantenha-se à vontade, logo finalizaremos! 😄`,
+                    to: conversation.userId,
+                    reply: false,
+                    isError: false,
+                    caption: '',
+                };
 
             case ConversationStep.SplitBill:
-                return `🔄 O processo de divisão da conta está em andamento, mas pode levar alguns instantes a mais.\n\n Agradecemos pela paciência! 🎉`;
+                return {
+                    type: 'text',
+                    content: `🔄 O processo de divisão da conta está em andamento, mas pode levar alguns instantes a mais.\n\n Agradecemos pela paciência! 🎉`,
+                    to: conversation.userId,
+                    reply: false,
+                    isError: false,
+                    caption: '',
+                };
 
             case ConversationStep.WaitingForContacts:
-                return `🔄 Estamos aguardando os contatos para dividir a conta.\n\n Isso pode demorar um pouco mais do que o esperado. Obrigado pela compreensão! 📲`;
+                return {
+                    type: 'text',
+                    content: `🔄 Estamos aguardando os contatos para dividir a conta.\n\n Isso pode demorar um pouco mais do que o esperado. Obrigado pela compreensão! 📲`,
+                    to: conversation.userId,
+                    reply: false,
+                    isError: false,
+                    caption: '',
+                };
 
             case ConversationStep.WaitingForPayment:
-                return `🔄 Estamos aguardando a confirmação do pagamento. Pode levar alguns instantes.\n\n Agradecemos pela paciência! 🕒`;
+                return {
+                    type: 'text',
+                    content: `🔄 Estamos aguardando a confirmação do pagamento. Pode levar alguns instantes.\n\n Agradecemos pela paciência! 🕒`,
+                    to: conversation.userId,
+                    reply: false,
+                    isError: false,
+                    caption: '',
+                };
 
             default:
-                return `🔄 O processo está demorando um pouco mais do que o esperado.\n\n Por favor, mantenha-se à vontade, logo concluiremos! 😄`;
+                return {
+                    type: 'text',
+                    content: `🔄 O processo está demorando um pouco mais do que o esperado.\n\n Por favor, mantenha-se à vontade, logo concluiremos! 😄`,
+                    to: conversation.userId,
+                    reply: false,
+                    isError: false,
+                    caption: '',
+                };
         }
     }
+
 
     private delay(ms: number): Promise<void> {
         return new Promise(resolve => setTimeout(resolve, ms));
