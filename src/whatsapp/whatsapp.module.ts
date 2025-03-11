@@ -21,6 +21,7 @@ import { GenReceiptModule } from 'src/gen-receipt/gen.receipt.module';
   ],
   providers: [WhatsAppService, WhatsAppUtils],
   controllers: [WhatsAppController],
-  exports: [WhatsAppUtils, WhatsAppService],
+  providers: [WhatsAppService, MessageProcessor],
+  exports: [WhatsAppService],
 })
 export class WhatsAppModule { }

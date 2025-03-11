@@ -50,6 +50,8 @@ export class IPagService {
                 'x-api-version': '2',
             };
 
+            console.log("iPag baseURL", this.baseURL);
+
             const response = await fetch(`${this.baseURL}/${endpoint}`, {
                 method,
                 headers,

@@ -23,6 +23,7 @@ async function bootstrap() {
     }),
   );
 
+
   app.useGlobalFilters(new GlobalHttpExceptionFilter());
 
   // Enable CORS for https://pay.astra1.com.br/

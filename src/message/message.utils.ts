@@ -8,14 +8,14 @@ import { PaymentProofDTO, TransactionDTO } from "src/transaction/dto/transaction
 import { TransactionService } from "src/transaction/transaction.service";
 import { UserService } from "src/user/user.service";
 import { Client, LocalAuth, Message } from "whatsapp-web.js";
-import { RequestMessage, WhatsAppService } from "./whatsapp.service";
+import { RequestMessage, MessageService } from "./message.service";
 
 
 @Injectable()
-export class WhatsAppUtils {
+export class MessageUtils {
 
     private client: Client;
-    private readonly logger = new Logger(WhatsAppService.name);
+    private readonly logger = new Logger(MessageService.name);
 
     constructor(
         private readonly tableService: TableService,
