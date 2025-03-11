@@ -1,18 +1,16 @@
-import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { CreatePaymentDto, LibraryCardType, PaymentMethodCard, PaymentMethodPix, PaymentType, UserPaymentCreditInfoDto, UserPaymentPixInfoDto } from './dto/ipag-pagamentos.dto';
 import { IPagErrorResponse, IPagTransactionResponse } from './types/ipag-response.types';
 import { CreateEstablishmentDto, CreateSellerDto } from './dto/ipag-marketplace.dto';
 import { TransactionService } from 'src/transaction/transaction.service';
 import { PaymentStatus } from 'src/conversation/dto/conversation.enums';
 import * as crypto from 'crypto';
-import { InjectQueue } from '@nestjs/bull';
-import { Queue } from 'bull';
 import { SimpleResponseDto } from 'src/request/request.dto';
 import { ConversationService } from 'src/conversation/conversation.service';
-import { PaymentProcessorDTO } from 'src/whatsapp/payment.processor';
-import { ErrorDescriptionDTO, PaymentMethod, TransactionDTO } from 'src/transaction/dto/transaction.dto';
+import { ErrorDescriptionDTO, PaymentMethod, PaymentProcessorDTO, TransactionDTO } from 'src/transaction/dto/transaction.dto';
 import { CardService } from 'src/card/card.service';
 import * as payform from 'payform';
+import { WhatsAppService } from 'src/whatsapp/whatsapp.service';
 
 @Injectable()
 export class IPagService {
@@ -23,10 +21,10 @@ export class IPagService {
     private readonly logger = new Logger(IPagService.name);
 
     constructor(
-        @InjectQueue('payment') private readonly paymentQueue: Queue,
         private readonly transactionService: TransactionService,
         private readonly conversationService: ConversationService,
-        private readonly cardService: CardService
+        private readonly cardService: CardService,
+        @Inject(forwardRef(() => WhatsAppService)) private readonly whatsAppService: WhatsAppService
     ) {
         // You can set these values using environment variables for security
         this.ipagSplitSellerId = process.env.ENVIRONMENT === 'development' ? process.env.IPAG_DEV_VENDOR : process.env.ENVIRONMENT === 'homologation' ? process.env.IPAG_DEV_VENDOR : process.env.IPAG_CP_VENDOR;
@@ -87,10 +85,14 @@ export class IPagService {
             const mockQRCode = `00020101021126580014br.gov.bcb.pix0136sandbox.mock.pix.key@sandbox.com5204000053039865802BR5913SANDBOX MOCK6009SAO PAULO62290525${this.generateRandomString(20)}6304${this.generateRandomString(4)}`;
 
             // Schedule automatic completion after 10 seconds
-            setTimeout(() => {
-                this.simulateTransactionCompletion(userPaymentInfo.transactionId)
-                    .then(() => this.logger.log(`[createPIXPayment] SANDBOX MODE - Auto-completed transaction ${userPaymentInfo.transactionId}`))
-                    .catch(error => this.logger.error(`[createPIXPayment] SANDBOX MODE - Error auto-completing transaction: ${error.message}`));
+            setTimeout(async () => {
+                try {
+                    // Garantindo que o método simulateTransactionCompletion seja chamado no contexto correto
+                    await this.simulateTransactionCompletion(userPaymentInfo.transactionId);
+                    this.logger.log(`[createPIXPayment] SANDBOX MODE - Auto-completed transaction ${userPaymentInfo.transactionId}`);
+                } catch (error) {
+                    this.logger.error(`[createPIXPayment] SANDBOX MODE - Error auto-completing transaction: ${error.message}`);
+                }
             }, 10000);
 
             const now = new Date();
@@ -246,6 +248,8 @@ export class IPagService {
             const lastDigit = parseInt(cardNumber.slice(-1));
             const isOdd = lastDigit % 2 !== 0;
 
+            this.logger.log(`[createCreditCardPayment] SANDBOX MODE - Last digit: ${lastDigit}, isOdd: ${isOdd}`);
+
             // Se o último dígito for par, simulamos rejeição
             if (!isOdd) {
                 await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
@@ -267,9 +271,6 @@ export class IPagService {
             const now = new Date();
             const mockTransactionId = `sandbox-${this.generateRandomString(10)}`;
 
-            // Atualizamos a transação com as informações de sucesso
-
-
             // Dispara processo de conclusão (mesma lógica usada nos fluxos reais)
             const conversation = await this.conversationService.getConversation(transaction.conversationId);
             const paymentProcessorDTO: PaymentProcessorDTO = {
@@ -277,8 +278,6 @@ export class IPagService {
                 from: conversation.data.userId,
                 state: conversation.data,
             };
-
-            this.paymentQueue.add(paymentProcessorDTO);
 
             let createdCardId: SimpleResponseDto<{
                 _id: string;
@@ -299,7 +298,10 @@ export class IPagService {
                 });
             }
 
+
             const cardId = userPaymentInfo.cardId || createdCardId.data._id;
+
+            this.logger.log(`[createCreditCardPayment] SANDBOX MODE - Card ID: ${cardId}`);
 
             await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
                 ipagTransactionId: mockTransactionId,
@@ -308,6 +310,12 @@ export class IPagService {
                 confirmedAt: now,
                 cardId: cardId,
             });
+
+            this.logger.log(`[createCreditCardPayment] SANDBOX MODE - Payment processor DTO: ${JSON.stringify(paymentProcessorDTO)}`);
+
+            await this.whatsAppService.processPayment(paymentProcessorDTO);
+
+            this.logger.log(`[createCreditCardPayment] SANDBOX MODE - Payment created`);
 
             return {
                 msg: 'Payment created',
@@ -447,7 +455,7 @@ export class IPagService {
                     from: conversationRecord.data.userId,
                     state: conversationRecord.data,
                 };
-                this.paymentQueue.add(paymentProcessorDTO);
+                await this.whatsAppService.processPayment(paymentProcessorDTO);
             };
 
             // Se o status vier como "success" (capturado), já finaliza
@@ -671,7 +679,7 @@ export class IPagService {
                         };
 
                         // Dispara fluxo de "aceite" ou próximo passo no funil
-                        this.paymentQueue.add(paymentProcessorDTO);
+                        await this.whatsAppService.processPayment(paymentProcessorDTO);
                         return { type: "success", errors: [] };
                     } else {
                         await this.transactionService.updateTransaction(transaction.data._id.toString(), {
@@ -932,15 +940,20 @@ export class IPagService {
             confirmedAt: new Date(),
         });
 
+        this.logger.log(`[simulateTransactionCompletion] Transaction ${transactionId} completed`);
+
         const conversation = await this.conversationService.getConversation(transaction.data.conversationId);
 
+        this.logger.log(`[simulateTransactionCompletion] Conversation ${conversation.data._id}`);
         const paymentProcessorDTO: PaymentProcessorDTO = {
             transactionId: transaction.data._id.toString(),
             from: conversation.data.userId,
             state: conversation.data,
         };
 
-        this.paymentQueue.add(paymentProcessorDTO);
+        this.logger.log(`[simulateTransactionCompletion] Payment processor DTO ${JSON.stringify(paymentProcessorDTO)}`);
+
+        await this.whatsAppService.processPayment(paymentProcessorDTO);
 
         return { msg: "Transaction completed", data: transaction.data };
     }

@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, Logger, Inject, HttpException, HttpStatus, forwardRef } from '@nestjs/common';
 import { TableService } from 'src/table/table.service';
 import {
     BaseConversationDto,
@@ -17,12 +17,9 @@ import { ConversationStep, MessageType, PaymentStatus } from 'src/conversation/d
 import { OrderService } from 'src/order/order.service';
 import { CreateOrderDTO } from 'src/order/dto/order.dto';
 import { TransactionService } from 'src/transaction/transaction.service';
-import { CreateTransactionDTO, PaymentMethod, TransactionDTO } from 'src/transaction/dto/transaction.dto';
+import { CreateTransactionDTO, PaymentMethod, PaymentProcessorDTO, TransactionDTO } from 'src/transaction/dto/transaction.dto';
 import { GroupMessageKeys, GroupMessages } from './utils/group.messages.utils';
 import { WhatsAppUtils } from './whatsapp.utils';
-import { PaymentProcessorDTO } from './payment.processor';
-import { InjectQueue } from '@nestjs/bull';
-import { Queue } from 'bull';
 import { Db, MongoClient } from 'mongodb';
 import { ClientProvider } from 'src/db/db.module';
 import { UserPaymentCreditInfoDto, UserPaymentPixInfoDto } from 'src/payment-gateway/dto/ipag-pagamentos.dto';
@@ -91,10 +88,9 @@ export class WhatsAppService {
         private readonly orderService: OrderService,
         private readonly transactionService: TransactionService,
         private readonly utilsService: WhatsAppUtils,
-        private readonly ipagService: IPagService,
+        @Inject(forwardRef(() => IPagService)) private readonly ipagService: IPagService,
         private readonly cardService: CardService,
         private readonly genReceiptService: GenReceiptService,
-        @InjectQueue('payment') private readonly paymentQueue: Queue,
         @Inject('DATABASE_CONNECTION') private db: Db, clientProvider: ClientProvider
     ) {
         this.mongoClient = clientProvider.getClient();
