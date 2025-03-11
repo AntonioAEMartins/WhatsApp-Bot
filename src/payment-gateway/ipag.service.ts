@@ -754,4 +754,34 @@ export class IPagService {
         return response;
     }
 
+    async simulateTransactionCompletion(transactionId: string): Promise<SimpleResponseDto<TransactionDTO>> {
+
+        if (process.env.ENVIRONMENT !== 'development' && process.env.ENVIRONMENT !== 'homologation') {
+            throw new HttpException("This feature is only available in development or homologation mode", HttpStatus.BAD_REQUEST);
+        }
+
+        const transaction = await this.transactionService.getTransaction(transactionId);
+        if (transaction.data.status !== PaymentStatus.Pending) {
+            throw new HttpException("Transaction not pending", HttpStatus.BAD_REQUEST);
+        }
+
+        await this.transactionService.updateTransaction(transactionId, {
+            status: PaymentStatus.Accepted,
+            confirmedAt: new Date(),
+        });
+
+        const conversation = await this.conversationService.getConversation(transaction.data.conversationId);
+
+        const paymentProcessorDTO: PaymentProcessorDTO = {
+            transactionId: transaction.data._id.toString(),
+            from: conversation.data.userId,
+            state: conversation.data,
+        };
+
+        this.paymentQueue.add(paymentProcessorDTO);
+
+        return { msg: "Transaction completed", data: transaction.data };
+    }
+
+
 }

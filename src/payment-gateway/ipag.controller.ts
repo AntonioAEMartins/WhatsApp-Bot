@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpException, HttpStatus, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpException, HttpStatus, Param, Post, Req } from '@nestjs/common';
 import { IPagService } from './ipag.service';
 import { CardInfoDto, UserPaymentCreditInfoDto, UserPaymentPixInfoDto } from './dto/ipag-pagamentos.dto';
 import { validate } from 'class-validator';
@@ -125,6 +125,12 @@ export class IPagController {
   @HttpCode(200)
   async getCardMethod(@Body() cardInfo: CardInfoDto) {
     const response = await this.ipagService.getCardMethod(cardInfo.number);
+    return response;
+  }
+  @Post('/simulate-transaction-completion/:transactionId')
+  @HttpCode(200)
+  async simulateTransactionCompletion(@Param('transactionId') transactionId: string) {
+    const response = await this.ipagService.simulateTransactionCompletion(transactionId);
     return response;
   }
 }
