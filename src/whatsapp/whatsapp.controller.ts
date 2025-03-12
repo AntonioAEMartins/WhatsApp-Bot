@@ -1,59 +1,32 @@
-// src/whatsapp/whatsapp.controller.ts
-
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
-import { RequestStructure, ResponseStructure, ResponseStructureExtended, WhatsAppService } from './whatsapp.service';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { SimpleResponseDto } from 'src/request/request.dto';
-
+import { Controller, Get, Post, Query, Body, HttpCode, HttpException, HttpStatus } from '@nestjs/common';
+import { WebhookVerificationDto } from './dto/webhook.verification.dto';
+import { WebhookNotificationDto } from './dto/webhook.notification.dto';
+import { WhatsAppService } from './whatsapp.service';
 
 @Controller('whatsapp')
 export class WhatsAppController {
-  constructor(private readonly whatsappService: WhatsAppService) { }
+  constructor(private readonly whatsAppService: WhatsAppService) {}
 
+  @Get('webhook')
   @HttpCode(200)
-  @Post('message')
-  async receiveMessage(@Body() request: RequestStructure): Promise<ResponseStructure[]> {
-    const response = await this.whatsappService.handleProcessMessage(request);
-
-    // Group responses by the 'to' field
-    const groupedResponses = response.reduce((acc, res) => {
-      if (!acc[res.to]) {
-        acc[res.to] = [];
-      }
-      acc[res.to].push(res);
-      return acc;
-    }, {} as Record<string, ResponseStructureExtended[]>);
-
-    // Filter out messages for numbers with at least one error
-    const filteredResponses = Object.values(groupedResponses).flatMap(responses => {
-      const hasError = responses.some(res => res.isError);
-      return hasError ? responses.filter(res => res.isError) : responses;
-    });
-
-    // Transform the filtered responses
-    const transformedResponse: ResponseStructure[] = filteredResponses.map((res) => ({
-      type: res.type,
-      content: res.content,
-      caption: res.caption,
-      to: res.to,
-      reply: res.reply,
-    }));
-
-    return transformedResponse;
+  async verifyWebhook(@Query() query: WebhookVerificationDto): Promise<string> {
+    try {
+      return this.whatsAppService.handleWebhookVerification(query);
+    } catch (error) {
+      throw new HttpException(error.message, HttpStatus.FORBIDDEN);
+    }
   }
 
-  @Post('receipt')
-  @HttpCode(HttpStatus.OK)
-  @UseInterceptors(FileInterceptor('file'))
-  async receiveReceipt(
-    @UploadedFile() file: Express.Multer.File,
-    @Body('transactionId') transactionId: string,
-  ): Promise<SimpleResponseDto<string>> {
-    const response = await this.whatsappService.processReceipt(file, transactionId);
-    return {
-      msg: 'Receipt received',
-      data: response,
-    };
+  @Post('webhook')
+  @HttpCode(200)
+  async handleWebhookNotification(@Body() notification: WebhookNotificationDto): Promise<string> {
+    // console.log('notification', notification);
+    try {
+      this.whatsAppService.processWebhookNotification(notification);
+      return 'OK';
+    } catch (error) {
+      console.error('Error processing webhook notification:', error);
+      throw new HttpException(error.message, HttpStatus.BAD_REQUEST);
+    }
   }
-
 }

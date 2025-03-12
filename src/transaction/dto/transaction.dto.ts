@@ -2,7 +2,7 @@ import { Type } from "class-transformer";
 import { IsArray, IsDate, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, ValidateNested } from "class-validator";
 import { ObjectId } from "mongodb";
 import { PaymentDescription, PaymentStatus } from "src/conversation/dto/conversation.enums";
-
+import { ConversationDto } from "src/conversation/dto/conversation.dto";
 export class PaymentProofDTO {
     @IsString()
     nome_pagador: string;
@@ -168,4 +168,10 @@ export class ReceivedPaymentDTO {
     @Type(() => PaymentProofDTO)
     @IsOptional()
     paymentProofs?: PaymentProofDTO[];
+}
+
+export class PaymentProcessorDTO {
+    transactionId: string;
+    from: string;
+    state: ConversationDto;
 }

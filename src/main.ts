@@ -13,6 +13,7 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
   const app = await NestFactory.create(AppModule);
+  const port = process.env.ENVIRONMENT === 'sandbox' ? process.env.SANDBOX_PORT : 3005;
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -21,6 +22,7 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
+
 
   app.useGlobalFilters(new GlobalHttpExceptionFilter());
 
@@ -49,7 +51,7 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document);
 
-  await app.listen(3005, '127.0.0.1');
+  await app.listen(port, '127.0.0.1');
 
   printConfig();
 }

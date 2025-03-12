@@ -127,6 +127,7 @@ export class IPagController {
     const response = await this.ipagService.getCardMethod(cardInfo.number);
     return response;
   }
+
   @Post('/simulate-transaction-completion/:transactionId')
   @HttpCode(200)
   async simulateTransactionCompletion(@Param('transactionId') transactionId: string) {
