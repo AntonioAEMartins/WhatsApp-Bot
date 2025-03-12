@@ -6,7 +6,7 @@ import { WhatsAppConfig } from './dto/whatsapp.config.interface';
 import { lastValueFrom } from 'rxjs';
 import { MessageService, RequestStructure, ResponseStructureExtended } from 'src/message/message.service';
 import { HttpService } from '@nestjs/axios';
-import { WhatsAppApiService } from 'src/shared/whatsapp.api.service';
+import { WhatsAppApiService } from 'src/shared/whatsapp-api/whatsapp.api.service';
 @Injectable()
 export class WhatsAppService {
     private readonly whatsappConfig: WhatsAppConfig;

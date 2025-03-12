@@ -12,7 +12,7 @@ import { IPagModule } from 'src/payment-gateway/ipag.module';
 import { CardModule } from 'src/card/card.module';
 import { GenReceiptModule } from 'src/gen-receipt/gen.receipt.module';
 import { MessageUtils } from './message.utils';
-import { WhatsAppApiModule } from 'src/shared/whatsapp.api.module';
+import { WhatsAppApiModule } from 'src/shared/whatsapp-api/whatsapp.api.module';
 import { WhatsAppModule } from 'src/whatsapp/whatsapp.module';
 
 @Module({

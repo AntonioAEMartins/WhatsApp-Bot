@@ -1,8 +1,8 @@
 import { Controller, Post, Body, HttpStatus, HttpException, Logger, Get, Param, UseInterceptors, UploadedFile } from '@nestjs/common';
-import { WhatsAppApiService } from './whatsapp.api.service';
 import { ResponseStructureExtended } from 'src/message/message.service';
 import { FileInterceptor } from '@nestjs/platform-express';
-
+import { WhatsAppApiService } from './whatsapp.api.service';
+    
 @Controller('api/whatsapp')
 export class WhatsAppApiController {
     private readonly logger = new Logger(WhatsAppApiController.name);

@@ -14,7 +14,7 @@ import { CardModule } from './card/card.module';
 import { MessageModule } from './message/message.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { RequestLoggerMiddleware } from './middleware/incoming-requests.middleware';
-import { WhatsAppApiModule } from './shared/whatsapp.api.module';
+import { WhatsAppApiModule } from './shared/whatsapp-api/whatsapp.api.module';
 @Module({
   imports: [
     MessageModule,

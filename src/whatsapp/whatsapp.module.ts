@@ -4,7 +4,7 @@ import { WhatsAppController } from './whatsapp.controller';
 import { WhatsAppService } from './whatsapp.service';
 import { MessageModule } from 'src/message/message.module';
 import { HttpModule } from '@nestjs/axios';
-import { WhatsAppApiModule } from 'src/shared/whatsapp.api.module';
+import { WhatsAppApiModule } from 'src/shared/whatsapp-api/whatsapp.api.module';
 
 @Module({
   imports: [

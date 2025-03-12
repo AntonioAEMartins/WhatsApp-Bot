@@ -28,7 +28,7 @@ import { CardService } from 'src/card/card.service';
 import { CardDto } from 'src/card/dto/card.dto';
 import { GenReceiptService, ReceiptTemplateData } from 'src/gen-receipt/gen.receipt.service';
 import { MessageMedia } from 'whatsapp-web.js';
-import { WhatsAppApiService } from 'src/shared/whatsapp.api.service';
+import { WhatsAppApiService } from 'src/shared/whatsapp-api/whatsapp.api.service';
 import { Cron } from '@nestjs/schedule';
 
 interface SendMessageParams {
