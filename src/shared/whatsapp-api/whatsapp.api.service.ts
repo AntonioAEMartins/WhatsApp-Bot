@@ -18,6 +18,87 @@ export class WhatsAppApiService {
     this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   }
 
+  /**
+   * Sends a reaction emoji to a previous message
+   * @param to WhatsApp user phone number
+   * @param messageId The ID of the message to react to
+   * @param emoji The emoji to react with, either as Unicode escape or emoji character
+   * @returns API response
+   */
+  async sendMessageReaction(to: string, messageId: string, emoji: string): Promise<any> {
+    if (!this.accessToken || !this.phoneNumberId) {
+      throw new HttpException('Credenciais do WhatsApp não configuradas', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    const url = `${this.graphApiUrl}/${this.phoneNumberId}/messages`;
+    const headers = {
+      Authorization: `Bearer ${this.accessToken}`,
+      'Content-Type': 'application/json'
+    };
+
+    const body = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to,
+      type: 'reaction',
+      reaction: {
+        message_id: messageId,
+        emoji: emoji
+      }
+    };
+
+    try {
+      const observableResult = this.httpService.post(url, body, { headers });
+      const result = await lastValueFrom(observableResult);
+      return result.data;
+    } catch (error) {
+      this.logger.error(`Erro ao enviar reação para WhatsApp: ${error?.message || error}`);
+      if (error?.response?.data) {
+        this.logger.error(`Resposta da API: ${JSON.stringify(error.response.data)}`);
+      }
+      throw new HttpException(
+        error?.response?.data || 'Erro ao enviar reação ao WhatsApp',
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * Marks a message as read/seen by sending a read receipt
+   * @param messageId The ID of the message to mark as read
+   * @returns API response
+   */
+  async markMessageAsSeen(messageId: string): Promise<any> {
+    if (!this.accessToken || !this.phoneNumberId) {
+      throw new HttpException('Credenciais do WhatsApp não configuradas', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    const url = `${this.graphApiUrl}/${this.phoneNumberId}/messages`;
+    const headers = {
+      Authorization: `Bearer ${this.accessToken}`,
+      'Content-Type': 'application/json'
+    };
+
+    const body = {
+      messaging_product: 'whatsapp',
+      status: 'read',
+      message_id: messageId
+    };
+
+    try {
+      const observableResult = this.httpService.post(url, body, { headers });
+      const result = await lastValueFrom(observableResult);
+      return result.data;
+    } catch (error) {
+      this.logger.error(`Erro ao marcar mensagem como lida: ${error?.message || error}`);
+      if (error?.response?.data) {
+        this.logger.error(`Resposta da API: ${JSON.stringify(error.response.data)}`);
+      }
+      // Not throwing an exception to avoid disrupting the normal flow if read receipt fails
+      return { error: true, message: error?.message || 'Erro ao marcar mensagem como lida' };
+    }
+  }
+
   async sendWhatsAppMessage(response: ResponseStructureExtended): Promise<any> {
     if (!this.accessToken || !this.phoneNumberId) {
       throw new HttpException('Credenciais do WhatsApp não configuradas', HttpStatus.INTERNAL_SERVER_ERROR);

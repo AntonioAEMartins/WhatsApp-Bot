@@ -1,4 +1,4 @@
-import { Injectable, HttpException, HttpStatus, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, Inject, forwardRef, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WebhookVerificationDto } from './dto/webhook.verification.dto';
 import { WebhookNotificationDto } from './dto/webhook.notification.dto';
@@ -13,7 +13,7 @@ export class WhatsAppService {
     private readonly phoneNumberId: string;
     private readonly accessToken: string;
     private readonly graphApiUrl: string;
-
+    private readonly logger = new Logger(WhatsAppService.name);
     constructor(
         private readonly configService: ConfigService,
         @Inject(forwardRef(() => MessageService)) private readonly messageService: MessageService,
@@ -56,19 +56,40 @@ export class WhatsAppService {
     }
 
     private async handleMessageNotification(value: any): Promise<void> {
-        // console.log('Processing message notification:', value);
-
         const { messages = [] } = value;
         for (const message of messages) {
+            try {
+                if (message.id) {
+                    await this.whatsappApi.markMessageAsSeen(message.id);
+                }
+            } catch (error) {
+                this.logger.error(`Error marking message as seen: ${error}`);
+            }
+
             const requestStructure: RequestStructure = this.parseMessage(message);
-            // console.log('Request structure:', requestStructure);
+
+            const messageId = message.id;
+
+            if (message.type === 'text' &&
+                message.text?.body?.toLowerCase().includes('pagar a comanda')) {
+                try {
+                    await this.whatsappApi.sendMessageReaction(
+                        requestStructure.from,
+                        messageId,
+                        "😍"
+                    );
+                } catch (error) {
+                    this.logger.error(`Error sending reaction: ${error}`);
+                }
+            }
+
             const result = await this.messageService.handleProcessMessage(requestStructure);
             await this.whatsappApi.sendWhatsAppMessages(result);
         }
     }
 
     private async handleStatusNotification(value: any): Promise<void> {
-        // console.log('Processing status notification:', value);
+        this.logger.log(`Processing status notification: ${value}`);
     }
 
     private parseMessage(message: any): RequestStructure {

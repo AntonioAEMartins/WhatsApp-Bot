@@ -31,16 +31,6 @@ import { MessageMedia } from 'whatsapp-web.js';
 import { WhatsAppApiService } from 'src/shared/whatsapp-api/whatsapp.api.service';
 import { Cron } from '@nestjs/schedule';
 
-interface SendMessageParams {
-    from: string;
-    messages: string[];
-    state: ConversationDto;
-    delay?: number;
-    toAttendants?: boolean;
-    media?: MessageMedia;
-    caption?: string;
-}
-
 export interface RequestStructure {
     from: string;
     type: "image" | "text" | "vcard" | "document";
