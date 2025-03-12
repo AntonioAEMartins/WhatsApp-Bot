@@ -115,6 +115,17 @@ export class WhatsAppService {
                 parsedType = 'vcard';
                 content = JSON.stringify(message.contacts || []);
                 break;
+            case 'interactive':
+                parsedType = 'text';
+                if (message.interactive?.type === 'button_reply') {
+                    const buttonReply = message.interactive.button_reply;
+                    this.logger.log(`Received button interaction - ID: ${buttonReply.id}, Title: ${buttonReply.title}`);
+                    // Format as text message with the button ID as prefix for easy processing
+                    content = `button_${buttonReply.id}:${buttonReply.title}`;
+                } else {
+                    content = 'Interação de botão desconhecida';
+                }
+                break;
             default:
                 parsedType = 'text';
                 content = 'Mensagem de tipo desconhecido';

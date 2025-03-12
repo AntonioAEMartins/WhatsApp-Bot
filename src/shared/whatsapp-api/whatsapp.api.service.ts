@@ -126,6 +126,77 @@ export class WhatsAppApiService {
         body.image = { link: response.content, caption: response.caption || '' };
         break;
 
+      case 'interactive':
+        if (!response.interactive) {
+          throw new HttpException(
+            'Dados interativos ausentes para mensagem do tipo interactive',
+            HttpStatus.BAD_REQUEST
+          );
+        }
+        
+        body.type = 'interactive';
+        body.recipient_type = 'individual';
+        
+        body.interactive = {
+          type: 'button',
+          body: {
+            text: response.interactive.bodyText
+          },
+          action: {
+            buttons: response.interactive.buttons.map(button => ({
+              type: 'reply',
+              reply: {
+                id: button.id,
+                title: button.title
+              }
+            }))
+          }
+        };
+        
+        // Add header if available
+        if (response.interactive.headerType && response.interactive.headerContent) {
+          body.interactive.header = {
+            type: response.interactive.headerType
+          };
+          
+          // Add the appropriate field based on header type
+          switch (response.interactive.headerType) {
+            case 'text':
+              body.interactive.header.text = response.interactive.headerContent;
+              break;
+            case 'image':
+              // Check if it's an ID or URL
+              if (this.isHttpUrl(response.interactive.headerContent)) {
+                body.interactive.header.image = { link: response.interactive.headerContent };
+              } else {
+                body.interactive.header.image = { id: response.interactive.headerContent };
+              }
+              break;
+            case 'document':
+              if (this.isHttpUrl(response.interactive.headerContent)) {
+                body.interactive.header.document = { link: response.interactive.headerContent };
+              } else {
+                body.interactive.header.document = { id: response.interactive.headerContent };
+              }
+              break;
+            case 'video':
+              if (this.isHttpUrl(response.interactive.headerContent)) {
+                body.interactive.header.video = { link: response.interactive.headerContent };
+              } else {
+                body.interactive.header.video = { id: response.interactive.headerContent };
+              }
+              break;
+          }
+        }
+        
+        // Add footer if available
+        if (response.interactive.footerText) {
+          body.interactive.footer = {
+            text: response.interactive.footerText
+          };
+        }
+        break;
+
       case 'document':
         // Se o content for uma URL HTTP(S), usa link direto.
         // Caso contrário (ex.: base64), fazemos upload e enviamos via "document.id".
@@ -344,5 +415,66 @@ export class WhatsAppApiService {
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const year = now.getFullYear();
     return `${day}_${month}_${year}`;
+  }
+
+  /**
+   * Creates an interactive button message structure
+   * @param to Recipient's phone number
+   * @param bodyText The main text of the message
+   * @param buttons Array of buttons (up to 3)
+   * @param options Optional parameters like header and footer
+   * @returns A formatted ResponseStructureExtended object for interactive buttons
+   */
+  createInteractiveButtonMessage(
+    to: string,
+    bodyText: string,
+    buttons: { id: string; title: string }[],
+    options?: {
+      headerType?: 'text' | 'image' | 'document' | 'video';
+      headerContent?: string;
+      footerText?: string;
+    }
+  ): ResponseStructureExtended {
+    if (buttons.length > 3) {
+      this.logger.warn('WhatsApp only supports up to 3 buttons. Extra buttons will be ignored.');
+      buttons = buttons.slice(0, 3);
+    }
+
+    // Validate button titles (max 20 chars)
+    buttons.forEach(button => {
+      if (button.title.length > 20) {
+        this.logger.warn(`Button title too long (max 20 chars): "${button.title}" will be truncated`);
+        button.title = button.title.substring(0, 20);
+      }
+    });
+
+    // Validate body text (max 1024 chars)
+    if (bodyText.length > 1024) {
+      this.logger.warn('Body text exceeds maximum length (1024 chars) and will be truncated');
+      bodyText = bodyText.substring(0, 1024);
+    }
+
+    // Validate footer text if present (max 60 chars)
+    let footerText = options?.footerText;
+    if (footerText && footerText.length > 60) {
+      this.logger.warn('Footer text exceeds maximum length (60 chars) and will be truncated');
+      footerText = footerText.substring(0, 60);
+    }
+
+    return {
+      type: 'interactive',
+      content: '', // Not used for interactive messages but required by interface
+      caption: '', // Not used for interactive messages but required by interface
+      to: to,
+      reply: false,
+      isError: false,
+      interactive: {
+        headerType: options?.headerType,
+        headerContent: options?.headerContent,
+        bodyText: bodyText,
+        footerText: footerText,
+        buttons: buttons
+      }
+    };
   }
 }

@@ -38,7 +38,7 @@ export interface RequestStructure {
 }
 
 export interface ResponseStructure {
-    type: "image" | "text" | "document";
+    type: "image" | "text" | "document" | "interactive";
     content: string;
     caption: string;
     to: string;
@@ -46,8 +46,22 @@ export interface ResponseStructure {
     isCopyButton?: boolean;
 }
 
+export interface InteractiveButton {
+    id: string;
+    title: string;
+}
+
+export interface InteractiveMessage {
+    headerType?: "text" | "image" | "document" | "video";
+    headerContent?: string; // Text content or media ID/URL
+    bodyText: string;
+    footerText?: string;
+    buttons: InteractiveButton[];
+}
+
 export interface ResponseStructureExtended extends ResponseStructure {
     isError: boolean;
+    interactive?: InteractiveMessage;
 }
 
 export interface RequestMessage {
@@ -631,7 +645,12 @@ export class MessageService {
             sentMessages.push(
                 ...this.mapTextMessages(
                     [
-                        '*👋 Astra Pay* – Bem-vindo(a)!\nTornamos o seu pagamento prático e sem complicações.\n\n*Formas de Pagamento Aceitas:*\n1. PIX\n2. Cartão de Crédito\n\n_Em caso de dúvidas sobre privacidade ou solicitação de remoção dos seus dados, entre em contato pelo e-mail:_ \nsuporte@astra1.com.br',
+                        '*👋 Astra Pay* – Bem-vindo(a)!\n' +
+                        'Tornamos o seu pagamento prático e sem complicações.\n\n' +
+                        '*Formas de Pagamento Aceitas:*\n' +
+                        '1. PIX\n' +
+                        '2. Cartão de Crédito\n\n' +
+                        '> Ao continuar você concorda com nossa Política de Privacidade: https://astra1.com.br/privacy-policy/'
                     ],
                     from,
                     true,
@@ -776,13 +795,30 @@ export class MessageService {
             const orderMessage = orderData.message;
             const orderDetails = orderData.details;
 
-            // Adiciona as mensagens de resposta
+            // Adiciona a mensagem do pedido como texto
             sentMessages.push(
                 ...this.mapTextMessages(
-                    [orderMessage, '👍 A sua comanda está correta?\n\n1- Sim\n2- Não'],
+                    [orderMessage],
                     from,
                 ),
             );
+
+            // Adiciona a pergunta de confirmação como botões interativos
+            const confirmationMessage = this.whatsappApi.createInteractiveButtonMessage(
+                from,
+                "👍 A sua comanda está correta?",
+                [
+                    { id: "confirm_yes", title: "Sim" },
+                    { id: "confirm_no", title: "Não" }
+                ],
+                {
+                    headerType: "text",
+                    headerContent: "Confirmação do Pedido",
+                    footerText: ""
+                }
+            );
+
+            sentMessages.push(confirmationMessage);
 
             // Cria a ordem do pedido
             const createOrderData: CreateOrderDTO = {
@@ -869,13 +905,25 @@ export class MessageService {
         state: ConversationDto,
     ): Promise<ResponseStructureExtended[]> {
         const sentMessages: ResponseStructureExtended[] = [];
-        const positiveResponses = ['1', 'sim', 'correta', 'está correta', 'sim está correta'];
-        const negativeResponses = ['2', 'não', 'nao', 'não está correta', 'incorreta', 'não correta'];
+        const positiveResponses = ['1', 'sim', 'correta', 'está correta', 'sim está correta', 'button_confirm_yes'];
+        const negativeResponses = ['2', 'não', 'nao', 'não está correta', 'incorreta', 'não correta', 'button_confirm_no'];
 
         const updatedContext: ConversationContextDTO = { ...state.conversationContext };
         const tableId = parseInt(state.tableId, 10);
 
-        if (positiveResponses.some((response) => userMessage.includes(response))) {
+        // Check if the response is from a button interaction
+        const isButtonResponse = userMessage.startsWith('button_');
+
+        // For button responses, we need to check if it starts with the button_ID prefix
+        const isPositiveResponse = isButtonResponse
+            ? userMessage.startsWith('button_confirm_yes:')
+            : positiveResponses.some((response) => userMessage.toLowerCase().includes(response));
+
+        const isNegativeResponse = isButtonResponse
+            ? userMessage.startsWith('button_confirm_no:')
+            : negativeResponses.some((response) => userMessage.toLowerCase().includes(response));
+
+        if (isPositiveResponse) {
             if (!updatedContext.userAmount || updatedContext.userAmount <= 0) {
                 updatedContext.userAmount = updatedContext.totalOrderAmount;
             }
@@ -883,14 +931,24 @@ export class MessageService {
 
             const notifyWaiterMessages = this.notifyWaiterTableStartedPayment(tableId);
 
-            sentMessages.push(
-                ...this.mapTextMessages(
-                    [
-                        'Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸\n\n- 3%\n- *5%* (Escolha das últimas mesas 🔥)\n- 7%',
-                    ],
-                    from,
-                ),
+            // Replace text message with interactive buttons for tip selection
+            const tipSelectionMessage = this.whatsappApi.createInteractiveButtonMessage(
+                from,
+                "Você foi bem atendido? Que tal dar uma gorjetinha extra? 😊💸",
+                [
+                    { id: "tip_3", title: "3%" },
+                    { id: "tip_5", title: "5% 🔥" },
+                    { id: "tip_7", title: "7%" }
+                ],
+                {
+                    headerType: "text",
+                    headerContent: "Gorjeta",
+                    footerText: "Escolha das últimas mesas: 5% 🔥"
+                }
             );
+
+            sentMessages.push(tipSelectionMessage);
+
             this.retryRequestWithNotification({
                 from,
                 requestFunction: () => this.tableService.startPayment(tableId),
@@ -901,7 +959,7 @@ export class MessageService {
 
             updatedContext.currentStep = ConversationStep.ExtraTip;
 
-        } else if (negativeResponses.some((response) => userMessage.includes(response))) {
+        } else if (isNegativeResponse) {
             sentMessages.push(
                 ...this.mapTextMessages(
                     [
@@ -1350,6 +1408,17 @@ export class MessageService {
     ): Promise<ResponseStructureExtended[]> {
         let sentMessages: ResponseStructureExtended[] = [];
         const noTipKeywords = ['não', 'nao', 'n quero', 'não quero', 'nao quero'];
+
+        // Handle button responses for tips
+        if (userMessage.startsWith('button_tip_')) {
+            // Extract the percentage from the button ID (e.g., "button_tip_3:3%" -> 3)
+            const match = userMessage.match(/button_tip_(\d+):/);
+            if (match && match[1]) {
+                const tipPercent = parseInt(match[1], 10);
+                return await this.handleTipAmount(from, state, tipPercent);
+            }
+        }
+
         const tipPercent = parseFloat(userMessage.replace('%', '').replace(',', '.'));
 
         if (this.isNoTip(userMessage, noTipKeywords) || tipPercent === 0) {
@@ -1380,7 +1449,7 @@ export class MessageService {
         // Mensagem de confirmação de "sem problemas".
         const messages = [
             'Sem problemas!',
-            'Por favor, nos informe o seu CPF ou CNPJ para a emissão da nota fiscal. 😊'
+            'Para a emissão de sua nota fiscal\n\n*Qual o seu CPF ou CNPJ?*'
         ];
 
         const sentMessages = this.mapTextMessages(messages, from);
@@ -1420,7 +1489,7 @@ export class MessageService {
         // Mensagem para solicitar o CPF antes do pagamento
         sentMessages.push(
             ...this.mapTextMessages(
-                ['Por favor, nos informe o seu CPF ou CNPJ para a emissão da nota fiscal. 😊'],
+                ['Para a emissão de sua nota fiscal\n\n*Qual o seu CPF ou CNPJ?*'],
                 from
             ),
         );
@@ -1506,12 +1575,22 @@ export class MessageService {
             conversationContext: updatedContext,
         });
 
-        sentMessages.push(
-            ...this.mapTextMessages(
-                ['👍 Escolha a forma de pagamento:\n\n1- PIX\n2- Cartão de Crédito'],
-                from
-            )
+        // Replace text message with interactive buttons for payment method selection
+        const paymentMethodMessage = this.whatsappApi.createInteractiveButtonMessage(
+            from,
+            "Escolha a forma de pagamento:",
+            [
+                { id: "payment_pix", title: "PIX" },
+                { id: "payment_credit", title: "Cartão de Crédito" }
+            ],
+            {
+                headerType: "text",
+                headerContent: "Método de Pagamento",
+                footerText: "Escolha a opção desejada"
+            }
         );
+        
+        sentMessages.push(paymentMethodMessage);
 
         return sentMessages;
     }
@@ -1685,18 +1764,30 @@ export class MessageService {
                     currentStep: ConversationStep.Feedback,
                 },
             });
+
             sentMessages.push(
                 ...this.mapTextMessages(
-                    [
-                        '*👋  Astra Pay* - Pagamento Cancelado ❌',
-                        'Como você se sentiria se não pudesse mais usar o nosso serviço?\n\nEscolha uma das opções abaixo:',
-                        '1- Muito decepcionado',
-                        '2- Um pouco decepcionado',
-                        '3- Não faria diferença'
-                    ],
+                    ['*👋  Astra Pay* - Pagamento Cancelado ❌'],
                     from
                 )
             );
+            
+            const feedbackMessage = this.whatsappApi.createInteractiveButtonMessage(
+                from,
+                "Como você se sentiria se não pudesse mais usar o nosso serviço?",
+                [
+                    { id: "feedback_1", title: "Muito decepcionado" },
+                    { id: "feedback_2", title: "Pouco decepcionado" },
+                    { id: "feedback_3", title: "Não faria diferença" }
+                ],
+                {
+                    headerType: "text",
+                    headerContent: "Sua opinião é importante",
+                    footerText: "Ajude-nos a melhorar"
+                }
+            );
+            
+            sentMessages.push(feedbackMessage);
         } else {
             sentMessages.push(
                 ...this.mapTextMessages(
@@ -1790,8 +1881,20 @@ export class MessageService {
         let sentMessages: ResponseStructureExtended[] = [];
         const conversationId = state._id.toString();
         const userChoice = userMessage.trim().toLowerCase();
+        
+        // Handle button responses
+        const isPIXChoice = userChoice === '1' || 
+                            userChoice.includes('pix') || 
+                            userMessage.startsWith('button_payment_pix:');
+                            
+        const isCreditCardChoice = userChoice === '2' || 
+                                  userChoice.includes('cartão') || 
+                                  userChoice.includes('cartao') || 
+                                  userChoice.includes('crédito') || 
+                                  userChoice.includes('credito') ||
+                                  userMessage.startsWith('button_payment_credit:');
 
-        if (userChoice === '1' || userChoice.includes('pix')) {
+        if (isPIXChoice) {
             // Fluxo PIX
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
@@ -1806,15 +1909,11 @@ export class MessageService {
 
             sentMessages.push(
                 ...this.mapTextMessages(
-                    ['😊 Qual é o seu *nome completo?* Para continuarmos com o pagamento via PIX.'],
+                    ['😊 Para continuarmos com o pagamento via PIX\n\n*Qual é o seu nome completo?*'],
                     from,
                 ),
             );
-        } else if (
-            userChoice === '2' ||
-            userChoice.includes('cartão') ||
-            userChoice.includes('crédito')
-        ) {
+        } else if (isCreditCardChoice) {
             // Obtém cartões salvos do usuário
             const cardsResponse = await this.cardService.getCardsByUserId(state.userId);
             const savedCards = cardsResponse.data;
@@ -1871,12 +1970,22 @@ export class MessageService {
                 );
             }
         } else {
-            sentMessages.push(
-                ...this.mapTextMessages(
-                    ['Opção inválida. Por favor, escolha:\n1- PIX\n2- Cartão de Crédito'],
-                    from,
-                ),
+            // Replace text message with interactive buttons for payment method selection
+            const invalidOptionMessage = this.whatsappApi.createInteractiveButtonMessage(
+                from,
+                "Escolha uma das formas abaixo:",
+                [
+                    { id: "payment_pix", title: "PIX" },
+                    { id: "payment_credit", title: "Cartão de Crédito" }
+                ],
+                {
+                    headerType: "text",
+                    headerContent: "Método de Pagamento",
+                    footerText: "Selecione uma das opções abaixo"
+                }
             );
+            
+            sentMessages.push(invalidOptionMessage);
         }
 
         return sentMessages;
@@ -2195,17 +2304,26 @@ export class MessageService {
 
             const receiptMessagesPromise = this.generateReceiptPdf(transaction.data);
 
-            const feedbackMessage = this.mapTextMessages(
+            // Replace text message with interactive buttons for feedback options
+            const feedbackMessage = this.whatsappApi.createInteractiveButtonMessage(
+                from,
+                "Como você se sentiria se não pudesse mais usar o nosso serviço?",
                 [
-                    'Como você se sentiria se não pudesse mais usar o nosso serviço?\n\nEscolha uma das opções abaixo',
-                    '1- Muito decepcionado\n2- Um pouco decepcionado\n3- Não faria diferença',
+                    { id: "feedback_1", title: "Muito decepcionado" },
+                    { id: "feedback_2", title: "Pouco decepcionado" },
+                    { id: "feedback_3", title: "Não faria diferença" }
                 ],
-                from
+                {
+                    headerType: "text",
+                    headerContent: "Sua opinião é importante",
+                    footerText: "Ajude-nos a melhorar"
+                }
             );
 
             const receiptMessages = await receiptMessagesPromise;
 
-            sentMessages.push(...confirmationMessage, ...receiptMessages, ...feedbackMessage);
+            sentMessages.push(...confirmationMessage, ...receiptMessages);
+            sentMessages.push(feedbackMessage);
 
 
             // Atualiza o estado da conversa para a etapa de Feedback
@@ -2288,6 +2406,8 @@ export class MessageService {
 
         if (typeof feedback.mustHaveScore === 'undefined') {
             const userResponse = userMessage.trim().toLowerCase();
+            
+            // Define valid options for text responses
             const validOptions: Record<string, string> = {
                 '1-': 'Muito decepcionado',
                 '1': 'Muito decepcionado',
@@ -2302,21 +2422,45 @@ export class MessageService {
                 'não faria diferença': 'Não faria diferença',
                 'nao faria diferença': 'Não faria diferença', // Sem acento
                 'indiferente': 'Não faria diferença',
+                // Button response patterns
+                'button_feedback_1': 'Muito decepcionado',
+                'button_feedback_2': 'Um pouco decepcionado',
+                'button_feedback_3': 'Não faria diferença'
             };
 
             // Verifica se a resposta do usuário é válida
-            const matchedOption = Object.keys(validOptions).find(
-                (key) => key === userResponse || userResponse.includes(key)
-            );
+            const isButtonResponse = userMessage.startsWith('button_feedback_');
+            let matchedOption;
+            
+            if (isButtonResponse) {
+                // Extract button ID from response (e.g., 'button_feedback_1:Muito decepcionado' -> 'button_feedback_1')
+                const buttonId = userMessage.split(':')[0];
+                matchedOption = buttonId;
+            } else {
+                // Check for text responses
+                matchedOption = Object.keys(validOptions).find(
+                    (key) => key === userResponse || userResponse.includes(key)
+                );
+            }
 
             if (!matchedOption) {
-                sentMessages = this.mapTextMessages(
+                // Show interactive buttons for feedback options
+                const feedbackOptionsMessage = this.whatsappApi.createInteractiveButtonMessage(
+                    from,
+                    "Por favor, avalie como foi sua experiência conosco:",
                     [
-                        'Por favor, escolha uma das opções abaixo e envie apenas o número ou a descrição correspondente:',
-                        '1- Muito decepcionado\n2- Um pouco decepcionado\n3- Não faria diferença',
+                        { id: "feedback_1", title: "Muito decepcionado" },
+                        { id: "feedback_2", title: "Pouco decepcionado" },
+                        { id: "feedback_3", title: "Não faria diferença" }
                     ],
-                    from
+                    {
+                        headerType: "text",
+                        headerContent: "Sua opinião é importante",
+                        footerText: ""
+                    }
                 );
+                
+                sentMessages.push(feedbackOptionsMessage);
             } else {
                 feedback.mustHaveScore = validOptions[matchedOption];
 
@@ -2332,8 +2476,6 @@ export class MessageService {
                 ['Parece que já registramos sua avaliação. Obrigado!'],
                 from
             );
-
-            updatedContext.currentStep = ConversationStep.Completed;
         }
 
         await this.conversationService.updateConversation(conversationId, {
@@ -2381,13 +2523,30 @@ export class MessageService {
             feedback.detailedFeedback = userMessage.trim();
 
             if (feedback.mustHaveScore === 'Muito decepcionado' || feedback.mustHaveScore === 'Um pouco decepcionado') {
-                sentMessages = this.mapTextMessages(
-                    [
-                        'Obrigado pelo seu feedback detalhado!',
-                        'Em qual outro restaurante você *gostaria de pagar* com a *Astra*?',
-                    ],
-                    from
+                // For disappointed users, we ask for suggestions of other restaurants
+                sentMessages.push(
+                    ...this.mapTextMessages(
+                        ['Obrigado pelo seu feedback detalhado!'],
+                        from
+                    )
                 );
+                
+                // Add a message asking for restaurant suggestions with a friendly tone
+                const restaurantMessage = this.whatsappApi.createInteractiveButtonMessage(
+                    from,
+                    "Em qual outro restaurante você gostaria de pagar com a Astra?",
+                    [
+                        { id: "restaurant_suggest", title: "Sugerir restaurante" },
+                        { id: "restaurant_skip", title: "Pular" }
+                    ],
+                    {
+                        headerType: "text",
+                        headerContent: "Sua sugestão é valiosa",
+                        footerText: ""
+                    }
+                );
+                
+                sentMessages.push(restaurantMessage);
 
                 await this.conversationService.updateConversation(conversationId, {
                     userId: state.userId,
@@ -2397,6 +2556,7 @@ export class MessageService {
                     },
                 });
             } else {
+                // For satisfied users, we just thank them
                 sentMessages = this.mapTextMessages(
                     [
                         'Obrigado pelo seu feedback detalhado! 😄',
@@ -2417,31 +2577,19 @@ export class MessageService {
             !feedback.recommendedRestaurants &&
             (feedback.mustHaveScore === 'Muito decepcionado' || feedback.mustHaveScore === 'Um pouco decepcionado')
         ) {
-            const recommended = userMessage.trim();
-            if (!recommended) {
-                sentMessages = this.mapTextMessages(
-                    ['Em qual outro restaurante você *gostaria de pagar* com a *Astra*?'],
-                    from
-                );
-
-                await this.conversationService.updateConversation(conversationId, {
-                    userId: state.userId,
-                    conversationContext: {
-                        ...state.conversationContext,
-                        currentStep: ConversationStep.FeedbackDetail,
-                    },
-                });
-            } else {
-                feedback.recommendedRestaurants = recommended;
-
+            // Handle restaurant suggestion or skip
+            if (userMessage.startsWith('button_restaurant_skip:')) {
+                // User chose to skip suggesting restaurants
                 sentMessages = this.mapTextMessages(
                     [
-                        'Muito obrigado pelas suas indicações! 🤩',
-                        'Se precisar de mais alguma coisa, estamos aqui para ajudar. 😄',
+                        'Sem problemas! 😊',
+                        'Agradecemos seu feedback. Se precisar de algo mais, estamos aqui para ajudar.',
                     ],
                     from
                 );
-
+                
+                feedback.recommendedRestaurants = "Usuário optou por não sugerir";
+                
                 await this.conversationService.updateConversation(conversationId, {
                     userId: state.userId,
                     conversationContext: {
@@ -2449,6 +2597,52 @@ export class MessageService {
                         currentStep: ConversationStep.Completed,
                     },
                 });
+            } else if (userMessage.startsWith('button_restaurant_suggest:')) {
+                // User clicked the suggest button, prompt for actual suggestion
+                sentMessages = this.mapTextMessages(
+                    ['Por favor, digite o nome do(s) restaurante(s) que você gostaria de sugerir:'],
+                    from
+                );
+            } else {
+                // Normal text input with restaurant suggestion
+                const recommended = userMessage.trim();
+                if (!recommended) {
+                    // Empty message, ask again with buttons
+                    const restaurantMessage = this.whatsappApi.createInteractiveButtonMessage(
+                        from,
+                        "Em qual outro restaurante você gostaria de pagar com a Astra?",
+                        [
+                            { id: "restaurant_suggest", title: "Sugerir restaurante" },
+                            { id: "restaurant_skip", title: "Pular" }
+                        ],
+                        {
+                            headerType: "text",
+                            headerContent: "Sua sugestão é valiosa",
+                            footerText: ""
+                        }
+                    );
+                    
+                    sentMessages.push(restaurantMessage);
+                } else {
+                    // User provided restaurant suggestions
+                    feedback.recommendedRestaurants = recommended;
+
+                    sentMessages = this.mapTextMessages(
+                        [
+                            'Muito obrigado pelas suas indicações! 🤩',
+                            'Se precisar de mais alguma coisa, estamos aqui para ajudar. 😄',
+                        ],
+                        from
+                    );
+
+                    await this.conversationService.updateConversation(conversationId, {
+                        userId: state.userId,
+                        conversationContext: {
+                            ...state.conversationContext,
+                            currentStep: ConversationStep.Completed,
+                        },
+                    });
+                }
             }
         } else {
             sentMessages = this.mapTextMessages(
