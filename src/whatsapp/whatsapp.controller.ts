@@ -25,6 +25,7 @@ export class WhatsAppController {
   @Post('webhook')
   @HttpCode(200)
   async handleWebhookNotification(@Body() notification: WebhookNotificationDto): Promise<string> {
+    console.log("WhatsApp Message Webhook Received");
     // console.log('notification', notification);
     try {
       this.whatsAppService.processWebhookNotification(notification);
@@ -38,6 +39,7 @@ export class WhatsAppController {
   @Post('flow-webhook')
   @HttpCode(200)
   async handleFlowWebhook(@Body() flowData: FlowDataDto): Promise<string> {
+    console.log("WhatsApp Flow Webhook Received");
     // console.log('Flow data received on dedicated endpoint');
     try {
       // Check if this is a direct unencrypted health check

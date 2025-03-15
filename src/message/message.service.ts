@@ -113,7 +113,7 @@ export class MessageService {
             const conversation = await this.conversationService.getConversation(transaction.conversationId);
 
             if (!conversation.data) {
-                this.logger.error(`[handleExpiredPIXTransactions] Conversation not found for transaction ${transaction._id}`);
+                // this.logger.error(`[handleExpiredPIXTransactions] Conversation not found for transaction ${transaction._id}`);
                 continue;
             }
 
@@ -174,9 +174,9 @@ export class MessageService {
                 const conversation = conversationResp.data;
 
                 if (!conversation) {
-                    this.logger.warn(
-                        `[handlePendingPaymentsReminder] Conversation not found for transaction ${transaction._id}`
-                    );
+                    // this.logger.warn(
+                        // `[handlePendingPaymentsReminder] Conversation not found for transaction ${transaction._id}`
+                    // );
                     continue;
                 }
 
@@ -225,7 +225,7 @@ export class MessageService {
             const activeConversationsResponse = await this.conversationService.getAllActiveConversations();
             const activeConversations = activeConversationsResponse.data || [];
 
-            this.logger.debug(`[handleUserInactivityCheck] Active conversations: ${activeConversations.length}`);
+            // this.logger.debug(`[handleUserInactivityCheck] Active conversations: ${activeConversations.length}`);
 
             for (const conversation of activeConversations) {
                 const { currentStep, lastMessage, reminderSentAt } = conversation.conversationContext;
@@ -237,7 +237,7 @@ export class MessageService {
                 const lastMessageTime = new Date(lastMessage).getTime();
                 const diffInMinutes = Math.floor((now - lastMessageTime) / (1000 * 60));
 
-                this.logger.debug(`[handleUserInactivityCheck] Conversation ID: ${conversation._id}, Time difference: ${diffInMinutes} minutes`);
+                // this.logger.debug(`[handleUserInactivityCheck] Conversation ID: ${conversation._id}, Time difference: ${diffInMinutes} minutes`);
 
                 if (ConversationStep.UserAbandoned === currentStep) {
                     continue;

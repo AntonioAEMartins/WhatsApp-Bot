@@ -14,6 +14,8 @@ export class FlowService {
     const environment = process.env.ENVIRONMENT;
     const privateKeyPath = environment === 'demo' ? process.env.WHATSAPP_DEMO_FLOW_PRIVATE_KEY_PATH : process.env.WHATSAPP_TEST_FLOW_PRIVATE_KEY_PATH;
     
+    this.logger.log(`WhatsApp Flow private key path: ${privateKeyPath}`);
+
     if (privateKeyPath) {
       try {
         this.privateKey = fs.readFileSync(privateKeyPath, 'utf8');

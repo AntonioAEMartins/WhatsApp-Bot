@@ -34,11 +34,11 @@ import { WhatsAppApiModule } from './shared/whatsapp-api/whatsapp.api.module';
   providers: [AppService],
 })
 export class AppModule {
-  // configure(consumer: MiddlewareConsumer) {
-  //   consumer
-  //     .apply(RequestLoggerMiddleware)
-  //     .forRoutes('*');
-  // }
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(RequestLoggerMiddleware)
+      .forRoutes('*');
+  }
 }
 
 
