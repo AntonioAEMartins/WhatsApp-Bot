@@ -175,7 +175,7 @@ export class MessageService {
 
                 if (!conversation) {
                     // this.logger.warn(
-                        // `[handlePendingPaymentsReminder] Conversation not found for transaction ${transaction._id}`
+                    // `[handlePendingPaymentsReminder] Conversation not found for transaction ${transaction._id}`
                     // );
                     continue;
                 }
@@ -2278,14 +2278,26 @@ export class MessageService {
                 // Prepare data for the flow - use a simpler approach without complex payload
                 try {
                     // Create a basic flow message with minimal configuration
+
+                    console.log("HOLDER CPF", state.conversationContext.documentNumber);
+
                     const flowMessage = this.whatsappApi.createFlowMessage(
                         from,
                         `O valor final da conta é de ${formatToBRL(state.conversationContext.userAmount)}. Preencha os dados do seu cartão para finalizar o pagamento.`,
                         {
                             flowId: flowId,
                             flowCta: 'Pagar com cartão',
-                            // Use minimal parameters for initial testing
-                            mode: 'draft' // Try published instead of draft
+                            mode: 'draft',
+                            flowToken: state._id.toString(),
+                            flowAction: 'navigate',
+                            flowActionPayload: {
+                                screen: "USER_INFO",
+                                data: {
+                                    holder_cpf: this.utilsService.formatCPF(state.conversationContext.documentNumber || ''),
+                                    payment_value: "💰 Valor: " + formatToBRL(state.conversationContext.userAmount),
+                                    table_id: "🪑 Comanda: " + state.tableId,
+                                }
+                            }
                         },
                         {
                             headerType: 'text',
@@ -2293,7 +2305,7 @@ export class MessageService {
                             footerText: 'Astra - Pagamento Seguro'
                         }
                     );
-                    
+
                     console.log(`[handleCreditCardPayment] flowMessage: ${JSON.stringify(flowMessage)}`);
 
                     // Add an informative message about the payment process
@@ -2311,11 +2323,11 @@ export class MessageService {
 
                 } catch (flowError) {
                     this.logger.error(`[handleCreditCardPayment] Flow error: ${flowError.message}`, flowError.stack);
-                    
+
                     // After flow error, try with the explicit navigate action as a fallback
                     try {
                         this.logger.log(`[handleCreditCardPayment] Trying with explicit flow action and payload`);
-                        
+
                         const flowMessage = this.whatsappApi.createFlowMessage(
                             from,
                             `O valor final da conta é de ${formatToBRL(state.conversationContext.userAmount)}. Preencha os dados do seu cartão para finalizar o pagamento.`,
@@ -2339,14 +2351,14 @@ export class MessageService {
                                 footerText: 'Astra - Pagamento Seguro'
                             }
                         );
-                        
+
                         await this.whatsappApi.sendWhatsAppMessage(flowMessage);
                         this.logger.log(`[handleCreditCardPayment] Flow message with explicit action sent successfully`);
                     } catch (explicitFlowError) {
                         this.logger.error(`[handleCreditCardPayment] Explicit flow error: ${explicitFlowError.message}`, explicitFlowError.stack);
                         throw flowError; // Re-throw the original error to be caught by the outer catch block
                     }
-                    
+
                     // Add an informative message about the payment process
                     sentMessages.push(
                         ...this.mapTextMessages(
@@ -3325,7 +3337,7 @@ export class MessageService {
                     to: conversation.userId,
                     reply: false,
                     isError: false,
-                        caption: '',
+                    caption: '',
                 };
 
             case ConversationStep.ConfirmOrder:
@@ -3333,14 +3345,14 @@ export class MessageService {
                     type: 'text',
                     content: `🔄 Estamos confirmando os detalhes da sua comanda, mas parece que está demorando um pouco mais do que o habitual.\n\n Por favor, mantenha-se à vontade, logo finalizaremos! 😄`,
                     to: conversation.userId,
-                        reply: false,
-                        isError: false,
+                    reply: false,
+                    isError: false,
                     caption: '',
                 };
 
             case ConversationStep.SplitBill:
                 return {
-                                type: 'text',
+                    type: 'text',
                     content: `🔄 O processo de divisão da conta está em andamento, mas pode levar alguns instantes a mais.\n\n Agradecemos pela paciência! 🎉`,
                     to: conversation.userId,
                     reply: false,
