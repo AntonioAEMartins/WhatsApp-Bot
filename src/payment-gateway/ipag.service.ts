@@ -260,11 +260,18 @@ export class IPagService {
                         userFriendlyMessage: 'Cartão com final par rejeitado em ambiente demo',
                         rawError: 'Demo mode: even-ending cards are always rejected',
                     },
-                    // status: PaymentStatus.Denied,
+                    status: PaymentStatus.Denied,
                 });
 
-                // Duplicamos a transação para permitir uma nova tentativa
-                // await this.transactionService.duplicateTransaction(userPaymentInfo.transactionId);
+                // Dispara processo de falha (mesma lógica usada nos fluxos reais)
+                const conversation = await this.conversationService.getConversation(transaction.conversationId);
+                const paymentProcessorDTO: PaymentProcessorDTO = {
+                    transactionId: transaction._id.toString(),
+                    from: conversation.data.userId,
+                    state: conversation.data,
+                };
+                
+                await this.messageService.processPayment(paymentProcessorDTO);
 
                 throw new HttpException('Cartão com final par rejeitado em ambiente demo', HttpStatus.BAD_REQUEST);
             }
@@ -274,7 +281,9 @@ export class IPagService {
             const mockTransactionId = `demo-${this.generateRandomString(10)}`;
 
             // Dispara processo de conclusão (mesma lógica usada nos fluxos reais)
+            console.log("Antes do Get Conversation");
             const conversation = await this.conversationService.getConversation(transaction.conversationId);
+            console.log("Depois do Get Conversation");
             const paymentProcessorDTO: PaymentProcessorDTO = {
                 transactionId: transaction._id.toString(),
                 from: conversation.data.userId,
@@ -284,7 +293,10 @@ export class IPagService {
             let createdCardId: SimpleResponseDto<{
                 _id: string;
             }>;
-            // Se o usuário pediu para salvar o cartão e não é tokenizado
+
+            console.log("userPaymentInfo.cardId", userPaymentInfo.cardId);
+            console.log("userPaymentInfo.saveCard", userPaymentInfo.saveCard);
+
             if (!userPaymentInfo.cardId && userPaymentInfo.saveCard) {
                 createdCardId = await this.cardService.createCard({
                     userId: transaction.userId,
@@ -299,6 +311,8 @@ export class IPagService {
                     expiry_year: userPaymentInfo.cardInfo.expiry_year,
                 });
             }
+
+            console.log("createdCardId", createdCardId);
 
 
             const cardId = userPaymentInfo.cardId || createdCardId.data._id;
@@ -315,7 +329,7 @@ export class IPagService {
 
             this.logger.log(`[createCreditCardPayment] DEMO MODE - Payment processor DTO: ${JSON.stringify(paymentProcessorDTO)}`);
 
-            await this.messageService.processPayment(paymentProcessorDTO);
+            this.messageService.processPayment(paymentProcessorDTO);
 
             this.logger.log(`[createCreditCardPayment] DEMO MODE - Payment created`);
 
@@ -409,6 +423,26 @@ export class IPagService {
                 processedResponse.type !== 'waiting' &&
                 processedResponse.type !== 'created'
             ) {
+                // Atualiza a transação com status de erro
+                await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
+                    ipagTransactionId: response.uuid,
+                    status: PaymentStatus.Denied,
+                    errorDescription: {
+                        errorCode: processedResponse.type,
+                        userFriendlyMessage: this.getUserFriendlyPaymentError(processedResponse.type, processedResponse.erros[0]),
+                        rawError: JSON.stringify(processedResponse.erros),
+                    },
+                });
+
+                // Dispara processo de falha
+                const conversation = await this.conversationService.getConversation(transaction.conversationId);
+                const paymentProcessorDTO: PaymentProcessorDTO = {
+                    transactionId: transaction._id.toString(),
+                    from: conversation.data.userId,
+                    state: conversation.data,
+                };
+                await this.messageService.processPayment(paymentProcessorDTO);
+
                 throw new HttpException(
                     this.getUserFriendlyPaymentError(processedResponse.type, processedResponse.erros[0]),
                     HttpStatus.BAD_REQUEST,
@@ -471,6 +505,25 @@ export class IPagService {
 
                 if (captureProcessed.type === 'success') {
                     await finalizePayment();
+                } else {
+                    // Se a captura falhar, atualiza a transação e processa o erro
+                    await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
+                        status: PaymentStatus.Denied,
+                        errorDescription: {
+                            errorCode: captureProcessed.type,
+                            userFriendlyMessage: this.getUserFriendlyPaymentError(captureProcessed.type, captureProcessed.erros[0]),
+                            rawError: JSON.stringify(captureProcessed.erros),
+                        },
+                    });
+
+                    // Dispara processo de falha
+                    const conversation = await this.conversationService.getConversation(transaction.conversationId);
+                    const paymentProcessorDTO: PaymentProcessorDTO = {
+                        transactionId: transaction._id.toString(),
+                        from: conversation.data.userId,
+                        state: conversation.data,
+                    };
+                    await this.messageService.processPayment(paymentProcessorDTO);
                 }
             }
             // Se for "waiting" ou "created", não fazemos nada extra agora (aguardando callback ou fluxo futuro)
@@ -481,6 +534,28 @@ export class IPagService {
             };
         } catch (error) {
             console.error('Error creating payment:', error);
+            
+            // Se ainda não processamos o erro, atualizamos a transação e notificamos
+            if (!(error instanceof HttpException)) {
+                await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
+                    status: PaymentStatus.Denied,
+                    errorDescription: {
+                        errorCode: 'unknown_error',
+                        userFriendlyMessage: 'Ocorreu um erro ao processar o pagamento',
+                        rawError: error.message || JSON.stringify(error),
+                    },
+                });
+
+                // Dispara processo de falha
+                const conversation = await this.conversationService.getConversation(transaction.conversationId);
+                const paymentProcessorDTO: PaymentProcessorDTO = {
+                    transactionId: transaction._id.toString(),
+                    from: conversation.data.userId,
+                    state: conversation.data,
+                };
+                await this.messageService.processPayment(paymentProcessorDTO);
+            }
+            
             if (error instanceof HttpException) {
                 throw error;
             }

@@ -1897,10 +1897,10 @@ export class MessageService {
             userMessage.startsWith('button_payment_credit:');
 
         if (isPIXChoice) {
-            // Fluxo PIX
+            // PIX flow
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
-                currentStep: ConversationStep.CollectName, // novo passo para coletar o nome
+                currentStep: ConversationStep.CollectName,
                 paymentMethod: PaymentMethod.PIX,
             };
 
@@ -1916,19 +1916,12 @@ export class MessageService {
                 ),
             );
         } else if (isCreditCardChoice) {
-            // Obtém cartões salvos do usuário
+            // Retrieve saved cards
             const cardsResponse = await this.cardService.getCardsByUserId(state.userId);
             const savedCards = cardsResponse.data;
 
             if (savedCards && savedCards.length > 0) {
-                // Constrói a mensagem com instruções de deleção
-                let optionsMessage = `✨ Com qual cartão deseja pagar o valor de *${formatToBRL(state.conversationContext.userAmount)}*?\n\n`;
-                savedCards.forEach((card, index) => {
-                    optionsMessage += `${index + 1}- Final *${card.last4}* | Válido até ${card.expiry_month}/${card.expiry_year}\n`;
-                });
-                optionsMessage += `${savedCards.length + 1}- *💳 Novo Cartão*\n\n`;
-                optionsMessage += `Para excluir um cartão salvo, digite por exemplo: *deletar 2* (onde 2 é o número do cartão).`;
-
+                // Update conversation context
                 const updatedContext: ConversationContextDTO = {
                     ...state.conversationContext,
                     currentStep: ConversationStep.SelectSavedCard,
@@ -1941,9 +1934,83 @@ export class MessageService {
                     conversationContext: updatedContext,
                 });
 
-                sentMessages.push(...this.mapTextMessages([optionsMessage], from));
+                // Build unique cards (with formatted display text)
+                const uniqueCards = [];
+                const processedCardKeys = new Set();
+
+                for (let i = 0; i < savedCards.length; i++) {
+                    const card = savedCards[i];
+                    const cardKey = `${card.last4}_${card.expiry_month}_${card.expiry_year}`;
+
+                    if (!processedCardKeys.has(cardKey)) {
+                        processedCardKeys.add(cardKey);
+
+                        // Check if we already have a card with the same last4 (regardless of expiration)
+                        const sameLastFourIndex = uniqueCards.findIndex(c => c.last4 === card.last4);
+
+                        if (sameLastFourIndex >= 0) {
+                            // Update the display format without the expiration info
+                            uniqueCards[sameLastFourIndex].displayText =
+                                `${sameLastFourIndex + 1}- Final ${uniqueCards[sameLastFourIndex].last4}`;
+
+                            // Add this card with the same simple format
+                            uniqueCards.push({
+                                ...card,
+                                displayText: `${i + 1}- Final ${card.last4}`
+                            });
+                        } else {
+                            // Add card with simple format (without expiration)
+                            uniqueCards.push({
+                                ...card,
+                                displayText: `${i + 1}- Final ${card.last4}`
+                            });
+                        }
+                    }
+                }
+
+                // Build interactive buttons (up to 2) based on the unique cards
+                const buttons: InteractiveButton[] = [];
+                const maxCardButtons = Math.min(uniqueCards.length, 2);
+                for (let i = 0; i < maxCardButtons; i++) {
+                    const card = uniqueCards[i];
+                    buttons.push({
+                        id: `card_${i + 1}`,
+                        title: card.displayText
+                    });
+                }
+                // Always add the "Novo Cartão" button
+                buttons.push({
+                    id: "new_card",
+                    title: "💳 Novo Cartão"
+                });
+
+                // Create the interactive message
+                const cardSelectionMessage = this.whatsappApi.createInteractiveButtonMessage(
+                    from,
+                    `✨ Com qual cartão deseja pagar o valor de *${formatToBRL(state.conversationContext.userAmount)}*?`,
+                    buttons,
+                    {
+                        headerType: "text",
+                        headerContent: "Selecione um Cartão",
+                        footerText: "Para excluir um cartão salvo, digite: *deletar <número>*"
+                    }
+                );
+
+                // If there are more than 2 cards, send only the text message listing them
+                if (savedCards.length > 2) {
+                    const textMessage = `Você tem ${savedCards.length} cartões salvos:\n\n` +
+                        savedCards.map((card, index) =>
+                            `${index + 1}- Final *${card.last4}*`
+                        ).join('\n') +
+                        `\n\n${savedCards.length + 1}- *💳 Novo Cartão*` +
+                        `\n\nPara excluir um cartão salvo, digite: *deletar <número>*`;
+                    sentMessages.push(...this.mapTextMessages([textMessage], from));
+                } else {
+                    // If 2 or fewer cards, use interactive buttons only.
+                    sentMessages.push(cardSelectionMessage);
+                }
             } else {
-                // Não há cartões salvos: segue fluxo de novo cartão
+                // No saved cards – proceed to new card flow
                 const updatedContext: ConversationContextDTO = {
                     ...state.conversationContext,
                     currentStep: ConversationStep.WaitingForPayment,
@@ -1972,7 +2039,7 @@ export class MessageService {
                 );
             }
         } else {
-            // Replace text message with interactive buttons for payment method selection
+            // Invalid option – show payment method buttons
             const invalidOptionMessage = this.whatsappApi.createInteractiveButtonMessage(
                 from,
                 "Escolha uma das formas abaixo:",
@@ -1993,8 +2060,6 @@ export class MessageService {
         return sentMessages;
     }
 
-
-
     private async handleSelectSavedCard(
         from: string,
         userMessage: string,
@@ -2005,20 +2070,22 @@ export class MessageService {
         const savedCards: CardDto[] = state.conversationContext.savedCards || [];
         const totalOptions = savedCards.length + 1; // inclui a opção "Novo Cartão"
 
+        // Função auxiliar para determinar o texto de exibição de cada cartão (sem exibir data de validade)
+        const getCardDisplayText = (card: Omit<CardDto, "token">, allCards: Omit<CardDto, "token">[]): string => {
+            return `${allCards.indexOf(card) + 1}- Final ${card.last4}`;
+        };
+
         // Verifica se o usuário digitou "deletar", "remover", etc.
         const normalizedInput = userMessage.trim().toLowerCase();
         const deleteMatch = normalizedInput.match(/^(deletar|remover)\s+(\d+)/i);
 
         if (deleteMatch) {
-            // Exemplo: "deletar 2"
             const indexToDelete = parseInt(deleteMatch[2], 10);
 
             if (isNaN(indexToDelete) || indexToDelete < 1 || indexToDelete > savedCards.length) {
                 sentMessages.push(
                     ...this.mapTextMessages(
-                        [
-                            'Índice de cartão inválido. Por favor, tente novamente digitando: "deletar <número do cartão>".',
-                        ],
+                        ['Número inválido. Digite: *deletar <número>*'],
                         from,
                     ),
                 );
@@ -2029,9 +2096,7 @@ export class MessageService {
             if (!cardToDelete) {
                 sentMessages.push(
                     ...this.mapTextMessages(
-                        [
-                            'Não encontramos o cartão especificado. Por favor, tente novamente.',
-                        ],
+                        ['Cartão não encontrado. Digite: *deletar <número>*'],
                         from,
                     ),
                 );
@@ -2041,24 +2106,10 @@ export class MessageService {
             // Deleta o cartão
             await this.cardService.deleteCard(cardToDelete._id, state.userId);
 
-            // Atualiza a lista de cartões em memória
+            // Atualiza a lista de cartões
             const updatedCardsResponse = await this.cardService.getCardsByUserId(state.userId);
             const updatedCards = updatedCardsResponse.data || [];
 
-            let optionsMessage = '✅ Cartão deletado com sucesso!\n\n';
-            if (updatedCards.length > 0) {
-                optionsMessage += '✨ Estes são seus cartões atuais:\n\n';
-                updatedCards.forEach((card, index) => {
-                    optionsMessage += `${index + 1}- Final *${card.last4}* | Válido até ${card.expiry_month}/${card.expiry_year}\n`;
-                });
-                optionsMessage += `${updatedCards.length + 1}- *💳 Novo Cartão*\n\n`;
-                optionsMessage += `Para excluir um cartão salvo, digite por exemplo: *deletar 2* (onde 2 é o número do cartão).`;
-            } else {
-                optionsMessage += 'Você não possui mais cartões salvos.\n';
-                optionsMessage += 'Digite o número *1* para adicionar um novo cartão.';
-            }
-
-            // Atualiza novamente o contexto de cartões salvos
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 savedCards: updatedCards as CardDto[],
@@ -2068,25 +2119,69 @@ export class MessageService {
                 conversationContext: updatedContext,
             });
 
-            sentMessages.push(...this.mapTextMessages([optionsMessage], from));
+            if (updatedCards.length > 0 && updatedCards.length <= 2) {
+                const buttons: InteractiveButton[] = updatedCards.map((card, index) => ({
+                    id: `${index + 1}`,
+                    title: getCardDisplayText(card, updatedCards),
+                }));
+
+                buttons.push({ id: `${updatedCards.length + 1}`, title: '💳 Novo Cartão' });
+
+                const interactiveMessage = this.whatsappApi.createInteractiveButtonMessage(
+                    from,
+                    '✅ Cartão removido! Escolha outro ou cadastre um novo:',
+                    buttons,
+                    {
+                        headerType: 'text',
+                        headerContent: 'Selecione um Cartão',
+                        footerText: 'Para excluir um cartão salvo, digite: *deletar <número>*',
+                    }
+                );
+
+                sentMessages.push(interactiveMessage);
+            } else if (updatedCards.length > 0) {
+                let optionsMessage = '✅ Cartão removido!\n\nEstes são seus cartões atuais:\n\n';
+                updatedCards.forEach((card, index) => {
+                    optionsMessage += `${index + 1}- ${getCardDisplayText(card, updatedCards)}\n`;
+                });
+                optionsMessage += `${updatedCards.length + 1}- *💳 Novo Cartão*\n\n`;
+                optionsMessage += `Para excluir um cartão salvo, digite: *deletar <número>*`;
+
+                sentMessages.push(...this.mapTextMessages([optionsMessage], from));
+            } else {
+                sentMessages.push(...this.mapTextMessages([
+                    '✅ Cartão removido!\n\nVocê não possui mais cartões salvos.\nDigite *1* para adicionar um novo cartão.'
+                ], from));
+            }
+
             return sentMessages;
         }
 
-        // Caso o usuário não tenha digitado "deletar", interpretamos como escolha normal (1, 2, 3, etc.)
-        const selection = parseInt(userMessage.trim(), 10);
+        let selection: number = NaN;
+        if (userMessage.startsWith("button_card_")) {
+            selection = parseInt(userMessage.replace("button_card_", "").trim(), 10);
+        }
+
+        else if (normalizedInput.includes("novo cartao") ||
+            normalizedInput.includes("novo cartão") ||
+            normalizedInput === "💳 novo cartão") {
+            selection = totalOptions;
+        }
+        else {
+            const selectionMatch = userMessage.trim().match(/^(\d+)/);
+            selection = selectionMatch ? parseInt(selectionMatch[1], 10) : NaN;
+        }
+
         if (isNaN(selection) || selection < 1 || selection > totalOptions) {
             sentMessages.push(
                 ...this.mapTextMessages(
-                    [
-                        'Por favor, escolha uma opção válida ou use "deletar <n>" para remover um cartão.',
-                    ],
+                    ['Escolha uma opção válida ou digite *deletar <número>* para remover um cartão.'],
                     from,
                 ),
             );
             return sentMessages;
         }
 
-        // Opção de Novo Cartão
         if (selection === totalOptions) {
             const updatedContext: ConversationContextDTO = {
                 ...state.conversationContext,
@@ -2108,11 +2203,9 @@ export class MessageService {
                 state,
                 transactionResponse.transactionResponse,
             );
-            // this.logger.log(`[handleSelectSavedCard] Sent messages: ${JSON.stringify(sentMessages)}`);
             return sentMessages;
         }
 
-        // Fluxo para cartão salvo selecionado
         const selectedCard = savedCards[selection - 1];
 
         const updatedContext: ConversationContextDTO = {
@@ -2131,21 +2224,15 @@ export class MessageService {
             state.conversationContext.userName,
         );
 
-        // const totalPaymentMessage = `O valor final da conta é de *${formatToBRL(state.conversationContext.userAmount)}*.`;
-        // const paymentMessage = "Iremos o pamento com o cartão *${selectedCard.last4}*.";
-        // sentMessages.push(...this.mapTextMessages([totalPaymentMessage, paymentMessage], from));
-
-        // Monta o DTO apenas com transactionId e cardId
         const userPaymentInfo: UserPaymentCreditInfoDto = {
             transactionId: transactionResponse.transactionResponse._id.toString(),
             cardId: selectedCard._id,
         };
 
         try {
-            // Tenta processar o pagamento direto, caso o fluxo seja assim
             await this.ipagService.createCreditCardPayment(userPaymentInfo);
         } catch (error) {
-            // Em caso de erro, reverte o fluxo para a seleção de cartão
+            console.log("iPAG CREDIT CARD ERROR", error);
             const revertContext: ConversationContextDTO = {
                 ...state.conversationContext,
                 currentStep: ConversationStep.SelectSavedCard,
@@ -2156,24 +2243,43 @@ export class MessageService {
                 conversationContext: revertContext,
             });
 
-            // Reconstrói a mensagem de opções com os cartões disponíveis
-            let optionsMessage = `*Ops! 😕* Tivemos um problema ao processar o pagamento. Por favor, escolha um novo cartão:\n\n`;
-            savedCards.forEach((card, index) => {
-                optionsMessage += `${index + 1}- Final *${card.last4}* | Válido até ${card.expiry_month}/${card.expiry_year}\n`;
-            });
-            optionsMessage += `${savedCards.length + 1}- *💳 Novo Cartão*\n\n`;
-            optionsMessage += `Para excluir um cartão salvo, digite: "deletar n".`;
+            if (savedCards.length <= 2) {
+                const buttons: InteractiveButton[] = savedCards.map((card, index) => ({
+                    id: `${index + 1}`,
+                    title: getCardDisplayText(card, savedCards),
+                }));
 
-            sentMessages.push(...this.mapTextMessages([optionsMessage], from));
+                buttons.push({ id: `${savedCards.length + 1}`, title: '💳 Novo Cartão' });
+
+                const interactiveMessage = this.whatsappApi.createInteractiveButtonMessage(
+                    from,
+                    '*Erro no pagamento!* Escolha outro cartão ou cadastre um novo:',
+                    buttons,
+                    {
+                        headerType: 'text',
+                        headerContent: 'Erro no Pagamento',
+                        footerText: 'Para excluir um cartão salvo, digite: *deletar <número>*',
+                    }
+                );
+
+                sentMessages.push(interactiveMessage);
+            } else {
+                let optionsMessage = `*Erro no pagamento!* Escolha outro cartão:\n\n`;
+                savedCards.forEach((card, index) => {
+                    optionsMessage += `${index + 1}- ${getCardDisplayText(card, savedCards)}\n`;
+                });
+                optionsMessage += `${savedCards.length + 1}- *💳 Novo Cartão*\n\n`;
+                optionsMessage += `Para excluir um cartão salvo, digite: *deletar <número>*`;
+
+                sentMessages.push(...this.mapTextMessages([optionsMessage], from));
+            }
+
             return sentMessages;
         }
 
-        // Se chegou até aqui, significa que a ipagService.createCreditCardPayment() foi bem sucedida
-        // Normalmente você trataria a espera de callback ou algo similar, mas deixamos como está
-        // Agora basta retornar a mensagem final ou esperar a confirmação do Gateway
-
         return sentMessages;
     }
+
 
     private async handleCollectName(
         from: string,
@@ -2241,8 +2347,6 @@ export class MessageService {
 
         return sentMessages;
     }
-
-
 
     private async handleCreditCardPayment(
         from: string,
@@ -2411,12 +2515,46 @@ export class MessageService {
         const transaction = await this.transactionService.getTransaction(transactionId);
 
         if (transaction.data.status !== PaymentStatus.Accepted) {
-            sentMessages.push(
-                ...this.mapTextMessages(
-                    ['*👋  Astra Pay* - Erro ao processar o pagamento ❌\n\nPor favor, tente novamente mais tarde.'],
-                    from
-                )
-            );
+            // Check if there's a specific error from the Gateway
+            if (transaction.data.errorDescription &&
+                (transaction.data.errorDescription.errorCode === 'Gateway' ||
+                    transaction.data.errorDescription.errorCode === 'acquirer')) {
+                // Use the user-friendly error message
+                sentMessages.push(
+                    ...this.mapTextMessages(
+                        [`*👋  Astra Pay* - Pagamento não aprovado ❌\n\n${transaction.data.errorDescription.userFriendlyMessage}`],
+                        from
+                    )
+                );
+            } else {
+                // For general errors, provide alternative payment method options
+                const errorMessage = '*👋  Astra Pay* - Erro ao processar o pagamento ❌\n\nPor favor, tente novamente ou escolha outro método de pagamento.';
+
+                // Create interactive buttons for payment method selection
+                const interactiveMessage = this.whatsappApi.createInteractiveButtonMessage(
+                    from,
+                    errorMessage,
+                    [
+                        { id: "payment_pix", title: "Pagar com PIX" },
+                        { id: "payment_card", title: "Pagar com Cartão" },
+                    ],
+                    {
+                        footerText: "Escolha uma opção para continuar"
+                    }
+                );
+
+                const updatedContext: ConversationContextDTO = {
+                    ...state.conversationContext,
+                    currentStep: ConversationStep.PaymentMethodSelection,
+                };
+
+                await this.conversationService.updateConversation(state._id.toString(), {
+                    userId: state.userId,
+                    conversationContext: updatedContext,
+                });
+
+                sentMessages.push(interactiveMessage);
+            }
         } else {
 
             const confirmationMessage = this.mapTextMessages(
@@ -2525,6 +2663,8 @@ export class MessageService {
         const feedback = state.conversationContext.feedback;
         let updatedContext: ConversationContextDTO = { ...state.conversationContext };
 
+        console.log("feedback", feedback);
+
         if (typeof feedback.mustHaveScore === 'undefined') {
             const userResponse = userMessage.trim().toLowerCase();
 
@@ -2564,11 +2704,14 @@ export class MessageService {
                 );
             }
 
+            if (userMessage.includes("interação de botão desconhecida") || userMessage.includes("desconhecida")) {
+                return sentMessages;
+            }
+
             if (!matchedOption) {
-                // Show interactive buttons for feedback options
                 const feedbackOptionsMessage = this.whatsappApi.createInteractiveButtonMessage(
                     from,
-                    "Por favor, avalie como foi sua experiência conosco:",
+                    "Por favor, avalie c`omo foi sua experiência conosco:",
                     [
                         { id: "feedback_1", title: "Muito decepcionado" },
                         { id: "feedback_2", title: "Pouco decepcionado" },

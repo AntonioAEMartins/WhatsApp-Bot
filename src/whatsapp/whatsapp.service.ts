@@ -80,8 +80,8 @@ export class WhatsAppService {
                 }
             }
         } catch (error) {
-            this.logger.error(`Error processing payment flow: ${error.message}`);
-            throw new HttpException('Failed to process payment information', HttpStatus.BAD_REQUEST);
+            // this.logger.error(`Error processing payment flow: ${error.message}`);
+            // throw new HttpException('Failed to process payment information', HttpStatus.BAD_REQUEST);
         }
 
         if (notification.entry) {
@@ -89,6 +89,7 @@ export class WhatsAppService {
                 for (const change of entry.changes) {
                     switch (change.field) {
                         case 'messages':
+                            
                             await this.handleMessageNotification(change.value);
                             break;
                         case 'statuses':

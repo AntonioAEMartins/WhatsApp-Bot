@@ -280,10 +280,10 @@ export class WhatsAppApiService {
       }
 
       // Rethrow the error to allow proper handling upstream
-      throw new HttpException(
-        error?.response?.data || 'Erro ao enviar mensagem ao WhatsApp',
-        error?.response?.status || HttpStatus.INTERNAL_SERVER_ERROR
-      );
+      // throw new HttpException(
+        // error?.response?.data || 'Erro ao enviar mensagem ao WhatsApp',
+        // error?.response?.status || HttpStatus.INTERNAL_SERVER_ERROR
+      // );
     }
   }
 
