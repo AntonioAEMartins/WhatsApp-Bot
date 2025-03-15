@@ -8,13 +8,14 @@ import { WhatsAppApiModule } from 'src/shared/whatsapp-api/whatsapp.api.module';
 import { WhatsAppCertificationService } from './whatsapp.certification.service';
 import { WhatsAppCertificationController } from './whatsapp.certification.controller';
 import { FlowService } from './flow.service';
-
+import { IPagModule } from 'src/payment-gateway/ipag.module';
 @Module({
   imports: [
     ConfigModule,
     forwardRef(() => MessageModule),
     HttpModule,
     WhatsAppApiModule,
+    forwardRef(() => IPagModule),
   ],
   controllers: [WhatsAppController, WhatsAppCertificationController],
   providers: [WhatsAppService, WhatsAppCertificationService, FlowService],

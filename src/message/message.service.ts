@@ -2296,6 +2296,7 @@ export class MessageService {
                                     holder_cpf: this.utilsService.formatCPF(state.conversationContext.documentNumber || ''),
                                     payment_value: "💰 Valor: " + formatToBRL(state.conversationContext.userAmount),
                                     table_id: "🪑 Comanda: " + state.tableId,
+                                    transaction_id: transactionResponse._id.toString()
                                 }
                             }
                         },
@@ -2484,7 +2485,6 @@ export class MessageService {
         // Envia as mensagens diretamente para o bot GO
         await this.sendMessagesDirectly(sentMessages);
     }
-
 
     private async sendMessagesDirectly(messages: ResponseStructureExtended[]): Promise<void> {
         await this.whatsappApi.sendWhatsAppMessages(messages);

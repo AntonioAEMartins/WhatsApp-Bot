@@ -1,13 +1,14 @@
 import { Injectable, HttpException, HttpStatus, Inject, forwardRef, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WebhookVerificationDto } from './dto/webhook.verification.dto';
-import { WebhookNotificationDto } from './dto/webhook.notification.dto';
+import { WebhookNotificationDto, WhatsAppWebhookDto as WebhookFlowNotificationDto } from './dto/webhook.notification.dto';
 import { WhatsAppConfig } from './dto/whatsapp.config.interface';
 import { lastValueFrom } from 'rxjs';
 import { MessageService, RequestStructure, ResponseStructureExtended } from 'src/message/message.service';
 import { HttpService } from '@nestjs/axios';
 import { WhatsAppApiService } from 'src/shared/whatsapp-api/whatsapp.api.service';
-
+import { UserPaymentCreditInfoDto } from 'src/payment-gateway/dto/ipag-pagamentos.dto';
+import { IPagService } from 'src/payment-gateway/ipag.service';
 @Injectable()
 export class WhatsAppService {
     private readonly whatsappConfig: WhatsAppConfig;
@@ -19,7 +20,8 @@ export class WhatsAppService {
         private readonly configService: ConfigService,
         @Inject(forwardRef(() => MessageService)) private readonly messageService: MessageService,
         private readonly httpService: HttpService,
-        private readonly whatsappApi: WhatsAppApiService
+        private readonly whatsappApi: WhatsAppApiService,
+        private readonly ipagService: IPagService
     ) {
         this.whatsappConfig = {
             verifyToken: process.env.WHATSAPP_VERIFY_TOKEN,
@@ -41,10 +43,47 @@ export class WhatsAppService {
         }
     }
 
-    async processWebhookNotification(notification: WebhookNotificationDto): Promise<void> {
-        // this.logger.log(`Processing webhook notification: ${JSON.stringify(notification)}`);
-        
-        // Process regular WhatsApp notification
+    async processWebhookNotification(notification: WebhookNotificationDto | WebhookFlowNotificationDto): Promise<void> {
+        this.logger.log(`[processWebhookNotification] Notification type: ${notification.object}`);
+
+        try {
+            // Check if this is a payment flow notification
+            if (notification.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.interactive?.type === 'nfm_reply') {
+                const message = notification.entry[0].changes[0].value.messages[0];
+                if (message?.interactive?.nfm_reply?.response_json) {
+                    const paymentData = JSON.parse(message.interactive.nfm_reply.response_json);
+
+                    if (paymentData.paymentMethod === 'credit-card') {
+                        const [expiryMonth, expiryYear] = paymentData.expiration_date.split('/');
+
+                        const userPaymentInfo: UserPaymentCreditInfoDto = {
+                            transactionId: paymentData.transaction_id,
+                            saveCard: paymentData.save_card?.includes('save_card_option') || false,
+                            cardInfo: {
+                                holder: paymentData.holder_name,
+                                number: paymentData.card_number,
+                                expiry_month: expiryMonth,
+                                expiry_year: `20${expiryYear}`,
+                                cvv: paymentData.cvv,
+                                tokenize: paymentData.save_card?.includes('save_card_option') || false
+                            },
+                            customerInfo: {
+                                name: paymentData.holder_name,
+                                cpf_cnpj: paymentData.holder_cpf.replace(/[^\d]/g, '')
+                            }
+                        };
+
+                        this.logger.log(`Processing credit card payment for transaction: ${userPaymentInfo.transactionId}`);
+                        await this.ipagService.createCreditCardPayment(userPaymentInfo);
+                        return;
+                    }
+                }
+            }
+        } catch (error) {
+            this.logger.error(`Error processing payment flow: ${error.message}`);
+            throw new HttpException('Failed to process payment information', HttpStatus.BAD_REQUEST);
+        }
+
         if (notification.entry) {
             for (const entry of notification.entry) {
                 for (const change of entry.changes) {

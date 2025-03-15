@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Query, Body, HttpCode, HttpException, HttpStatus } from '@nestjs/common';
 import { WebhookVerificationDto } from './dto/webhook.verification.dto';
-import { WebhookNotificationDto } from './dto/webhook.notification.dto';
+import { WebhookNotificationDto, WhatsAppWebhookDto } from './dto/webhook.notification.dto';
 import { WhatsAppService } from './whatsapp.service';
 import { FlowService } from './flow.service';
 import { FlowDataDto } from './dto/flow.dto';
@@ -24,7 +24,7 @@ export class WhatsAppController {
 
   @Post('webhook')
   @HttpCode(200)
-  async handleWebhookNotification(@Body() notification: WebhookNotificationDto): Promise<string> {
+  async handleWebhookNotification(@Body() notification: WebhookNotificationDto | WhatsAppWebhookDto): Promise<string> {
     console.log("WhatsApp Message Webhook Received");
     // console.log('notification', notification);
     try {
