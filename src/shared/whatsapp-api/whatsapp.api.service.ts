@@ -112,6 +112,7 @@ export class WhatsAppApiService {
 
     let body: any = {
       messaging_product: 'whatsapp',
+      recipient_type: 'individual',
       to: response.to
     };
 
@@ -133,67 +134,90 @@ export class WhatsAppApiService {
             HttpStatus.BAD_REQUEST
           );
         }
-        
+
         body.type = 'interactive';
-        body.recipient_type = 'individual';
-        
-        body.interactive = {
-          type: 'button',
-          body: {
-            text: response.interactive.bodyText
-          },
-          action: {
-            buttons: response.interactive.buttons.map(button => ({
-              type: 'reply',
-              reply: {
-                id: button.id,
-                title: button.title
-              }
-            }))
-          }
-        };
-        
-        // Add header if available
-        if (response.interactive.headerType && response.interactive.headerContent) {
-          body.interactive.header = {
-            type: response.interactive.headerType
+
+        // Check if this is a flow interactive message by looking at properties
+        if (response.interactive.hasOwnProperty('type') && (response.interactive as any).type === 'flow') {
+          // This is a flow interactive message
+          this.logger.debug(`Sending Flow interactive message: ${JSON.stringify(response.interactive)}`);
+          
+          const flowInteractive = response.interactive as any;
+          
+          // Format according to WhatsApp API requirements for Flow messages
+          body.interactive = {
+            type: "flow",
+            header: flowInteractive.header,
+            body: flowInteractive.body,
+            footer: flowInteractive.footer,
+            action: {
+              name: "flow",
+              parameters: flowInteractive.action.parameters
+            }
           };
           
-          // Add the appropriate field based on header type
-          switch (response.interactive.headerType) {
-            case 'text':
-              body.interactive.header.text = response.interactive.headerContent;
-              break;
-            case 'image':
-              // Check if it's an ID or URL
-              if (this.isHttpUrl(response.interactive.headerContent)) {
-                body.interactive.header.image = { link: response.interactive.headerContent };
-              } else {
-                body.interactive.header.image = { id: response.interactive.headerContent };
-              }
-              break;
-            case 'document':
-              if (this.isHttpUrl(response.interactive.headerContent)) {
-                body.interactive.header.document = { link: response.interactive.headerContent };
-              } else {
-                body.interactive.header.document = { id: response.interactive.headerContent };
-              }
-              break;
-            case 'video':
-              if (this.isHttpUrl(response.interactive.headerContent)) {
-                body.interactive.header.video = { link: response.interactive.headerContent };
-              } else {
-                body.interactive.header.video = { id: response.interactive.headerContent };
-              }
-              break;
-          }
-        }
-        
-        // Add footer if available
-        if (response.interactive.footerText) {
-          body.interactive.footer = {
-            text: response.interactive.footerText
+          // Log the exact request body being sent
+          this.logger.debug(`Final Flow message request body: ${JSON.stringify(body)}`);
+        } else {
+          // This is a button interactive message
+          body.interactive = {
+            type: 'button',
+            body: {
+              text: response.interactive.bodyText
+            },
+            action: {
+              buttons: response.interactive.buttons.map(button => ({
+                type: 'reply',
+                reply: {
+                  id: button.id,
+                  title: button.title
+                }
+              }))
+            }
           };
+
+          // Add header if available
+          if (response.interactive.headerType && response.interactive.headerContent) {
+            body.interactive.header = {
+              type: response.interactive.headerType
+            };
+
+            // Add the appropriate field based on header type
+            switch (response.interactive.headerType) {
+              case 'text':
+                body.interactive.header.text = response.interactive.headerContent;
+                break;
+              case 'image':
+                // Check if it's an ID or URL
+                if (this.isHttpUrl(response.interactive.headerContent)) {
+                  body.interactive.header.image = { link: response.interactive.headerContent };
+                } else {
+                  body.interactive.header.image = { id: response.interactive.headerContent };
+                }
+                break;
+              case 'document':
+                if (this.isHttpUrl(response.interactive.headerContent)) {
+                  body.interactive.header.document = { link: response.interactive.headerContent };
+                } else {
+                  body.interactive.header.document = { id: response.interactive.headerContent };
+                }
+                break;
+              case 'video':
+                if (this.isHttpUrl(response.interactive.headerContent)) {
+                  body.interactive.header.video = { link: response.interactive.headerContent };
+                } else {
+                  body.interactive.header.video = { id: response.interactive.headerContent };
+                }
+                break;
+            }
+          }
+
+          // Add footer if available
+          if (response.interactive.footerText) {
+            body.interactive.footer = {
+              text: response.interactive.footerText
+            };
+          }
         }
         break;
 
@@ -245,10 +269,21 @@ export class WhatsAppApiService {
       return result.data;
     } catch (error) {
       this.logger.error(`Erro ao enviar mensagem para WhatsApp: ${error?.message || error}`);
-      // throw new HttpException(
-        // error?.response?.data || 'Erro ao enviar mensagem ao WhatsApp',
-        // HttpStatus.INTERNAL_SERVER_ERROR
-      // );
+      
+      // Log more detailed error information
+      if (error?.response?.data) {
+        this.logger.error(`WhatsApp API error response: ${JSON.stringify(error.response.data)}`);
+      }
+      
+      if (error?.response?.status === 400) {
+        this.logger.error(`WhatsApp API 400 Bad Request - Request body was: ${JSON.stringify(body)}`);
+      }
+
+      // Rethrow the error to allow proper handling upstream
+      throw new HttpException(
+        error?.response?.data || 'Erro ao enviar mensagem ao WhatsApp',
+        error?.response?.status || HttpStatus.INTERNAL_SERVER_ERROR
+      );
     }
   }
 
@@ -477,4 +512,461 @@ export class WhatsAppApiService {
       }
     };
   }
+
+  async registerNumber({
+    messaging_product,
+    pin,
+    phone_number_id,
+  }) {
+    const url = `${this.graphApiUrl}/${phone_number_id}/register`;
+
+    const headers = {
+      Authorization: `Bearer ${this.accessToken}`,
+      'Content-Type': 'application/json'
+    };
+
+    const body = {
+      messaging_product,
+      pin
+    };
+
+    try {
+      const observableResult = this.httpService.post(url, body, { headers });
+      const result = await lastValueFrom(observableResult);
+      return result.data;
+    } catch (error) {
+      this.logger.error(`Erro ao registrar número: ${error?.message || error}`);
+    }
+  }
+
+  async twoFactorAuthentication({
+    phone_number_id,
+    pin,
+  }) {
+    // Validate PIN is exactly 6 digits
+    if (!pin || !/^\d{6}$/.test(pin)) {
+      throw new Error('PIN must be exactly 6 digits');
+    }
+
+    const url = `${this.graphApiUrl}/${phone_number_id}`;
+
+    this.logger.log(`Setting up two-factor authentication for phone number ID: ${phone_number_id}`);
+
+    const headers = {
+      Authorization: `Bearer ${this.accessToken}`,
+      'Content-Type': 'application/json'
+    };
+
+    const body = {
+      pin
+    };
+
+    try {
+      const observableResult = this.httpService.post(url, body, { headers });
+      const result = await lastValueFrom(observableResult);
+      this.logger.log('Two-factor authentication setup successful');
+      return result.data;
+    } catch (error) {
+      this.logger.error(`Error setting up two-factor authentication: ${error?.message || error}`);
+      throw new Error(`Failed to set up two-factor authentication: ${error?.message || 'Unknown error'}`);
+    }
+  }
+
+  async getPhoneNumberId() {
+    const url = `${this.graphApiUrl}/1178033237374005/phone_numbers?access_token=${this.accessToken}`;
+    const headers = { Authorization: `Bearer ${this.accessToken}` };
+    const resp$ = this.httpService.get(url, { headers });
+    const resp = await lastValueFrom(resp$);
+    return resp.data;
+  }
+
+  /**
+   * Creates a Flow message structure
+   * @param to Recipient's phone number
+   * @param bodyText The main text of the message
+   * @param flowParams Parameters specific to the flow
+   * @param options Optional parameters like header and footer
+   * @returns A formatted ResponseStructureExtended object for flow messages
+   */
+  createFlowMessage(
+    to: string,
+    bodyText: string,
+    flowParams: {
+      flowId?: string;
+      flowName?: string;
+      flowCta: string;
+      flowToken?: string;
+      flowAction?: 'navigate' | 'data_exchange';
+      flowActionPayload?: {
+        screen?: string;
+        data?: any;
+      };
+      mode?: 'draft' | 'published';
+    },
+    options?: {
+      headerType?: 'text' | 'image' | 'document' | 'video';
+      headerContent?: string;
+      footerText?: string;
+    }
+  ): ResponseStructureExtended {
+    // Validate required parameters
+    if (!flowParams.flowId && !flowParams.flowName) {
+      this.logger.error('Either flowId or flowName is required for Flow messages');
+      throw new HttpException(
+        'Either flowId or flowName is required for Flow messages',
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
+    // Validate CTA text length
+    if (flowParams.flowCta && flowParams.flowCta.length > 30) {
+      this.logger.warn('Flow CTA text exceeds recommended length (30 chars) and may be truncated');
+    }
+
+    // Validate body text (max 1024 chars)
+    if (bodyText.length > 1024) {
+      this.logger.warn('Body text exceeds maximum length (1024 chars) and will be truncated');
+      bodyText = bodyText.substring(0, 1024);
+    }
+
+    // Validate footer text if present (max 60 chars)
+    let footerText = options?.footerText;
+    if (footerText && footerText.length > 60) {
+      this.logger.warn('Footer text exceeds maximum length (60 chars) and will be truncated');
+      footerText = footerText.substring(0, 60);
+    }
+
+    // Build flow parameters according to WhatsApp API documentation
+    const flowParameters: any = {
+      flow_message_version: '3',
+      flow_cta: flowParams.flowCta
+    };
+
+    // Add either flow_id or flow_name (one is required)
+    if (flowParams.flowId) {
+      flowParameters.flow_id = flowParams.flowId;
+    } else if (flowParams.flowName) {
+      flowParameters.flow_name = flowParams.flowName;
+    }
+
+    // Add optional flow parameters
+    if (flowParams.flowToken) {
+      flowParameters.flow_token = flowParams.flowToken;
+    }
+
+    if (flowParams.mode) {
+      flowParameters.mode = flowParams.mode;
+    }
+
+    if (flowParams.flowAction) {
+      flowParameters.flow_action = flowParams.flowAction;
+      
+      // Add flow_action_payload if we have it and flow_action is specified
+      if (flowParams.flowActionPayload) {
+        flowParameters.flow_action_payload = flowParams.flowActionPayload;
+      }
+    }
+
+    // Create the flow interactive message structure according to WhatsApp API docs
+    const interactive: any = {
+      type: 'flow',
+      body: {
+        text: bodyText
+      },
+      action: {
+        name: 'flow',
+        parameters: flowParameters
+      }
+    };
+
+    // Add header if provided
+    if (options?.headerType && options?.headerContent) {
+      interactive.header = {
+        type: options.headerType
+      };
+
+      switch (options.headerType) {
+        case 'text':
+          interactive.header.text = options.headerContent;
+          break;
+        case 'image':
+          if (this.isHttpUrl(options.headerContent)) {
+            interactive.header.image = { link: options.headerContent };
+          } else {
+            interactive.header.image = { id: options.headerContent };
+          }
+          break;
+        case 'document':
+          if (this.isHttpUrl(options.headerContent)) {
+            interactive.header.document = { link: options.headerContent };
+          } else {
+            interactive.header.document = { id: options.headerContent };
+          }
+          break;
+        case 'video':
+          if (this.isHttpUrl(options.headerContent)) {
+            interactive.header.video = { link: options.headerContent };
+          } else {
+            interactive.header.video = { id: options.headerContent };
+          }
+          break;
+      }
+    }
+
+    // Add footer if provided
+    if (footerText) {
+      interactive.footer = {
+        text: footerText
+      };
+    }
+
+    // Log the final interactive payload for debugging
+    this.logger.debug(`Flow message interactive: ${JSON.stringify(interactive)}`);
+
+    return {
+      type: 'interactive',
+      content: '', // Not used for interactive messages but required by interface
+      caption: '', // Not used for interactive messages but required by interface
+      to: to,
+      reply: false,
+      isError: false,
+      interactive: interactive as any // Cast to any to avoid type checking issues
+    };
+  }
+
+  /**
+   * Sends a flow message directly to a WhatsApp user
+   * @param to Recipient's phone number
+   * @param bodyText The main message text
+   * @param flowId The unique ID of the Flow provided by WhatsApp
+   * @param flowCta Text on the CTA button (e.g., "Book Now")
+   * @param options Additional options for the flow message
+   * @returns The WhatsApp API response
+   */
+  async sendFlowMessage(
+    to: string,
+    bodyText: string,
+    flowId: string,
+    flowCta: string,
+    options?: {
+      flowToken?: string;
+      flowAction?: 'navigate' | 'data_exchange';
+      flowActionPayload?: {
+        screen?: string;
+        data?: any;
+      };
+      mode?: 'draft' | 'published';
+      headerType?: 'text' | 'image' | 'document' | 'video';
+      headerContent?: string;
+      footerText?: string;
+    }
+  ): Promise<any> {
+    // Create the flow message structure
+    const flowMessage = this.createFlowMessage(
+      to,
+      bodyText,
+      {
+        flowId,
+        flowCta,
+        flowToken: options?.flowToken,
+        flowAction: options?.flowAction,
+        flowActionPayload: options?.flowActionPayload,
+        mode: options?.mode,
+      },
+      {
+        headerType: options?.headerType,
+        headerContent: options?.headerContent,
+        footerText: options?.footerText,
+      }
+    );
+
+    // Send the message
+    return this.sendWhatsAppMessage(flowMessage);
+  }
+
+  /**
+   * Sends a flow message using flow name instead of ID
+   * @param to Recipient's phone number
+   * @param bodyText The main message text
+   * @param flowName The name of the Flow that you created
+   * @param flowCta Text on the CTA button (e.g., "Book Now")
+   * @param options Additional options for the flow message
+   * @returns The WhatsApp API response
+   */
+  async sendFlowMessageByName(
+    to: string,
+    bodyText: string,
+    flowName: string,
+    flowCta: string,
+    options?: {
+      flowToken?: string;
+      flowAction?: 'navigate' | 'data_exchange';
+      flowActionPayload?: {
+        screen?: string;
+        data?: any;
+      };
+      mode?: 'draft' | 'published';
+      headerType?: 'text' | 'image' | 'document' | 'video';
+      headerContent?: string;
+      footerText?: string;
+    }
+  ): Promise<any> {
+    // Create the flow message structure
+    const flowMessage = this.createFlowMessage(
+      to,
+      bodyText,
+      {
+        flowName,
+        flowCta,
+        flowToken: options?.flowToken,
+        flowAction: options?.flowAction,
+        flowActionPayload: options?.flowActionPayload,
+        mode: options?.mode,
+      },
+      {
+        headerType: options?.headerType,
+        headerContent: options?.headerContent,
+        footerText: options?.footerText,
+      }
+    );
+
+    // Send the message
+    return this.sendWhatsAppMessage(flowMessage);
+  }
+
+  /**
+   * Send a flow message directly using the WhatsApp Graph API format
+   * This method formats the message exactly according to the WhatsApp Flow API documentation
+   * @param to Recipient's phone number
+   * @param bodyText The main message text
+   * @param flowCta Text for the CTA button
+   * @param options Additional options
+   * @returns WhatsApp API response
+   */
+  async sendFlowMessageDirectly(
+    to: string,
+    bodyText: string,
+    flowCta: string,
+    options: {
+      flowId?: string;
+      flowName?: string;
+      headerType?: 'text' | 'image' | 'document' | 'video';
+      headerContent?: string;
+      footerText?: string;
+      mode?: 'draft' | 'published';
+    }
+  ): Promise<any> {
+    if (!this.accessToken || !this.phoneNumberId) {
+      throw new HttpException('WhatsApp credentials not configured', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    if (!options.flowId && !options.flowName) {
+      throw new HttpException('Either flowId or flowName must be provided', HttpStatus.BAD_REQUEST);
+    }
+
+    const url = `${this.graphApiUrl}/${this.phoneNumberId}/messages`;
+    const headers = {
+      Authorization: `Bearer ${this.accessToken}`,
+      'Content-Type': 'application/json'
+    };
+
+    // Create the message body exactly as specified in the WhatsApp docs
+    const messageBody: any = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to,
+      type: 'interactive',
+      interactive: {
+        type: 'flow',
+        body: {
+          text: bodyText
+        },
+        action: {
+          name: 'flow',
+          parameters: {
+            flow_message_version: '3',
+            flow_cta: flowCta
+          }
+        }
+      }
+    };
+
+    // Add either flow_id or flow_name, but not both
+    // Prefer flow_name over flow_id if both are provided
+    if (options.flowName) {
+      messageBody.interactive.action.parameters.flow_name = options.flowName;
+    } else if (options.flowId) {
+      messageBody.interactive.action.parameters.flow_id = options.flowId;
+    }
+
+    // Add mode if specified - published is the default according to WhatsApp docs
+    if (options.mode) {
+      messageBody.interactive.action.parameters.mode = options.mode;
+    }
+
+    // Add header if specified
+    if (options.headerType && options.headerContent) {
+      messageBody.interactive.header = {
+        type: options.headerType
+      };
+      
+      // Add the specific content based on header type
+      switch (options.headerType) {
+        case 'text':
+          messageBody.interactive.header.text = options.headerContent;
+          break;
+        case 'image':
+          if (this.isHttpUrl(options.headerContent)) {
+            messageBody.interactive.header.image = { link: options.headerContent };
+          } else {
+            messageBody.interactive.header.image = { id: options.headerContent };
+          }
+          break;
+        case 'document':
+          if (this.isHttpUrl(options.headerContent)) {
+            messageBody.interactive.header.document = { link: options.headerContent };
+          } else {
+            messageBody.interactive.header.document = { id: options.headerContent };
+          }
+          break;
+        case 'video':
+          if (this.isHttpUrl(options.headerContent)) {
+            messageBody.interactive.header.video = { link: options.headerContent };
+          } else {
+            messageBody.interactive.header.video = { id: options.headerContent };
+          }
+          break;
+      }
+    }
+
+    // Add footer if specified
+    if (options.footerText) {
+      messageBody.interactive.footer = {
+        text: options.footerText
+      };
+    }
+
+    this.logger.debug(`Sending Flow message directly: ${JSON.stringify(messageBody)}`);
+
+    try {
+      const observableResult = this.httpService.post(url, messageBody, { headers });
+      const result = await lastValueFrom(observableResult);
+      this.logger.debug(`Flow message sent successfully: ${JSON.stringify(result.data)}`);
+      return result.data;
+    } catch (error) {
+      this.logger.error(`Error sending Flow message: ${error?.message || error}`);
+      
+      if (error?.response?.data) {
+        this.logger.error(`WhatsApp API error response: ${JSON.stringify(error.response.data)}`);
+      }
+      
+      throw new HttpException(
+        error?.response?.data || 'Error sending Flow message',
+        error?.response?.status || HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
 }
+
+

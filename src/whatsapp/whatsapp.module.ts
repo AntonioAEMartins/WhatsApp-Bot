@@ -5,6 +5,9 @@ import { WhatsAppService } from './whatsapp.service';
 import { MessageModule } from 'src/message/message.module';
 import { HttpModule } from '@nestjs/axios';
 import { WhatsAppApiModule } from 'src/shared/whatsapp-api/whatsapp.api.module';
+import { WhatsAppCertificationService } from './whatsapp.certification.service';
+import { WhatsAppCertificationController } from './whatsapp.certification.controller';
+import { FlowService } from './flow.service';
 
 @Module({
   imports: [
@@ -13,8 +16,8 @@ import { WhatsAppApiModule } from 'src/shared/whatsapp-api/whatsapp.api.module';
     HttpModule,
     WhatsAppApiModule,
   ],
-  controllers: [WhatsAppController],
-  providers: [WhatsAppService],
-  exports: [WhatsAppService],
+  controllers: [WhatsAppController, WhatsAppCertificationController],
+  providers: [WhatsAppService, WhatsAppCertificationService, FlowService],
+  exports: [WhatsAppService, WhatsAppCertificationService, FlowService],
 })
 export class WhatsAppModule { }

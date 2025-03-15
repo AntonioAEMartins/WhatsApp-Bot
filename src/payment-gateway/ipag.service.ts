@@ -75,25 +75,25 @@ export class IPagService {
     async createPIXPayment(
         userPaymentInfo: UserPaymentPixInfoDto,
     ): Promise<IPagTransactionResponse> {
-        // In sandbox mode, create a mock PIX key without going through the payment gateway
-        if (process.env.ENVIRONMENT === 'sandbox') {
-            this.logger.log(`[createPIXPayment] SANDBOX MODE - Creating mock PIX for transaction ${userPaymentInfo.transactionId}`);
+        // In demo mode, create a mock PIX key without going through the payment gateway
+        if (process.env.ENVIRONMENT === 'demo') {
+            this.logger.log(`[createPIXPayment] DEMO MODE - Creating mock PIX for transaction ${userPaymentInfo.transactionId}`);
 
             // Get the transaction to fetch the expected amount
             const transaction = await this.transactionService.getTransaction(userPaymentInfo.transactionId);
             const expectedAmount = transaction.data.expectedAmount;
 
             // Generate a mock PIX QR code that looks similar to real one
-            const mockQRCode = `00020101021126580014br.gov.bcb.pix0136sandbox.mock.pix.key@sandbox.com5204000053039865802BR5913SANDBOX MOCK6009SAO PAULO62290525${this.generateRandomString(20)}6304${this.generateRandomString(4)}`;
+            const mockQRCode = `00020101021126580014br.gov.bcb.demo.mock.pix.key@demo.com5204000053039865802BR5913DEMO MOCK6009SAO PAULO62290525${this.generateRandomString(20)}6304${this.generateRandomString(4)}`;
 
             // Schedule automatic completion after 10 seconds
             setTimeout(async () => {
                 try {
                     // Garantindo que o método simulateTransactionCompletion seja chamado no contexto correto
                     await this.simulateTransactionCompletion(userPaymentInfo.transactionId);
-                    this.logger.log(`[createPIXPayment] SANDBOX MODE - Auto-completed transaction ${userPaymentInfo.transactionId}`);
+                    this.logger.log(`[createPIXPayment] DEMO MODE - Auto-completed transaction ${userPaymentInfo.transactionId}`);
                 } catch (error) {
-                    this.logger.error(`[createPIXPayment] SANDBOX MODE - Error auto-completing transaction: ${error.message}`);
+                    this.logger.error(`[createPIXPayment] DEMO MODE - Error auto-completing transaction: ${error.message}`);
                 }
             }, 10000);
 
@@ -101,16 +101,16 @@ export class IPagService {
 
             return {
                 id: 123456,
-                uuid: `sandbox-${this.generateRandomString(10)}`,
+                uuid: `demo-${this.generateRandomString(10)}`,
                 resource: 'transaction',
                 attributes: {
                     history: [],
-                    seller_id: 'sandbox-seller',
+                    seller_id: 'demo-seller',
                     order_id: transaction.data.orderId,
                     amount: expectedAmount,
                     installments: 1,
-                    tid: `sandbox-${this.generateRandomString(8)}`,
-                    authorization_id: `sandbox-auth-${this.generateRandomString(6)}`,
+                    tid: `demo-${this.generateRandomString(8)}`,
+                    authorization_id: `demo-auth-${this.generateRandomString(6)}`,
                     status: { code: 1, message: 'pending' },
                     method: 'pix',
                     captured_amount: 0,
@@ -119,7 +119,7 @@ export class IPagService {
                     callback_url: '',
                     created_at: now.toISOString(),
                     updated_at: now.toISOString(),
-                    acquirer: { name: 'sandbox', message: 'Waiting for payment', code: '00', merchant_id: 'sandbox-merchant' },
+                    acquirer: { name: 'demo', message: 'Waiting for payment', code: '00', merchant_id: 'demo-merchant' },
                     gateway: { code: 'P0', message: 'Success' },
                     pix: {
                         link: `https://sandbox.payment.link/${userPaymentInfo.transactionId}`,
@@ -225,8 +225,8 @@ export class IPagService {
         userPaymentInfo: UserPaymentCreditInfoDto,
     ): Promise<SimpleResponseDto<{ msg: string }>> {
         // Verificação de ambiente sandbox
-        if (process.env.ENVIRONMENT === 'sandbox') {
-            this.logger.log(`[createCreditCardPayment] SANDBOX MODE - Processing credit card payment for transaction ${userPaymentInfo.transactionId}`);
+        if (process.env.ENVIRONMENT === 'demo') {
+            this.logger.log(`[createCreditCardPayment] DEMO MODE - Processing credit card payment for transaction ${userPaymentInfo.transactionId}`);
 
             const transaction = await this.validateTransaction(
                 userPaymentInfo.transactionId,
@@ -250,15 +250,15 @@ export class IPagService {
             const lastDigit = parseInt(cardNumber.slice(-1));
             const isOdd = lastDigit % 2 !== 0;
 
-            this.logger.log(`[createCreditCardPayment] SANDBOX MODE - Last digit: ${lastDigit}, isOdd: ${isOdd}`);
+            this.logger.log(`[createCreditCardPayment] DEMO MODE - Last digit: ${lastDigit}, isOdd: ${isOdd}`);
 
             // Se o último dígito for par, simulamos rejeição
             if (!isOdd) {
                 await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
                     errorDescription: {
-                        errorCode: 'sandbox-rejection',
-                        userFriendlyMessage: 'Cartão com final par rejeitado em ambiente sandbox',
-                        rawError: 'Sandbox mode: even-ending cards are always rejected',
+                        errorCode: 'demo-rejection',
+                        userFriendlyMessage: 'Cartão com final par rejeitado em ambiente demo',
+                        rawError: 'Demo mode: even-ending cards are always rejected',
                     },
                     // status: PaymentStatus.Denied,
                 });
@@ -266,12 +266,12 @@ export class IPagService {
                 // Duplicamos a transação para permitir uma nova tentativa
                 // await this.transactionService.duplicateTransaction(userPaymentInfo.transactionId);
 
-                throw new HttpException('Cartão com final par rejeitado em ambiente sandbox', HttpStatus.BAD_REQUEST);
+                throw new HttpException('Cartão com final par rejeitado em ambiente demo', HttpStatus.BAD_REQUEST);
             }
 
             // Se chegou aqui, o último dígito é ímpar, simulamos aprovação
             const now = new Date();
-            const mockTransactionId = `sandbox-${this.generateRandomString(10)}`;
+            const mockTransactionId = `demo-${this.generateRandomString(10)}`;
 
             // Dispara processo de conclusão (mesma lógica usada nos fluxos reais)
             const conversation = await this.conversationService.getConversation(transaction.conversationId);
@@ -294,7 +294,7 @@ export class IPagService {
                     },
                     brand: this.getCardMethod(userPaymentInfo.cardInfo.number),
                     last4: cardNumber,
-                    token: `sandbox-token-${this.generateRandomString(8)}`,
+                    token: `demo-token-${this.generateRandomString(8)}`,
                     expiry_month: userPaymentInfo.cardInfo.expiry_month,
                     expiry_year: userPaymentInfo.cardInfo.expiry_year,
                 });
@@ -303,7 +303,7 @@ export class IPagService {
 
             const cardId = userPaymentInfo.cardId || createdCardId.data._id;
 
-            this.logger.log(`[createCreditCardPayment] SANDBOX MODE - Card ID: ${cardId}`);
+            this.logger.log(`[createCreditCardPayment] DEMO MODE - Card ID: ${cardId}`);
 
             await this.transactionService.updateTransaction(userPaymentInfo.transactionId, {
                 ipagTransactionId: mockTransactionId,
@@ -313,11 +313,11 @@ export class IPagService {
                 cardId: cardId,
             });
 
-            this.logger.log(`[createCreditCardPayment] SANDBOX MODE - Payment processor DTO: ${JSON.stringify(paymentProcessorDTO)}`);
+            this.logger.log(`[createCreditCardPayment] DEMO MODE - Payment processor DTO: ${JSON.stringify(paymentProcessorDTO)}`);
 
             await this.messageService.processPayment(paymentProcessorDTO);
 
-            this.logger.log(`[createCreditCardPayment] SANDBOX MODE - Payment created`);
+            this.logger.log(`[createCreditCardPayment] DEMO MODE - Payment created`);
 
             return {
                 msg: 'Payment created',

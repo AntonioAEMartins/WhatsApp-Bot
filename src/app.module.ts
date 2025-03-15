@@ -2,7 +2,6 @@ import { MiddlewareConsumer, Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TableModule } from './table/table.module';
-import { LangchainModule } from './langchain/langchain.module';
 import { DatabaseModule } from './db/db.module';
 import { ConversationModule } from './conversation/conversation.module';
 import { UserModule } from './user/user.module';
@@ -15,11 +14,11 @@ import { MessageModule } from './message/message.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { RequestLoggerMiddleware } from './middleware/incoming-requests.middleware';
 import { WhatsAppApiModule } from './shared/whatsapp-api/whatsapp.api.module';
+
 @Module({
   imports: [
     MessageModule,
     TableModule,
-    LangchainModule,
     DatabaseModule,
     ConversationModule,
     UserModule,
@@ -35,11 +34,11 @@ import { WhatsAppApiModule } from './shared/whatsapp-api/whatsapp.api.module';
   providers: [AppService],
 })
 export class AppModule {
-  configure(consumer: MiddlewareConsumer) {
-    consumer
-      .apply(RequestLoggerMiddleware)
-      .forRoutes('*');
-  }
+  // configure(consumer: MiddlewareConsumer) {
+  //   consumer
+  //     .apply(RequestLoggerMiddleware)
+  //     .forRoutes('*');
+  // }
 }
 
 

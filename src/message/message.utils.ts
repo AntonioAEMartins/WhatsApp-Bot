@@ -1,7 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConversationService } from "src/conversation/conversation.service";
 import { ConversationDto, ParticipantDTO } from "src/conversation/dto/conversation.dto";
-import { LangchainService } from "src/langchain/langchain.service";
 import { OrderService } from "src/order/order.service";
 import { TableService } from "src/table/table.service";
 import { PaymentProofDTO, TransactionDTO } from "src/transaction/dto/transaction.dto";
@@ -19,7 +18,6 @@ export class MessageUtils {
 
     constructor(
         private readonly tableService: TableService,
-        private readonly langchainService: LangchainService,
         private readonly userService: UserService,
         private readonly conversationService: ConversationService,
         private readonly orderService: OrderService,
@@ -95,27 +93,6 @@ export class MessageUtils {
         const cnpjMatches = analysisResult.cpf_cnpj_beneficiario === expectedCNPJ;
 
         return beneficiaryNameMatches || cnpjMatches;
-    }
-
-    /**
-     * Utility: Extract and Analyze Payment Proof
-     *
-     * Extracts text from a PDF payment proof and analyzes it to retrieve transaction details.
-     *
-     * @param pdfData - The raw PDF data representing the payment proof.
-     * @param state - The current state of the user's conversation.
-     * @returns A Promise that resolves to a PaymentProofDTO with extracted transaction details.
-     *
-     * Functionality:
-     * - Uses OCR/extraction service to read PDF content.
-     * - Analyzes the extracted text to identify payment info.
-     */
-    public async extractAndAnalyzePaymentProof(
-        pdfData: string,
-        state: ConversationDto,
-    ): Promise<PaymentProofDTO> {
-        const extractedText = await this.langchainService.extractTextFromPDF(pdfData);
-        return await this.langchainService.analyzeDocument(extractedText, state.conversationContext.userAmount);
     }
 
     /**

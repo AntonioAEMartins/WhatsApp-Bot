@@ -2,7 +2,6 @@ import { forwardRef, Module } from '@nestjs/common';
 import { MessageService } from './message.service';
 import { MessageController } from './message.controller';
 import { TableModule } from 'src/table/table.module';
-import { LangchainModule } from 'src/langchain/langchain.module';
 import { UserModule } from 'src/user/user.module';
 import { ConversationModule } from 'src/conversation/conversation.module';
 import { OrderModule } from 'src/order/order.module';
@@ -17,7 +16,7 @@ import { WhatsAppModule } from 'src/whatsapp/whatsapp.module';
 
 @Module({
   imports: [
-    TableModule, LangchainModule, UserModule, ConversationModule,
+    TableModule, UserModule, ConversationModule,
     OrderModule, TransactionModule, DatabaseModule, CardModule, forwardRef(() => IPagModule),
     GenReceiptModule,
     WhatsAppApiModule,

@@ -35,6 +35,10 @@ export interface RequestStructure {
     from: string;
     type: "image" | "text" | "vcard" | "document";
     content: string;
+    buttonInteraction?: {
+        buttonId: string;
+        buttonText: string;
+    };
 }
 
 export interface ResponseStructure {
@@ -81,11 +85,9 @@ export class MessageService {
     private readonly logger = new Logger(MessageService.name);
     private readonly mongoClient: MongoClient;
 
-    private readonly waiterGroupId = process.env.ENVIRONMENT === 'homologation' || process.env.ENVIRONMENT === 'sandbox' ? process.env.WAITER_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.WAITER_PROD_GROUP_ID : process.env.WAITER_DEV_GROUP_ID;
-    private readonly paymentProofGroupId = process.env.ENVIRONMENT === 'homologation' || process.env.ENVIRONMENT === 'sandbox' ? process.env.PAYMENT_PROOF_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.PAYMENT_PROOF_PROD_GROUP_ID : process.env.PAYMENT_PROOF_DEV_GROUP_ID;
-    private readonly refundGroupId = process.env.ENVIRONMENT === 'homologation' || process.env.ENVIRONMENT === 'sandbox' ? process.env.REFUND_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.REFUND_PROD_GROUP_ID : process.env.REFUND_DEV_GROUP_ID;
-
-    private readonly goRelayUrl = process.env.ENVIRONMENT === 'sandbox' ? 'http://localhost:3110/send-messages' : "http://localhost:3105/send-messages"
+    private readonly waiterGroupId = process.env.ENVIRONMENT === 'homologation' || process.env.ENVIRONMENT === 'demo' ? process.env.WAITER_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.WAITER_PROD_GROUP_ID : process.env.WAITER_DEV_GROUP_ID;
+    private readonly paymentProofGroupId = process.env.ENVIRONMENT === 'homologation' || process.env.ENVIRONMENT === 'demo' ? process.env.PAYMENT_PROOF_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.PAYMENT_PROOF_PROD_GROUP_ID : process.env.PAYMENT_PROOF_DEV_GROUP_ID;
+    private readonly refundGroupId = process.env.ENVIRONMENT === 'homologation' || process.env.ENVIRONMENT === 'demo' ? process.env.REFUND_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.REFUND_PROD_GROUP_ID : process.env.REFUND_DEV_GROUP_ID;
 
     constructor(
         private readonly tableService: TableService,
@@ -1589,7 +1591,7 @@ export class MessageService {
                 footerText: "Escolha a opção desejada"
             }
         );
-        
+
         sentMessages.push(paymentMethodMessage);
 
         return sentMessages;
@@ -1771,7 +1773,7 @@ export class MessageService {
                     from
                 )
             );
-            
+
             const feedbackMessage = this.whatsappApi.createInteractiveButtonMessage(
                 from,
                 "Como você se sentiria se não pudesse mais usar o nosso serviço?",
@@ -1786,7 +1788,7 @@ export class MessageService {
                     footerText: "Ajude-nos a melhorar"
                 }
             );
-            
+
             sentMessages.push(feedbackMessage);
         } else {
             sentMessages.push(
@@ -1881,18 +1883,18 @@ export class MessageService {
         let sentMessages: ResponseStructureExtended[] = [];
         const conversationId = state._id.toString();
         const userChoice = userMessage.trim().toLowerCase();
-        
+
         // Handle button responses
-        const isPIXChoice = userChoice === '1' || 
-                            userChoice.includes('pix') || 
-                            userMessage.startsWith('button_payment_pix:');
-                            
-        const isCreditCardChoice = userChoice === '2' || 
-                                  userChoice.includes('cartão') || 
-                                  userChoice.includes('cartao') || 
-                                  userChoice.includes('crédito') || 
-                                  userChoice.includes('credito') ||
-                                  userMessage.startsWith('button_payment_credit:');
+        const isPIXChoice = userChoice === '1' ||
+            userChoice.includes('pix') ||
+            userMessage.startsWith('button_payment_pix:');
+
+        const isCreditCardChoice = userChoice === '2' ||
+            userChoice.includes('cartão') ||
+            userChoice.includes('cartao') ||
+            userChoice.includes('crédito') ||
+            userChoice.includes('credito') ||
+            userMessage.startsWith('button_payment_credit:');
 
         if (isPIXChoice) {
             // Fluxo PIX
@@ -1984,7 +1986,7 @@ export class MessageService {
                     footerText: "Selecione uma das opções abaixo"
                 }
             );
-            
+
             sentMessages.push(invalidOptionMessage);
         }
 
@@ -2248,23 +2250,130 @@ export class MessageService {
         transactionResponse: TransactionDTO
     ): Promise<ResponseStructureExtended[]> {
         let sentMessages: ResponseStructureExtended[] = [];
-        // Aqui você pode obter o link de pagamento do gateway (por exemplo, de uma variável de ambiente)
-        const isSandbox = process.env.ENVIRONMENT === 'sandbox';
-        const paymentLink = `${process.env.CREDIT_CARD_PAYMENT_LINK}?transactionId=${transactionResponse._id}${isSandbox ? '&environment=sandbox' : ''}`;
+        // Get payment link for fallback
+        const isDemo = process.env.ENVIRONMENT === 'demo';
+        const paymentLink = `${process.env.CREDIT_CARD_PAYMENT_LINK}?transactionId=${transactionResponse._id}${isDemo ? '&environment=sandbox' : ''}`;
         this.logger.log(`[handleCreditCardPayment] paymentLink: ${paymentLink}`);
 
-        // Envia uma mensagem com o link de pagamento
-        sentMessages.push(...this.mapTextMessages(
-            [
-                `O valor final da conta é de *${formatToBRL(state.conversationContext.userAmount)}*.`,
-                `*Clique no link abaixo* para realizar o pagamento com Cartão de Crédito:`,
-                paymentLink,
-                `*Não consegue clicar no link?*\n\n*Salve* nosso contato na agenda.\nOu copie e cole em seu navegador.`
-            ],
-            from
-        ));
+        try {
+            const flowId = process.env.WHATSAPP_CREDITCARD_FLOW_ID;
+            const flowName = process.env.WHATSAPP_CREDITCARD_FLOW_NAME;
 
-        // Atualiza o estado da conversa, se necessário (ex.: permanecer no WaitingForPayment aguardando o comprovante)
+            this.logger.log(`[handleCreditCardPayment] flowId: ${flowId}`);
+            this.logger.log(`[handleCreditCardPayment] flowName: ${flowName}`);
+
+            if (!flowId && !flowName) {
+                this.logger.warn('WhatsApp Credit Card Flow ID/Name not configured. Falling back to regular payment link message.');
+                // Fallback to regular text message if flow is not configured
+                sentMessages.push(...this.mapTextMessages(
+                    [
+                        `O valor final da conta é de *${formatToBRL(state.conversationContext.userAmount)}*.`,
+                        `*Clique no link abaixo* para realizar o pagamento com Cartão de Crédito:`,
+                        paymentLink,
+                        `*Não consegue clicar no link?*\n\n*Salve* nosso contato na agenda.\nOu copie e cole em seu navegador.`
+                    ],
+                    from
+                ));
+            } else {
+                // Prepare data for the flow - use a simpler approach without complex payload
+                try {
+                    // Create a basic flow message with minimal configuration
+                    const flowMessage = this.whatsappApi.createFlowMessage(
+                        from,
+                        `O valor final da conta é de ${formatToBRL(state.conversationContext.userAmount)}. Preencha os dados do seu cartão para finalizar o pagamento.`,
+                        {
+                            flowId: flowId,
+                            flowCta: 'Pagar com cartão',
+                            // Use minimal parameters for initial testing
+                            mode: 'draft' // Try published instead of draft
+                        },
+                        {
+                            headerType: 'text',
+                            headerContent: 'Pagamento com Cartão',
+                            footerText: 'Astra - Pagamento Seguro'
+                        }
+                    );
+                    
+                    console.log(`[handleCreditCardPayment] flowMessage: ${JSON.stringify(flowMessage)}`);
+
+                    // Add an informative message about the payment process
+                    sentMessages.push(
+                        ...this.mapTextMessages(
+                            [
+                                `Você será guiado para inserir os dados do seu cartão diretamente no WhatsApp de forma segura.`,
+                            ],
+                            from
+                        ),
+                        flowMessage
+                    );
+
+
+
+                } catch (flowError) {
+                    this.logger.error(`[handleCreditCardPayment] Flow error: ${flowError.message}`, flowError.stack);
+                    
+                    // After flow error, try with the explicit navigate action as a fallback
+                    try {
+                        this.logger.log(`[handleCreditCardPayment] Trying with explicit flow action and payload`);
+                        
+                        const flowMessage = this.whatsappApi.createFlowMessage(
+                            from,
+                            `O valor final da conta é de ${formatToBRL(state.conversationContext.userAmount)}. Preencha os dados do seu cartão para finalizar o pagamento.`,
+                            {
+                                flowId: flowId,
+                                flowCta: 'Pagar com cartão',
+                                flowAction: 'navigate',
+                                flowActionPayload: {
+                                    screen: "CREDIT_CARD",
+                                    data: {
+                                        SUMMARY: {
+                                            holder_cpf: state.conversationContext.documentNumber || ''
+                                        }
+                                    }
+                                },
+                                mode: 'published' // Try published instead of draft
+                            },
+                            {
+                                headerType: 'text',
+                                headerContent: 'Pagamento com Cartão',
+                                footerText: 'Astra - Pagamento Seguro'
+                            }
+                        );
+                        
+                        await this.whatsappApi.sendWhatsAppMessage(flowMessage);
+                        this.logger.log(`[handleCreditCardPayment] Flow message with explicit action sent successfully`);
+                    } catch (explicitFlowError) {
+                        this.logger.error(`[handleCreditCardPayment] Explicit flow error: ${explicitFlowError.message}`, explicitFlowError.stack);
+                        throw flowError; // Re-throw the original error to be caught by the outer catch block
+                    }
+                    
+                    // Add an informative message about the payment process
+                    sentMessages.push(
+                        ...this.mapTextMessages(
+                            [
+                                `Você será guiado para inserir os dados do seu cartão diretamente no WhatsApp de forma segura.`,
+                                `Se preferir acessar diretamente pelo navegador, use o link: ${paymentLink}`
+                            ],
+                            from
+                        )
+                    );
+                }
+            }
+        } catch (error) {
+            this.logger.error(`Error sending credit card flow message: ${error.message || error}`);
+            // Fallback to regular text message if flow fails
+            sentMessages.push(...this.mapTextMessages(
+                [
+                    `O valor final da conta é de *${formatToBRL(state.conversationContext.userAmount)}*.`,
+                    `*Clique no link abaixo* para realizar o pagamento com Cartão de Crédito:`,
+                    paymentLink,
+                    `*Não consegue clicar no link?*\n\n*Salve* nosso contato na agenda.\nOu copie e cole em seu navegador.`
+                ],
+                from
+            ));
+        }
+
+        // Update conversation state
         const conversationId = state._id.toString();
         const updatedContext: ConversationContextDTO = {
             ...state.conversationContext,
@@ -2406,7 +2515,7 @@ export class MessageService {
 
         if (typeof feedback.mustHaveScore === 'undefined') {
             const userResponse = userMessage.trim().toLowerCase();
-            
+
             // Define valid options for text responses
             const validOptions: Record<string, string> = {
                 '1-': 'Muito decepcionado',
@@ -2431,7 +2540,7 @@ export class MessageService {
             // Verifica se a resposta do usuário é válida
             const isButtonResponse = userMessage.startsWith('button_feedback_');
             let matchedOption;
-            
+
             if (isButtonResponse) {
                 // Extract button ID from response (e.g., 'button_feedback_1:Muito decepcionado' -> 'button_feedback_1')
                 const buttonId = userMessage.split(':')[0];
@@ -2459,7 +2568,7 @@ export class MessageService {
                         footerText: ""
                     }
                 );
-                
+
                 sentMessages.push(feedbackOptionsMessage);
             } else {
                 feedback.mustHaveScore = validOptions[matchedOption];
@@ -2530,7 +2639,7 @@ export class MessageService {
                         from
                     )
                 );
-                
+
                 // Add a message asking for restaurant suggestions with a friendly tone
                 const restaurantMessage = this.whatsappApi.createInteractiveButtonMessage(
                     from,
@@ -2545,7 +2654,7 @@ export class MessageService {
                         footerText: ""
                     }
                 );
-                
+
                 sentMessages.push(restaurantMessage);
 
                 await this.conversationService.updateConversation(conversationId, {
@@ -2587,9 +2696,9 @@ export class MessageService {
                     ],
                     from
                 );
-                
+
                 feedback.recommendedRestaurants = "Usuário optou por não sugerir";
-                
+
                 await this.conversationService.updateConversation(conversationId, {
                     userId: state.userId,
                     conversationContext: {
@@ -2621,7 +2730,7 @@ export class MessageService {
                             footerText: ""
                         }
                     );
-                    
+
                     sentMessages.push(restaurantMessage);
                 } else {
                     // User provided restaurant suggestions
@@ -2778,7 +2887,7 @@ export class MessageService {
     private async generateReceiptPdf(transaction: TransactionDTO): Promise<ResponseStructureExtended[]> {
         // Verificar se estamos em ambiente de produção e se precisamos usar a versão mock
         const isProduction = process.env.ENVIRONMENT === 'production';
-        const isSandbox = process.env.ENVIRONMENT === 'sandbox';
+        const isDemo = process.env.ENVIRONMENT === 'demo';
         const needsMock = isProduction && (!transaction.cardId && transaction.paymentMethod !== PaymentMethod.PIX);
 
         let cardLast4 = '';
@@ -2789,8 +2898,8 @@ export class MessageService {
             } catch (error) {
                 this.logger.warn(`[generateReceiptPdf] Não foi possível obter os últimos 4 dígitos do cartão: ${error.message}`);
             }
-        } else if (needsMock && transaction.paymentMethod !== PaymentMethod.PIX && !isSandbox) {
-            // Usar dados mockados para o cartão em ambiente de produção, mas não em sandbox
+        } else if (needsMock && transaction.paymentMethod !== PaymentMethod.PIX && !isDemo) {
+            // Usar dados mockados para o cartão em ambiente de produção, mas não em demo
             cardLast4 = '1234'; // Valor mockado para os últimos 4 dígitos
         }
 
@@ -2799,9 +2908,9 @@ export class MessageService {
         const receiptData: ReceiptTemplateData = {
             isPIX: transaction.paymentMethod === PaymentMethod.PIX,
             statusTitle: transaction.status === PaymentStatus.Accepted ? 'Pagamento concluído' : 'Pagamento cancelado',
-            amount: needsMock && !isSandbox ? 'R$ 100,00' : formatToBRL(transaction.amountPaid),
-            tableId: needsMock && !isSandbox ? '42' : transaction.tableId,
-            dateTime: needsMock && !isSandbox ?
+            amount: needsMock && !isDemo ? 'R$ 100,00' : formatToBRL(transaction.amountPaid),
+            tableId: needsMock && !isDemo ? '42' : transaction.tableId,
+            dateTime: needsMock && !isDemo ?
                 new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })
                     .replace(/(\d{2}\/\d{2}\/\d{4}), (\d{2}:\d{2})/, '$2, $1') :
                 new Date(transaction.confirmedAt)
@@ -3216,7 +3325,7 @@ export class MessageService {
                     to: conversation.userId,
                     reply: false,
                     isError: false,
-                    caption: '',
+                        caption: '',
                 };
 
             case ConversationStep.ConfirmOrder:
@@ -3224,14 +3333,14 @@ export class MessageService {
                     type: 'text',
                     content: `🔄 Estamos confirmando os detalhes da sua comanda, mas parece que está demorando um pouco mais do que o habitual.\n\n Por favor, mantenha-se à vontade, logo finalizaremos! 😄`,
                     to: conversation.userId,
-                    reply: false,
-                    isError: false,
+                        reply: false,
+                        isError: false,
                     caption: '',
                 };
 
             case ConversationStep.SplitBill:
                 return {
-                    type: 'text',
+                                type: 'text',
                     content: `🔄 O processo de divisão da conta está em andamento, mas pode levar alguns instantes a mais.\n\n Agradecemos pela paciência! 🎉`,
                     to: conversation.userId,
                     reply: false,

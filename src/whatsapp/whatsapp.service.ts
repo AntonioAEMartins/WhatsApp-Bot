@@ -7,6 +7,7 @@ import { lastValueFrom } from 'rxjs';
 import { MessageService, RequestStructure, ResponseStructureExtended } from 'src/message/message.service';
 import { HttpService } from '@nestjs/axios';
 import { WhatsAppApiService } from 'src/shared/whatsapp-api/whatsapp.api.service';
+
 @Injectable()
 export class WhatsAppService {
     private readonly whatsappConfig: WhatsAppConfig;
@@ -33,7 +34,7 @@ export class WhatsAppService {
             query.mode === 'subscribe' &&
             query.verifyToken === this.whatsappConfig.verifyToken
         ) {
-            console.log('Webhook verified');
+            // this.logger.log('Webhook verified');
             return query.challenge;
         } else {
             throw new Error('Webhook verification failed');
@@ -41,15 +42,20 @@ export class WhatsAppService {
     }
 
     async processWebhookNotification(notification: WebhookNotificationDto): Promise<void> {
-        for (const entry of notification.entry) {
-            for (const change of entry.changes) {
-                switch (change.field) {
-                    case 'messages':
-                        await this.handleMessageNotification(change.value);
-                        break;
-                    case 'statuses':
-                        await this.handleStatusNotification(change.value);
-                        break;
+        // this.logger.log(`Processing webhook notification: ${JSON.stringify(notification)}`);
+        
+        // Process regular WhatsApp notification
+        if (notification.entry) {
+            for (const entry of notification.entry) {
+                for (const change of entry.changes) {
+                    switch (change.field) {
+                        case 'messages':
+                            await this.handleMessageNotification(change.value);
+                            break;
+                        case 'statuses':
+                            await this.handleStatusNotification(change.value);
+                            break;
+                    }
                 }
             }
         }
@@ -63,7 +69,7 @@ export class WhatsAppService {
                     await this.whatsappApi.markMessageAsSeen(message.id);
                 }
             } catch (error) {
-                this.logger.error(`Error marking message as seen: ${error}`);
+                // this.logger.error(`Error marking message as seen: ${error}`);
             }
 
             const requestStructure: RequestStructure = this.parseMessage(message);
@@ -79,7 +85,7 @@ export class WhatsAppService {
                         "😍"
                     );
                 } catch (error) {
-                    this.logger.error(`Error sending reaction: ${error}`);
+                    // this.logger.error(`Error sending reaction: ${error}`);
                 }
             }
 
@@ -89,7 +95,7 @@ export class WhatsAppService {
     }
 
     private async handleStatusNotification(value: any): Promise<void> {
-        this.logger.log(`Processing status notification: ${value}`);
+        // this.logger.log(`Processing status notification: ${value}`);
     }
 
     private parseMessage(message: any): RequestStructure {
@@ -119,7 +125,7 @@ export class WhatsAppService {
                 parsedType = 'text';
                 if (message.interactive?.type === 'button_reply') {
                     const buttonReply = message.interactive.button_reply;
-                    this.logger.log(`Received button interaction - ID: ${buttonReply.id}, Title: ${buttonReply.title}`);
+                    // this.logger.log(`Received button interaction - ID: ${buttonReply.id}, Title: ${buttonReply.title}`);
                     // Format as text message with the button ID as prefix for easy processing
                     content = `button_${buttonReply.id}:${buttonReply.title}`;
                 } else {
