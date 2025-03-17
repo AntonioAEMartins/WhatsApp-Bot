@@ -1,7 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConversationService } from "src/conversation/conversation.service";
 import { ConversationDto, ParticipantDTO } from "src/conversation/dto/conversation.dto";
-import { LangchainService } from "src/langchain/langchain.service";
 import { OrderService } from "src/order/order.service";
 import { TableService } from "src/table/table.service";
 import { PaymentProofDTO, TransactionDTO } from "src/transaction/dto/transaction.dto";
@@ -19,7 +18,6 @@ export class MessageUtils {
 
     constructor(
         private readonly tableService: TableService,
-        private readonly langchainService: LangchainService,
         private readonly userService: UserService,
         private readonly conversationService: ConversationService,
         private readonly orderService: OrderService,
@@ -95,27 +93,6 @@ export class MessageUtils {
         const cnpjMatches = analysisResult.cpf_cnpj_beneficiario === expectedCNPJ;
 
         return beneficiaryNameMatches || cnpjMatches;
-    }
-
-    /**
-     * Utility: Extract and Analyze Payment Proof
-     *
-     * Extracts text from a PDF payment proof and analyzes it to retrieve transaction details.
-     *
-     * @param pdfData - The raw PDF data representing the payment proof.
-     * @param state - The current state of the user's conversation.
-     * @returns A Promise that resolves to a PaymentProofDTO with extracted transaction details.
-     *
-     * Functionality:
-     * - Uses OCR/extraction service to read PDF content.
-     * - Analyzes the extracted text to identify payment info.
-     */
-    public async extractAndAnalyzePaymentProof(
-        pdfData: string,
-        state: ConversationDto,
-    ): Promise<PaymentProofDTO> {
-        const extractedText = await this.langchainService.extractTextFromPDF(pdfData);
-        return await this.langchainService.analyzeDocument(extractedText, state.conversationContext.userAmount);
     }
 
     /**
@@ -247,5 +224,23 @@ export class MessageUtils {
 
     public haveAllContacts(state: ConversationDto, totalContactsExpected: number): boolean {
         return state.conversationContext.splitInfo.participants.length >= totalContactsExpected;
+    }
+
+    /**
+ * Formats a CPF string to the standard Brazilian format (XXX.XXX.XXX-XX)
+ * @param cpf - The CPF string to format (can be with or without formatting)
+ * @returns The formatted CPF string or the original input if invalid
+ */
+    public formatCPF(cpf: string): string {
+        // Remove any non-numeric characters
+        const cleanCpf = cpf.replace(/\D/g, '');
+
+        // Check if the CPF has the correct length
+        if (cleanCpf.length !== 11) {
+            return cpf; // Return original if invalid
+        }
+
+        // Format the CPF with dots and dash
+        return cleanCpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
     }
 }

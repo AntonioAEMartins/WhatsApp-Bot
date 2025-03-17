@@ -7,7 +7,7 @@ export class TableService {
     private readonly url: string;
 
     constructor() {
-        const posBackendUrl = process.env.ENVIRONMENT === 'homologation' ? process.env.POS_HOM_BACKEND_URL : process.env.ENVIRONMENT === 'production' ? process.env.POS_PROD_BACKEND_URL : process.env.ENVIRONMENT === 'sandbox' ? process.env.POS_SANDBOX_BACKEND_URL : process.env.POS_DEV_BACKEND_URL;
+        const posBackendUrl = process.env.ENVIRONMENT === 'homologation' ? process.env.POS_HOM_BACKEND_URL : process.env.ENVIRONMENT === 'production' ? process.env.POS_PROD_BACKEND_URL : process.env.ENVIRONMENT === 'demo' ? process.env.POS_DEMO_BACKEND_URL : process.env.POS_DEV_BACKEND_URL;
         this.url = posBackendUrl;
     }
 

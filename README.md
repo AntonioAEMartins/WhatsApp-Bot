@@ -97,3 +97,9 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+
+
+Foi criada uma chave de API armazenada na OracleARM, com o nome whatsapp-business-demo-key
+
+openssl genrsa -out whatsapp-business-test-key.pem 2048
+openssl rsa -in whatsapp-business-test-key.pem -outform PEM -pubout -out whatsapp-business-test-key.pub.pem

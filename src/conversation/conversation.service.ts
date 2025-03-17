@@ -145,7 +145,7 @@ export class ConversationService {
             const lastMessage = conversation.conversationContext.lastMessage;
             if (!lastMessage) return false;
             const timeDifference = now.getTime() - new Date(lastMessage).getTime();
-            this.logger.debug(`[getAllActiveConversations] Conversation ID: ${conversation._id}, Time difference: ${timeDifference}, Threshold: ${this.timeThreshold}`);
+            // this.logger.debug(`[getAllActiveConversations] Conversation ID: ${conversation._id}, Time difference: ${timeDifference}, Threshold: ${this.timeThreshold}`);
             return timeDifference <= this.timeThreshold;
         });
 
