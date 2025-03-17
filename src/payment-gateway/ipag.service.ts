@@ -290,15 +290,17 @@ export class IPagService {
                 state: conversation.data,
             };
 
-            let createdCardId: SimpleResponseDto<{
-                _id: string;
-            }>;
+            let cardId: string | undefined;
 
             console.log("userPaymentInfo.cardId", userPaymentInfo.cardId);
             console.log("userPaymentInfo.saveCard", userPaymentInfo.saveCard);
 
-            if (!userPaymentInfo.cardId && userPaymentInfo.saveCard) {
-                createdCardId = await this.cardService.createCard({
+            // If user is using an existing card, use that card ID
+            if (userPaymentInfo.cardId) {
+                cardId = userPaymentInfo.cardId;
+            } else {
+                // Always create a card record for transaction tracking
+                const createdCardResponse = await this.cardService.createCard({
                     userId: transaction.userId,
                     holder: {
                         name: userPaymentInfo.customerInfo.name,
@@ -306,16 +308,15 @@ export class IPagService {
                     },
                     brand: this.getCardMethod(userPaymentInfo.cardInfo.number),
                     last4: cardNumber,
-                    token: `demo-token-${this.generateRandomString(8)}`,
+                    // Only generate a token if the user wants to save the card
+                    token: userPaymentInfo.saveCard ? `demo-token-${this.generateRandomString(8)}` : null,
                     expiry_month: userPaymentInfo.cardInfo.expiry_month,
                     expiry_year: userPaymentInfo.cardInfo.expiry_year,
                 });
+                
+                cardId = createdCardResponse.data._id;
+                console.log("Created card ID:", cardId);
             }
-
-            console.log("createdCardId", createdCardId);
-
-
-            const cardId = userPaymentInfo.cardId || createdCardId.data._id;
 
             this.logger.log(`[createCreditCardPayment] DEMO MODE - Card ID: ${cardId}`);
 
