@@ -2451,7 +2451,7 @@ export class MessageService {
                         {
                             flowId: flowId,
                             flowCta: 'Pagar com cartão',
-                            mode: 'draft',
+                            mode: 'published',
                             flowToken: state._id.toString(),
                             flowAction: 'navigate',
                             flowActionPayload: {
