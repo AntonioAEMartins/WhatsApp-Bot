@@ -84,6 +84,7 @@ interface retryRequestResponse {
 export class MessageService {
     private readonly logger = new Logger(MessageService.name);
     private readonly mongoClient: MongoClient;
+    private readonly environment = process.env.ENVIRONMENT;
 
     private readonly waiterGroupId = process.env.ENVIRONMENT === 'homologation' || process.env.ENVIRONMENT === 'demo' ? process.env.WAITER_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.WAITER_PROD_GROUP_ID : process.env.WAITER_DEV_GROUP_ID;
     private readonly paymentProofGroupId = process.env.ENVIRONMENT === 'homologation' || process.env.ENVIRONMENT === 'demo' ? process.env.PAYMENT_PROOF_HOM_GROUP_ID : process.env.ENVIRONMENT === 'production' ? process.env.PAYMENT_PROOF_PROD_GROUP_ID : process.env.PAYMENT_PROOF_DEV_GROUP_ID;
@@ -372,14 +373,21 @@ export class MessageService {
 
                 let feedbackReplication: ResponseStructureExtended[] = [];
                 if (currentStep === ConversationStep.Feedback) {
-                    feedbackReplication = this.mapTextMessages(
-                        [
-                            'Por favor, escolha uma das opções abaixo e envie apenas o número ou a descrição correspondente:',
-                            '1- Muito decepcionado\n2- Um pouco decepcionado\n3- Não faria diferença',
-                        ],
+                    const feedbackOptionsMessage = this.whatsappApi.createInteractiveButtonMessage(
                         from,
-                        false
+                        "Por favor, avalie como foi sua experiência conosco:",
+                        [
+                            { id: "feedback_1", title: "Muito decepcionado" },
+                            { id: "feedback_2", title: "Pouco decepcionado" },
+                            { id: "feedback_3", title: "Não faria diferença" }
+                        ],
+                        {
+                            headerType: "text",
+                            headerContent: "Sua opinião é importante",
+                            footerText: "Ajude-nos a melhorar"
+                        }
                     );
+                    feedbackReplication = [feedbackOptionsMessage];
                 } else {
                     const feedback = state.conversationContext.feedback;
                     if (!feedback?.mustHaveScore) {
@@ -976,12 +984,22 @@ export class MessageService {
 
             updatedContext.currentStep = ConversationStep.IncompleteOrder;
         } else {
-            sentMessages.push(
-                ...this.mapTextMessages(
-                    ['Por favor, responda com *1 para Sim* ou *2 para Não*.'],
-                    from,
-                ),
+            // Replace text message with interactive buttons for confirmation
+            const confirmationMessage = this.whatsappApi.createInteractiveButtonMessage(
+                from,
+                "👍 A sua comanda está correta?",
+                [
+                    { id: "confirm_yes", title: "Sim" },
+                    { id: "confirm_no", title: "Não" }
+                ],
+                {
+                    headerType: "text",
+                    headerContent: "Confirmação do Pedido",
+                    footerText: ""
+                }
             );
+
+            sentMessages.push(confirmationMessage);
         }
 
         // Atualiza o contexto da conversa no banco
@@ -1520,11 +1538,28 @@ export class MessageService {
         from: string,
         state: ConversationDto
     ): Promise<ResponseStructureExtended[]> {
-        const messages = [
-            'Por favor, escolha uma das opções de gorjeta: 3%, 5% ou 7%, ou diga que não deseja dar gorjeta.',
-        ];
-
-        return this.mapTextMessages(messages, from);
+        const sentMessages: ResponseStructureExtended[] = [];
+        
+        // Create interactive button message for tip options
+        const tipOptionsMessage = this.whatsappApi.createInteractiveButtonMessage(
+            from,
+            "Por favor, escolha uma das opções de gorjeta:",
+            [
+                { id: "tip_3", title: "3%" },
+                { id: "tip_5", title: "5% 🔥" },
+                { id: "tip_7", title: "7%" },
+                { id: "tip_0", title: "Sem gorjeta" }
+            ],
+            {
+                headerType: "text",
+                headerContent: "Opções de Gorjeta",
+                footerText: "Sua contribuição é muito apreciada pela nossa equipe!"
+            }
+        );
+        
+        sentMessages.push(tipOptionsMessage);
+        
+        return sentMessages;
     }
 
 
@@ -1749,14 +1784,22 @@ export class MessageService {
                         currentStep: ConversationStep.PaymentMethodSelection,
                     },
                 });
-                sentMessages.push(
-                    ...this.mapTextMessages(
-                        [
-                            'Ops! 😕 Tivemos um problema ao gerar o PIX. Por favor, escolha novamente a forma de pagamento:\n\n1️⃣ - PIX\n2️⃣ - Cartão de Crédito'
-                        ],
-                        from
-                    )
+                
+                const paymentMethodMessage = this.whatsappApi.createInteractiveButtonMessage(
+                    from,
+                    "Ops! 😕 Tivemos um problema ao gerar o PIX. Por favor, escolha novamente a forma de pagamento:",
+                    [
+                        { id: "payment_pix", title: "PIX" },
+                        { id: "payment_credit", title: "Cartão de Crédito" }
+                    ],
+                    {
+                        headerType: "text",
+                        headerContent: "Método de Pagamento",
+                        footerText: "Selecione uma das opções abaixo"
+                    }
                 );
+                
+                sentMessages.push(paymentMethodMessage);
             }
         } else if (normalizedMessage === '2' || normalizedMessage.includes('não') || normalizedMessage.includes('nao')) {
             await this.conversationService.updateConversation(state._id.toString(), {
@@ -1791,12 +1834,21 @@ export class MessageService {
 
             sentMessages.push(feedbackMessage);
         } else {
-            sentMessages.push(
-                ...this.mapTextMessages(
-                    ['Por favor, responda:\n1 - Sim, gerar novo PIX\n2 - Não, seguir para feedback'],
-                    from
-                )
+            const optionsMessage = this.whatsappApi.createInteractiveButtonMessage(
+                from,
+                "Deseja gerar um novo código PIX?",
+                [
+                    { id: "pix_expired_yes", title: "Sim" },
+                    { id: "pix_expired_no", title: "Não" }
+                ],
+                {
+                    headerType: "text",
+                    headerContent: "PIX Expirado",
+                    footerText: "Escolha uma opção"
+                }
             );
+
+            sentMessages.push(optionsMessage);
         }
 
         return sentMessages;
@@ -2336,13 +2388,21 @@ export class MessageService {
                 conversationContext: revertContext,
             });
 
-            sentMessages.push(...this.mapTextMessages(
+            const paymentMethodMessage = this.whatsappApi.createInteractiveButtonMessage(
+                from,
+                'Houve um erro na geração do PIX. Por favor, escolha novamente a forma de pagamento:',
                 [
-                    'Houve um erro na geração do PIX. Por favor, escolha novamente a forma de pagamento:\n\n1- PIX\n2- Cartão de Crédito'
+                    { id: "payment_pix", title: "Pagar com PIX" },
+                    { id: "payment_credit", title: "Cartão de Crédito" }
                 ],
-                from
-            )
+                {
+                    headerType: "text",
+                    headerContent: "Erro no Pagamento",
+                    footerText: ""
+                }
             );
+
+            sentMessages.push(paymentMethodMessage);
         }
 
         return sentMessages;
@@ -2360,8 +2420,8 @@ export class MessageService {
         this.logger.log(`[handleCreditCardPayment] paymentLink: ${paymentLink}`);
 
         try {
-            const flowId = process.env.WHATSAPP_CREDITCARD_FLOW_ID;
-            const flowName = process.env.WHATSAPP_CREDITCARD_FLOW_NAME;
+            const flowId = this.environment === 'demo' ? process.env.WHATSAPP_DEMO_CREDITCARD_FLOW_ID : this.environment === 'homologation' || this.environment === 'development' ? process.env.WHATSAPP_TEST_CREDITCARD_FLOW_ID : process.env.WHATSAPP_PROD_CREDITCARD_FLOW_ID;
+            const flowName = this.environment === 'demo' ? process.env.WHATSAPP_DEMO_CREDITCARD_FLOW_NAME : this.environment === 'homologation' || this.environment === 'development' ? process.env.WHATSAPP_TEST_CREDITCARD_FLOW_NAME : process.env.WHATSAPP_PROD_CREDITCARD_FLOW_NAME;
 
             this.logger.log(`[handleCreditCardPayment] flowId: ${flowId}`);
             this.logger.log(`[handleCreditCardPayment] flowName: ${flowName}`);

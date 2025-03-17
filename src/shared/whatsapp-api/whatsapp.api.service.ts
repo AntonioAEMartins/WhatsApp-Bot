@@ -15,7 +15,8 @@ export class WhatsAppApiService {
   constructor(private readonly httpService: HttpService) {
     this.graphApiUrl = process.env.WHATSAPP_GRAPH_URL || 'https://graph.facebook.com/v16.0';
     this.accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-    this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    const env = process.env.ENVIRONMENT;
+    this.phoneNumberId = env === "demo" ? process.env.WHATSAPP_DEMO_PHONE_NUMBER_ID : (env === "homologation" || env === "development" ? process.env.WHATSAPP_TEST_PHONE_NUMBER_ID : process.env.WHATSAPP_PROD_PHONE_NUMBER_ID);
   }
 
   /**
@@ -141,9 +142,9 @@ export class WhatsAppApiService {
         if (response.interactive.hasOwnProperty('type') && (response.interactive as any).type === 'flow') {
           // This is a flow interactive message
           this.logger.debug(`Sending Flow interactive message: ${JSON.stringify(response.interactive)}`);
-          
+
           const flowInteractive = response.interactive as any;
-          
+
           // Format according to WhatsApp API requirements for Flow messages
           body.interactive = {
             type: "flow",
@@ -155,7 +156,7 @@ export class WhatsAppApiService {
               parameters: flowInteractive.action.parameters
             }
           };
-          
+
           // Log the exact request body being sent
           this.logger.debug(`Final Flow message request body: ${JSON.stringify(body)}`);
         } else {
@@ -269,20 +270,20 @@ export class WhatsAppApiService {
       return result.data;
     } catch (error) {
       this.logger.error(`Erro ao enviar mensagem para WhatsApp: ${error?.message || error}`);
-      
+
       // Log more detailed error information
       if (error?.response?.data) {
         this.logger.error(`WhatsApp API error response: ${JSON.stringify(error.response.data)}`);
       }
-      
+
       if (error?.response?.status === 400) {
         this.logger.error(`WhatsApp API 400 Bad Request - Request body was: ${JSON.stringify(body)}`);
       }
 
       // Rethrow the error to allow proper handling upstream
       // throw new HttpException(
-        // error?.response?.data || 'Erro ao enviar mensagem ao WhatsApp',
-        // error?.response?.status || HttpStatus.INTERNAL_SERVER_ERROR
+      // error?.response?.data || 'Erro ao enviar mensagem ao WhatsApp',
+      // error?.response?.status || HttpStatus.INTERNAL_SERVER_ERROR
       // );
     }
   }
@@ -660,7 +661,7 @@ export class WhatsAppApiService {
 
     if (flowParams.flowAction) {
       flowParameters.flow_action = flowParams.flowAction;
-      
+
       // Add flow_action_payload if we have it and flow_action is specified
       if (flowParams.flowActionPayload) {
         flowParameters.flow_action_payload = flowParams.flowActionPayload;
@@ -909,7 +910,7 @@ export class WhatsAppApiService {
       messageBody.interactive.header = {
         type: options.headerType
       };
-      
+
       // Add the specific content based on header type
       switch (options.headerType) {
         case 'text':
@@ -955,11 +956,11 @@ export class WhatsAppApiService {
       return result.data;
     } catch (error) {
       this.logger.error(`Error sending Flow message: ${error?.message || error}`);
-      
+
       if (error?.response?.data) {
         this.logger.error(`WhatsApp API error response: ${JSON.stringify(error.response.data)}`);
       }
-      
+
       throw new HttpException(
         error?.response?.data || 'Error sending Flow message',
         error?.response?.status || HttpStatus.INTERNAL_SERVER_ERROR

@@ -26,7 +26,8 @@ export class WhatsAppService {
         this.whatsappConfig = {
             verifyToken: process.env.WHATSAPP_VERIFY_TOKEN,
         };
-        this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+        const env = process.env.ENVIRONMENT;
+        this.phoneNumberId = env === "demo" ? process.env.WHATSAPP_DEMO_PHONE_NUMBER_ID : (env === "homologation" || env === "development" ? process.env.WHATSAPP_TEST_PHONE_NUMBER_ID : process.env.WHATSAPP_PROD_PHONE_NUMBER_ID);
         this.accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
         this.graphApiUrl = `https://graph.facebook.com/v22.0`;
     }
@@ -89,7 +90,7 @@ export class WhatsAppService {
                 for (const change of entry.changes) {
                     switch (change.field) {
                         case 'messages':
-                            
+
                             await this.handleMessageNotification(change.value);
                             break;
                         case 'statuses':
