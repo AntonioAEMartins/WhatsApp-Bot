@@ -13,7 +13,8 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
   const app = await NestFactory.create(AppModule);
-  const port = process.env.ENVIRONMENT === 'demo' ? process.env.DEMO_PORT : 3005;
+  const environment = process.env.ENVIRONMENT;
+  const port = environment === 'demo' ? process.env.DEMO_PORT : environment === 'homologation' ? process.env.HOMOLOGATION_PORT : 3005;
 
   app.useGlobalPipes(
     new ValidationPipe({
