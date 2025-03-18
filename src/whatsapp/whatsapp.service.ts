@@ -45,7 +45,7 @@ export class WhatsAppService {
     }
 
     async processWebhookNotification(notification: WebhookNotificationDto | WebhookFlowNotificationDto): Promise<void> {
-        this.logger.log(`[processWebhookNotification] Notification type: ${notification.object}`);
+        // this.logger.log(`[processWebhookNotification] Notification type: ${notification.object}`);
 
         try {
             // Check if this is a payment flow notification
@@ -115,7 +115,7 @@ export class WhatsAppService {
 
             // Extract the timestamp
             const timestamp = message.timestamp;
-            this.logger.log(`Received message with timestamp: ${timestamp}`);
+            // this.logger.log(`Received message with timestamp: ${timestamp}`);
 
             // Parse the message
             const requestStructure: RequestStructure = this.parseMessage(message);
@@ -123,8 +123,8 @@ export class WhatsAppService {
             // Attach the timestamp to the request structure if needed
             requestStructure.timestamp = timestamp;
 
-            console.log("Value", value);
-            console.log("Timestamp", timestamp);
+                // console.log("Value", value);
+                // console.log("Timestamp", timestamp);
 
             const messageId = message.id;
 
