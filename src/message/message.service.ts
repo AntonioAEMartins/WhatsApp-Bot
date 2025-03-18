@@ -39,6 +39,7 @@ export interface RequestStructure {
         buttonId: string;
         buttonText: string;
     };
+    timestamp: number;
 }
 
 export interface ResponseStructure {
@@ -312,7 +313,7 @@ export class MessageService {
         const message: RequestMessage = {
             from: fromPerson,
             body: request.content,
-            timestamp: Math.floor(Date.now() / 1000),
+            timestamp: request.timestamp,
             type: request.type,
         };
 
@@ -323,7 +324,7 @@ export class MessageService {
 
         if (messageAge > maxAllowedAge) {
             this.logger.debug(`Ignoring old message from ${message.from}: ${message.body}`);
-            return;
+            return [];
         }
 
         const from = message.from;
@@ -1539,7 +1540,7 @@ export class MessageService {
         state: ConversationDto
     ): Promise<ResponseStructureExtended[]> {
         const sentMessages: ResponseStructureExtended[] = [];
-        
+
         // Create interactive button message for tip options
         const tipOptionsMessage = this.whatsappApi.createInteractiveButtonMessage(
             from,
@@ -1556,9 +1557,9 @@ export class MessageService {
                 footerText: "Sua contribuição é muito apreciada pela nossa equipe!"
             }
         );
-        
+
         sentMessages.push(tipOptionsMessage);
-        
+
         return sentMessages;
     }
 
@@ -1784,7 +1785,7 @@ export class MessageService {
                         currentStep: ConversationStep.PaymentMethodSelection,
                     },
                 });
-                
+
                 const paymentMethodMessage = this.whatsappApi.createInteractiveButtonMessage(
                     from,
                     "Ops! 😕 Tivemos um problema ao gerar o PIX. Por favor, escolha novamente a forma de pagamento:",
@@ -1798,7 +1799,7 @@ export class MessageService {
                         footerText: "Selecione uma das opções abaixo"
                     }
                 );
-                
+
                 sentMessages.push(paymentMethodMessage);
             }
         } else if (normalizedMessage === '2' || normalizedMessage.includes('não') || normalizedMessage.includes('nao')) {

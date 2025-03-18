@@ -113,10 +113,22 @@ export class WhatsAppService {
                 // this.logger.error(`Error marking message as seen: ${error}`);
             }
 
+            // Extract the timestamp
+            const timestamp = message.timestamp;
+            this.logger.log(`Received message with timestamp: ${timestamp}`);
+
+            // Parse the message
             const requestStructure: RequestStructure = this.parseMessage(message);
+
+            // Attach the timestamp to the request structure if needed
+            requestStructure.timestamp = timestamp;
+
+            console.log("Value", value);
+            console.log("Timestamp", timestamp);
 
             const messageId = message.id;
 
+            // Example: Reacting to a specific text message
             if (message.type === 'text' &&
                 message.text?.body?.toLowerCase().includes('pagar a comanda')) {
                 try {
@@ -130,6 +142,7 @@ export class WhatsAppService {
                 }
             }
 
+            // Process the message
             const result = await this.messageService.handleProcessMessage(requestStructure);
             await this.whatsappApi.sendWhatsAppMessages(result);
         }
@@ -182,6 +195,7 @@ export class WhatsAppService {
             from,
             type: parsedType,
             content,
+            timestamp: message.timestamp
         };
     }
 }
