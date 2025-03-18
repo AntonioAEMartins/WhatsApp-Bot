@@ -123,9 +123,6 @@ export class WhatsAppService {
             // Attach the timestamp to the request structure if needed
             requestStructure.timestamp = timestamp;
 
-                // console.log("Value", value);
-                // console.log("Timestamp", timestamp);
-
             const messageId = message.id;
 
             // Example: Reacting to a specific text message
