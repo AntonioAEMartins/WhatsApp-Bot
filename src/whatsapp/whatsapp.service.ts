@@ -47,6 +47,24 @@ export class WhatsAppService {
     async processWebhookNotification(notification: WebhookNotificationDto | WebhookFlowNotificationDto): Promise<void> {
         // this.logger.log(`[processWebhookNotification] Notification type: ${notification.object}`);
 
+        // Check if the message is from the correct phone number ID for the current environment
+        const currentEnv = process.env.ENVIRONMENT;
+        const messagePhoneNumberId = notification.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
+
+        // Skip processing if the message is not from the phone number ID for the current environment
+        if (messagePhoneNumberId) {
+            const envPhoneNumberId = currentEnv === "demo"
+                ? process.env.WHATSAPP_DEMO_PHONE_NUMBER_ID
+                : (currentEnv === "homologation" || currentEnv === "development"
+                    ? process.env.WHATSAPP_TEST_PHONE_NUMBER_ID
+                    : process.env.WHATSAPP_PROD_PHONE_NUMBER_ID);
+
+            if (messagePhoneNumberId !== envPhoneNumberId) {
+                this.logger.log(`Skipping message from phone_number_id ${messagePhoneNumberId} as it doesn't match current environment (${currentEnv}) phone number ID ${envPhoneNumberId}`);
+                return;
+            }
+        }
+
         try {
             // Check if this is a payment flow notification
             if (notification.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.interactive?.type === 'nfm_reply') {
@@ -90,7 +108,6 @@ export class WhatsAppService {
                 for (const change of entry.changes) {
                     switch (change.field) {
                         case 'messages':
-
                             await this.handleMessageNotification(change.value);
                             break;
                         case 'statuses':
