@@ -158,7 +158,7 @@ export class IPagService {
         }
 
         // Regular production/homologation/development flow
-        const endpoint = '/service/resources/payments';
+        const endpoint = '/service/payment';
         // Valida a transação para PIX – se não estiver Pending e for Failed, cria nova transação e continua;
         // se estiver em outro status, lança exceção.
         console.log("[createPIXPayment] userPaymentInfo", userPaymentInfo);
