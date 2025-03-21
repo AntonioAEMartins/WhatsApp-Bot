@@ -50,4 +50,31 @@ export class MessageController {
       data: response,
     };
   }
+
+  @Get('table-payment-complete-message/:conversationId')
+  async notifyWaiterTablePaymentComplete(@Param('conversationId') conversationId: string): Promise<SimpleResponseDto<ResponseStructureExtended[]>> {
+    const response = await this.messageService.notifyWaiterTablePaymentComplete(null, conversationId);
+    return {
+      msg: 'Notification sent',
+      data: response,
+    };
+  }
+
+  @Get('wrong-order-message/:tableNumber')
+  async notifyWaiterWrongOrder(@Param('tableNumber') tableNumber: number): Promise<SimpleResponseDto<ResponseStructureExtended[]>> {
+    const response = await this.messageService.notifyWaiterWrongOrder(tableNumber);
+    return {
+      msg: 'Notification sent',
+      data: response,
+    };
+  }
+
+  @Get('table-started-payment-message/:tableNumber')
+  async notifyWaiterTableStartedPayment(@Param('tableNumber') tableNumber: number): Promise<SimpleResponseDto<ResponseStructureExtended[]>> {
+    const response = await this.messageService.notifyWaiterTableStartedPayment(tableNumber);
+    return {
+      msg: 'Notification sent',
+      data: response,
+    };
+  }
 }
