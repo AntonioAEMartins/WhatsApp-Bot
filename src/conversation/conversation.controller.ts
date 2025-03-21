@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, HttpException, HttpStatus, Param, Post, Put, Query } from '@nestjs/common';
 import { ConversationService } from './conversation.service';
 import { BaseConversationDto, ConversationContextDTO, ConversationDto, CreateConversationDto, MessageDTO } from './dto/conversation.dto';
+import { SimpleResponseDto } from 'src/request/request.dto';
 
 @Controller('conversation')
 export class ConversationController {
@@ -40,6 +41,12 @@ export class ConversationController {
         }
 
         return await this.conversationService.getActiveConversationsByOrderId(numericOrderId);
+    }
+
+    @HttpCode(HttpStatus.OK)
+    @Get('active-conversations')
+    async getActiveConversations(): Promise<SimpleResponseDto<ConversationDto[]>> {
+        return this.conversationService.getActiveConversationsWithTransactions();
     }
 
     @HttpCode(HttpStatus.OK)

@@ -20,7 +20,7 @@ import { TransactionService } from 'src/transaction/transaction.service';
 import { CreateTransactionDTO, PaymentMethod, PaymentProcessorDTO, TransactionDTO } from 'src/transaction/dto/transaction.dto';
 import { GroupMessageKeys, GroupMessages } from './utils/group.messages.utils';
 import { MessageUtils } from './message.utils';
-import { Db, MongoClient } from 'mongodb';
+import { Db, MongoClient, ObjectId } from 'mongodb';
 import { ClientProvider } from 'src/db/db.module';
 import { UserPaymentCreditInfoDto, UserPaymentPixInfoDto } from 'src/payment-gateway/dto/ipag-pagamentos.dto';
 import { IPagService } from 'src/payment-gateway/ipag.service';
@@ -3027,12 +3027,20 @@ export class MessageService {
         return this.mapTextMessages([message], groupId);
     }
 
-    private async notifyWaiterTablePaymentComplete(state: ConversationDto): Promise<ResponseStructureExtended[]> {
+    public async notifyWaiterTablePaymentComplete(state?: ConversationDto, conversationId?: string): Promise<ResponseStructureExtended[]> {
         const groupId = this.waiterGroupId;
         this.logger.log(`[notifyWaiterTablePaymentComplete] Notificação de pagamento completo para o grupo: ${groupId}`);
 
         try {
-            const { orderId, tableId } = state;
+            let conversation = state;
+            
+            // If conversationId is provided, load the conversation
+            if (conversationId) {
+                const { data } = await this.conversationService.getConversation(conversationId);
+                conversation = data;
+            }
+            
+            const { orderId, tableId } = conversation;
             const { data: orderData } = await this.orderService.getOrder(orderId);
             const { totalAmount, amountPaidSoFar = 0 } = orderData;
 
@@ -3042,7 +3050,7 @@ export class MessageService {
             if (extraTip > 0) {
                 tipMessage = extraTip > 15
                     ? `MAIS ${formatToBRL(extraTip)} de Gorjeta 🎉`
-                    : `MAIS ${state.conversationContext.tipPercent}% de Gorjeta 🎉`;
+                    : `MAIS ${conversation.conversationContext.tipPercent}% de Gorjeta 🎉`;
             }
 
             const message = tipMessage
@@ -3293,7 +3301,7 @@ export class MessageService {
      * - Handles and logs any errors that occur during the message-sending process.
      */
 
-    private notifyWaiterTableStartedPayment(tableNumber: number): ResponseStructureExtended[] {
+    public notifyWaiterTableStartedPayment(tableNumber: number): ResponseStructureExtended[] {
         const groupId = this.waiterGroupId;
 
         this.logger.log(`[notifyWaiterTableStartedPayment] Notificação de início de pagamentos para a mesa ${tableNumber}`);
@@ -3312,7 +3320,7 @@ export class MessageService {
         return this.mapTextMessages([message], groupId);
     }
 
-    private notifyWaiterWrongOrder(tableNumber: number): ResponseStructureExtended[] {
+    public notifyWaiterWrongOrder(tableNumber: number): ResponseStructureExtended[] {
         const groupId = this.waiterGroupId;
 
         this.logger.log(`[notifyWaiterWrongOrder] Notificação de pedido errado para a mesa ${tableNumber}`);
@@ -3792,5 +3800,4 @@ export class MessageService {
 
         return sentMessages;
     }
-
 }
