@@ -445,6 +445,7 @@ export class MessageService {
             ConversationStep.PaymentInvalid,
             ConversationStep.PaymentAssistance,
             ConversationStep.EmptyOrder,
+            ConversationStep.PIXError
         ];
         if (
             (!state || (state && terminalStates.includes(state.conversationContext.currentStep))) &&
@@ -512,20 +513,23 @@ export class MessageService {
             case ConversationStep.CollectCPF:
                 requestResponse = await this.handleCollectCPF(from, userMessage, state);
                 break;
-            case ConversationStep.PaymentMethodSelection:
-                requestResponse = await this.handlePaymentMethodSelection(from, userMessage, state);
-                break;
-            case ConversationStep.SelectSavedCard:
-                requestResponse = await this.handleSelectSavedCard(from, userMessage, state);
-                break;
+            // case ConversationStep.PaymentMethodSelection:
+            //     requestResponse = await this.handlePaymentMethodSelection(from, userMessage, state);
+            //     break;
+            // case ConversationStep.SelectSavedCard:
+            // requestResponse = await this.handleSelectSavedCard(from, userMessage, state);
+            // break;
             case ConversationStep.WaitingForPayment:
-                // pass
+                requestResponse = await this.handleWaitingForPayment(from, userMessage, state)
                 break;
             case ConversationStep.PixExpired:
                 requestResponse = await this.handlePixExpired(from, userMessage, state);
                 break;
             case ConversationStep.CollectName:
                 requestResponse = await this.handleCollectName(from, userMessage, state);
+                break;
+            case ConversationStep.PIXError:
+                requestResponse = await this.handlePIXError(from, userMessage, state);
                 break;
             case ConversationStep.Feedback:
                 requestResponse = await this.handleFeedback(from, userMessage, state);
@@ -551,6 +555,7 @@ export class MessageService {
                     isError: false,
                 });
                 break;
+
             default:
                 if (userMessage.includes('pagar a comanda')) {
                     requestResponse = await this.handleOrderProcessing(from, userMessage, state, message);
@@ -658,9 +663,9 @@ export class MessageService {
                     [
                         '*👋 Astra Pay* – Bem-vindo(a)!\n' +
                         'Tornamos o seu pagamento prático e sem complicações.\n\n' +
-                        '*Formas de Pagamento Aceitas:*\n' +
-                        '1. PIX\n' +
-                        '2. Cartão de Crédito\n\n' +
+                        '*Forma de Pagamento Aceita:*\n' +
+                        '1. PIX\n\n' +
+                        // Removed Credit Card option
                         '> Ao continuar você concorda com nossa Política de Privacidade: https://astra1.com.br/privacy-policy/'
                     ],
                     from,
@@ -1601,10 +1606,11 @@ export class MessageService {
             return sentMessages;
         }
 
+        // Modified: Skip payment method selection and go directly to CollectName
         const updatedContext: ConversationContextDTO = {
             ...state.conversationContext,
-            currentStep: ConversationStep.PaymentMethodSelection,
-            paymentStartTime: Date.now(),
+            currentStep: ConversationStep.CollectName,
+            paymentMethod: PaymentMethod.PIX, // Set PIX as default payment method
             documentNumber: documentNumber,
         };
 
@@ -1613,22 +1619,13 @@ export class MessageService {
             conversationContext: updatedContext,
         });
 
-        // Replace text message with interactive buttons for payment method selection
-        const paymentMethodMessage = this.whatsappApi.createInteractiveButtonMessage(
-            from,
-            "Escolha a forma de pagamento:",
-            [
-                { id: "payment_pix", title: "PIX" },
-                { id: "payment_credit", title: "Cartão de Crédito" }
-            ],
-            {
-                headerType: "text",
-                headerContent: "Método de Pagamento",
-                footerText: "Escolha a opção desejada"
-            }
+        // Ask for name directly
+        sentMessages.push(
+            ...this.mapTextMessages(
+                ['😊 Para continuarmos com o pagamento via PIX\n\n*Qual é o seu nome completo?*'],
+                from,
+            ),
         );
-
-        sentMessages.push(paymentMethodMessage);
 
         return sentMessages;
     }
@@ -1756,100 +1753,59 @@ export class MessageService {
         state: ConversationDto
     ): Promise<ResponseStructureExtended[]> {
         let sentMessages: ResponseStructureExtended[] = [];
-        const normalizedMessage = userMessage.trim().toLowerCase();
+        const userChoice = userMessage.trim().toLowerCase();
 
-        if (normalizedMessage === '1' || normalizedMessage.includes('sim')) {
-            try {
-                const transactionResponse = await this.createTransaction(state, PaymentMethod.PIX, state.conversationContext.userName);
+        // Handle regeneration of new PIX QR code case
+        const isRegeneratePix = userChoice === '1' ||
+            userChoice.includes('sim') ||
+            userChoice.includes('gerar') ||
+            userChoice.includes('novo') ||
+            userMessage.startsWith('button_regenerate_pix:');
 
-                if (transactionResponse.pixKey) {
-                    await this.conversationService.updateConversation(state._id.toString(), {
-                        userId: state.userId,
-                        conversationContext: {
-                            ...state.conversationContext,
-                            currentStep: ConversationStep.WaitingForPayment,
-                        },
-                    });
+        // Remove credit card option checks and just focus on PIX regeneration
+        // The "No, go back" option can still be kept
 
-                    const paymentMessages = await this.handlePIXPaymentInstructions(from, state, transactionResponse.pixKey);
-                    sentMessages.push(...paymentMessages);
-                } else {
-                    throw new Error('PIX key not received');
-                }
-            } catch (error) {
-                this.logger.error(`[handlePixExpired] Error generating new PIX: ${error.message}`);
-                await this.conversationService.updateConversation(state._id.toString(), {
-                    userId: state.userId,
-                    conversationContext: {
-                        ...state.conversationContext,
-                        currentStep: ConversationStep.PaymentMethodSelection,
-                    },
-                });
+        if (isRegeneratePix) {
+            // PIX Regeneration logic - this can stay the same
+            const updatedContext: ConversationContextDTO = {
+                ...state.conversationContext,
+                currentStep: ConversationStep.WaitingForPayment,
+            };
 
-                const paymentMethodMessage = this.whatsappApi.createInteractiveButtonMessage(
-                    from,
-                    "Ops! 😕 Tivemos um problema ao gerar o PIX. Por favor, escolha novamente a forma de pagamento:",
-                    [
-                        { id: "payment_pix", title: "PIX" },
-                        { id: "payment_credit", title: "Cartão de Crédito" }
-                    ],
-                    {
-                        headerType: "text",
-                        headerContent: "Método de Pagamento",
-                        footerText: "Selecione uma das opções abaixo"
-                    }
-                );
-
-                sentMessages.push(paymentMethodMessage);
-            }
-        } else if (normalizedMessage === '2' || normalizedMessage.includes('não') || normalizedMessage.includes('nao')) {
             await this.conversationService.updateConversation(state._id.toString(), {
                 userId: state.userId,
-                conversationContext: {
-                    ...state.conversationContext,
-                    currentStep: ConversationStep.Feedback,
-                },
+                conversationContext: updatedContext,
             });
 
-            sentMessages.push(
-                ...this.mapTextMessages(
-                    ['*👋  Astra Pay* - Pagamento Cancelado ❌'],
-                    from
-                )
+            // Generate new transaction
+            const transactionResponse = await this.createTransaction(
+                state,
+                PaymentMethod.PIX,
+                state.conversationContext.userName || 'Unknown',
             );
 
-            const feedbackMessage = this.whatsappApi.createInteractiveButtonMessage(
+            // Create the PIX payment and get instructions
+            sentMessages = await this.handlePIXPaymentInstructions(
                 from,
-                "Como você se sentiria se não pudesse mais usar o nosso serviço?",
-                [
-                    { id: "feedback_1", title: "Muito decepcionado" },
-                    { id: "feedback_2", title: "Pouco decepcionado" },
-                    { id: "feedback_3", title: "Não faria diferença" }
-                ],
-                {
-                    headerType: "text",
-                    headerContent: "Sua opinião é importante",
-                    footerText: "Ajude-nos a melhorar"
-                }
+                state,
+                transactionResponse.pixKey
             );
-
-            sentMessages.push(feedbackMessage);
         } else {
-            const optionsMessage = this.whatsappApi.createInteractiveButtonMessage(
+            // For any other response that's not regenerate PIX, present the options again
+            const regeneratePIXBtn = this.whatsappApi.createInteractiveButtonMessage(
                 from,
-                "Deseja gerar um novo código PIX?",
+                'Você deseja gerar um novo código PIX para realizar o pagamento?',
                 [
-                    { id: "pix_expired_yes", title: "Sim" },
-                    { id: "pix_expired_no", title: "Não" }
+                    { id: 'regenerate_pix', title: 'Gerar novo PIX' }
                 ],
                 {
-                    headerType: "text",
-                    headerContent: "PIX Expirado",
-                    footerText: "Escolha uma opção"
+                    headerType: 'text',
+                    headerContent: 'PIX Expirado',
+                    footerText: 'O código PIX anterior não é mais válido.'
                 }
             );
 
-            sentMessages.push(optionsMessage);
+            sentMessages.push(regeneratePIXBtn);
         }
 
         return sentMessages;
@@ -1928,410 +1884,410 @@ export class MessageService {
 
 
 
-    private async handlePaymentMethodSelection(
-        from: string,
-        userMessage: string,
-        state: ConversationDto,
-    ): Promise<ResponseStructureExtended[]> {
-        let sentMessages: ResponseStructureExtended[] = [];
-        const conversationId = state._id.toString();
-        const userChoice = userMessage.trim().toLowerCase();
+    // private async handlePaymentMethodSelection(
+    //     from: string,
+    //     userMessage: string,
+    //     state: ConversationDto,
+    // ): Promise<ResponseStructureExtended[]> {
+    //     let sentMessages: ResponseStructureExtended[] = [];
+    //     const conversationId = state._id.toString();
+    //     const userChoice = userMessage.trim().toLowerCase();
 
-        // Handle button responses
-        const isPIXChoice = userChoice === '1' ||
-            userChoice.includes('pix') ||
-            userMessage.startsWith('button_payment_pix:');
+    //     // Handle button responses
+    //     const isPIXChoice = userChoice === '1' ||
+    //         userChoice.includes('pix') ||
+    //         userMessage.startsWith('button_payment_pix:');
 
-        const isCreditCardChoice = userChoice === '2' ||
-            userChoice.includes('cartão') ||
-            userChoice.includes('cartao') ||
-            userChoice.includes('crédito') ||
-            userChoice.includes('credito') ||
-            userMessage.startsWith('button_payment_credit:');
+    //     const isCreditCardChoice = userChoice === '2' ||
+    //         userChoice.includes('cartão') ||
+    //         userChoice.includes('cartao') ||
+    //         userChoice.includes('crédito') ||
+    //         userChoice.includes('credito') ||
+    //         userMessage.startsWith('button_payment_credit:');
 
-        if (isPIXChoice) {
-            // PIX flow
-            const updatedContext: ConversationContextDTO = {
-                ...state.conversationContext,
-                currentStep: ConversationStep.CollectName,
-                paymentMethod: PaymentMethod.PIX,
-            };
+    //     if (isPIXChoice) {
+    //         // PIX flow
+    //         const updatedContext: ConversationContextDTO = {
+    //             ...state.conversationContext,
+    //             currentStep: ConversationStep.CollectName,
+    //             paymentMethod: PaymentMethod.PIX,
+    //         };
 
-            await this.conversationService.updateConversation(conversationId, {
-                userId: state.userId,
-                conversationContext: updatedContext,
-            });
+    //         await this.conversationService.updateConversation(conversationId, {
+    //             userId: state.userId,
+    //             conversationContext: updatedContext,
+    //         });
 
-            sentMessages.push(
-                ...this.mapTextMessages(
-                    ['😊 Para continuarmos com o pagamento via PIX\n\n*Qual é o seu nome completo?*'],
-                    from,
-                ),
-            );
-        } else if (isCreditCardChoice) {
-            // Retrieve saved cards
-            const cardsResponse = await this.cardService.getCardsByUserId(state.userId);
-            const savedCards = cardsResponse.data;
+    //         sentMessages.push(
+    //             ...this.mapTextMessages(
+    //                 ['😊 Para continuarmos com o pagamento via PIX\n\n*Qual é o seu nome completo?*'],
+    //                 from,
+    //             ),
+    //         );
+    //     } else if (isCreditCardChoice) {
+    //         // Retrieve saved cards
+    //         const cardsResponse = await this.cardService.getCardsByUserId(state.userId);
+    //         const savedCards = cardsResponse.data;
 
-            if (savedCards && savedCards.length > 0) {
-                // Update conversation context
-                const updatedContext: ConversationContextDTO = {
-                    ...state.conversationContext,
-                    currentStep: ConversationStep.SelectSavedCard,
-                    paymentMethod: PaymentMethod.CREDIT_CARD,
-                    savedCards: savedCards as CardDto[],
-                };
+    //         if (savedCards && savedCards.length > 0) {
+    //             // Update conversation context
+    //             const updatedContext: ConversationContextDTO = {
+    //                 ...state.conversationContext,
+    //                 currentStep: ConversationStep.SelectSavedCard,
+    //                 paymentMethod: PaymentMethod.CREDIT_CARD,
+    //                 savedCards: savedCards as CardDto[],
+    //             };
 
-                await this.conversationService.updateConversation(conversationId, {
-                    userId: state.userId,
-                    conversationContext: updatedContext,
-                });
+    //             await this.conversationService.updateConversation(conversationId, {
+    //                 userId: state.userId,
+    //                 conversationContext: updatedContext,
+    //             });
 
-                // Build unique cards (with formatted display text)
-                const uniqueCards = [];
-                const processedCardKeys = new Set();
+    //             // Build unique cards (with formatted display text)
+    //             const uniqueCards = [];
+    //             const processedCardKeys = new Set();
 
-                for (let i = 0; i < savedCards.length; i++) {
-                    const card = savedCards[i];
-                    const cardKey = `${card.last4}_${card.expiry_month}_${card.expiry_year}`;
+    //             for (let i = 0; i < savedCards.length; i++) {
+    //                 const card = savedCards[i];
+    //                 const cardKey = `${card.last4}_${card.expiry_month}_${card.expiry_year}`;
 
-                    if (!processedCardKeys.has(cardKey)) {
-                        processedCardKeys.add(cardKey);
+    //                 if (!processedCardKeys.has(cardKey)) {
+    //                     processedCardKeys.add(cardKey);
 
-                        // Check if we already have a card with the same last4 (regardless of expiration)
-                        const sameLastFourIndex = uniqueCards.findIndex(c => c.last4 === card.last4);
+    //                     // Check if we already have a card with the same last4 (regardless of expiration)
+    //                     const sameLastFourIndex = uniqueCards.findIndex(c => c.last4 === card.last4);
 
-                        if (sameLastFourIndex >= 0) {
-                            // Update the display format without the expiration info
-                            uniqueCards[sameLastFourIndex].displayText =
-                                `${sameLastFourIndex + 1}- Final ${uniqueCards[sameLastFourIndex].last4}`;
+    //                     if (sameLastFourIndex >= 0) {
+    //                         // Update the display format without the expiration info
+    //                         uniqueCards[sameLastFourIndex].displayText =
+    //                             `${sameLastFourIndex + 1}- Final ${uniqueCards[sameLastFourIndex].last4}`;
 
-                            // Add this card with the same simple format
-                            uniqueCards.push({
-                                ...card,
-                                displayText: `${i + 1}- Final ${card.last4}`
-                            });
-                        } else {
-                            // Add card with simple format (without expiration)
-                            uniqueCards.push({
-                                ...card,
-                                displayText: `${i + 1}- Final ${card.last4}`
-                            });
-                        }
-                    }
-                }
+    //                         // Add this card with the same simple format
+    //                         uniqueCards.push({
+    //                             ...card,
+    //                             displayText: `${i + 1}- Final ${card.last4}`
+    //                         });
+    //                     } else {
+    //                         // Add card with simple format (without expiration)
+    //                         uniqueCards.push({
+    //                             ...card,
+    //                             displayText: `${i + 1}- Final ${card.last4}`
+    //                         });
+    //                     }
+    //                 }
+    //             }
 
-                // Build interactive buttons (up to 2) based on the unique cards
-                const buttons: InteractiveButton[] = [];
-                const maxCardButtons = Math.min(uniqueCards.length, 2);
-                for (let i = 0; i < maxCardButtons; i++) {
-                    const card = uniqueCards[i];
-                    buttons.push({
-                        id: `card_${i + 1}`,
-                        title: card.displayText
-                    });
-                }
-                // Always add the "Novo Cartão" button
-                buttons.push({
-                    id: "new_card",
-                    title: "💳 Novo Cartão"
-                });
+    //             // Build interactive buttons (up to 2) based on the unique cards
+    //             const buttons: InteractiveButton[] = [];
+    //             const maxCardButtons = Math.min(uniqueCards.length, 2);
+    //             for (let i = 0; i < maxCardButtons; i++) {
+    //                 const card = uniqueCards[i];
+    //                 buttons.push({
+    //                     id: `card_${i + 1}`,
+    //                     title: card.displayText
+    //                 });
+    //             }
+    //             // Always add the "Novo Cartão" button
+    //             buttons.push({
+    //                 id: "new_card",
+    //                 title: "💳 Novo Cartão"
+    //             });
 
-                // Create the interactive message
-                const cardSelectionMessage = this.whatsappApi.createInteractiveButtonMessage(
-                    from,
-                    `✨ Com qual cartão deseja pagar o valor de *${formatToBRL(state.conversationContext.userAmount)}*?`,
-                    buttons,
-                    {
-                        headerType: "text",
-                        headerContent: "Selecione um Cartão",
-                        footerText: "Para excluir um cartão salvo, digite: *deletar <número>*"
-                    }
-                );
+    //             // Create the interactive message
+    //             const cardSelectionMessage = this.whatsappApi.createInteractiveButtonMessage(
+    //                 from,
+    //                 `✨ Com qual cartão deseja pagar o valor de *${formatToBRL(state.conversationContext.userAmount)}*?`,
+    //                 buttons,
+    //                 {
+    //                     headerType: "text",
+    //                     headerContent: "Selecione um Cartão",
+    //                     footerText: "Para excluir um cartão salvo, digite: *deletar <número>*"
+    //                 }
+    //             );
 
-                // If there are more than 2 cards, send only the text message listing them
-                if (savedCards.length > 2) {
-                    const textMessage = `Você tem ${savedCards.length} cartões salvos:\n\n` +
-                        savedCards.map((card, index) =>
-                            `${index + 1}- Final *${card.last4}*`
-                        ).join('\n') +
-                        `\n\n${savedCards.length + 1}- *💳 Novo Cartão*` +
-                        `\n\nPara excluir um cartão salvo, digite: *deletar <número>*`;
-                    sentMessages.push(...this.mapTextMessages([textMessage], from));
-                } else {
-                    // If 2 or fewer cards, use interactive buttons only.
-                    sentMessages.push(cardSelectionMessage);
-                }
-            } else {
-                // No saved cards – proceed to new card flow
-                const updatedContext: ConversationContextDTO = {
-                    ...state.conversationContext,
-                    currentStep: ConversationStep.WaitingForPayment,
-                    paymentMethod: PaymentMethod.CREDIT_CARD,
-                };
+    //             // If there are more than 2 cards, send only the text message listing them
+    //             if (savedCards.length > 2) {
+    //                 const textMessage = `Você tem ${savedCards.length} cartões salvos:\n\n` +
+    //                     savedCards.map((card, index) =>
+    //                         `${index + 1}- Final *${card.last4}*`
+    //                     ).join('\n') +
+    //                     `\n\n${savedCards.length + 1}- *💳 Novo Cartão*` +
+    //                     `\n\nPara excluir um cartão salvo, digite: *deletar <número>*`;
+    //                 sentMessages.push(...this.mapTextMessages([textMessage], from));
+    //             } else {
+    //                 // If 2 or fewer cards, use interactive buttons only.
+    //                 sentMessages.push(cardSelectionMessage);
+    //             }
+    //         } else {
+    //             // No saved cards – proceed to new card flow
+    //             const updatedContext: ConversationContextDTO = {
+    //                 ...state.conversationContext,
+    //                 currentStep: ConversationStep.WaitingForPayment,
+    //                 paymentMethod: PaymentMethod.CREDIT_CARD,
+    //             };
 
-                await this.conversationService.updateConversation(conversationId, {
-                    userId: state.userId,
-                    conversationContext: updatedContext,
-                });
+    //             await this.conversationService.updateConversation(conversationId, {
+    //                 userId: state.userId,
+    //                 conversationContext: updatedContext,
+    //             });
 
-                const transactionResponse = await this.createTransaction(
-                    state,
-                    PaymentMethod.CREDIT_CARD,
-                    state.conversationContext.userName,
-                );
+    //             const transactionResponse = await this.createTransaction(
+    //                 state,
+    //                 PaymentMethod.CREDIT_CARD,
+    //                 state.conversationContext.userName,
+    //             );
 
-                this.logger.log(
-                    `[handlePaymentMethodSelection] Transaction created: ${transactionResponse.transactionResponse._id}`,
-                );
+    //             this.logger.log(
+    //                 `[handlePaymentMethodSelection] Transaction created: ${transactionResponse.transactionResponse._id}`,
+    //             );
 
-                sentMessages = await this.handleCreditCardPayment(
-                    from,
-                    state,
-                    transactionResponse.transactionResponse,
-                );
-            }
-        } else {
-            // Invalid option – show payment method buttons
-            const invalidOptionMessage = this.whatsappApi.createInteractiveButtonMessage(
-                from,
-                "Escolha uma das formas abaixo:",
-                [
-                    { id: "payment_pix", title: "PIX" },
-                    { id: "payment_credit", title: "Cartão de Crédito" }
-                ],
-                {
-                    headerType: "text",
-                    headerContent: "Método de Pagamento",
-                    footerText: "Selecione uma das opções abaixo"
-                }
-            );
+    //             sentMessages = await this.handleCreditCardPayment(
+    //                 from,
+    //                 state,
+    //                 transactionResponse.transactionResponse,
+    //             );
+    //         }
+    //     } else {
+    //         // Invalid option – show payment method buttons
+    //         const invalidOptionMessage = this.whatsappApi.createInteractiveButtonMessage(
+    //             from,
+    //             "Escolha uma das formas abaixo:",
+    //             [
+    //                 { id: "payment_pix", title: "PIX" },
+    //                 // { id: "payment_credit", title: "Cartão de Crédito" }
+    //             ],
+    //             {
+    //                 headerType: "text",
+    //                 headerContent: "Método de Pagamento",
+    //                 footerText: "Selecione uma das opções abaixo"
+    //             }
+    //         );
 
-            sentMessages.push(invalidOptionMessage);
-        }
+    //         sentMessages.push(invalidOptionMessage);
+    //     }
 
-        return sentMessages;
-    }
+    //     return sentMessages;
+    // }
 
-    private async handleSelectSavedCard(
-        from: string,
-        userMessage: string,
-        state: ConversationDto,
-    ): Promise<ResponseStructureExtended[]> {
-        let sentMessages: ResponseStructureExtended[] = [];
-        const conversationId = state._id.toString();
-        const savedCards: CardDto[] = state.conversationContext.savedCards || [];
-        const totalOptions = savedCards.length + 1; // inclui a opção "Novo Cartão"
+    // private async handleSelectSavedCard(
+    //     from: string,
+    //     userMessage: string,
+    //     state: ConversationDto,
+    // ): Promise<ResponseStructureExtended[]> {
+    //     let sentMessages: ResponseStructureExtended[] = [];
+    //     const conversationId = state._id.toString();
+    //     const savedCards: CardDto[] = state.conversationContext.savedCards || [];
+    //     const totalOptions = savedCards.length + 1; // inclui a opção "Novo Cartão"
 
-        // Função auxiliar para determinar o texto de exibição de cada cartão (sem exibir data de validade)
-        const getCardDisplayText = (card: Omit<CardDto, "token">, allCards: Omit<CardDto, "token">[]): string => {
-            return `${allCards.indexOf(card) + 1}- Final ${card.last4}`;
-        };
+    //     // Função auxiliar para determinar o texto de exibição de cada cartão (sem exibir data de validade)
+    //     const getCardDisplayText = (card: Omit<CardDto, "token">, allCards: Omit<CardDto, "token">[]): string => {
+    //         return `${allCards.indexOf(card) + 1}- Final ${card.last4}`;
+    //     };
 
-        // Verifica se o usuário digitou "deletar", "remover", etc.
-        const normalizedInput = userMessage.trim().toLowerCase();
-        const deleteMatch = normalizedInput.match(/^(deletar|remover)\s+(\d+)/i);
+    //     // Verifica se o usuário digitou "deletar", "remover", etc.
+    //     const normalizedInput = userMessage.trim().toLowerCase();
+    //     const deleteMatch = normalizedInput.match(/^(deletar|remover)\s+(\d+)/i);
 
-        if (deleteMatch) {
-            const indexToDelete = parseInt(deleteMatch[2], 10);
+    //     if (deleteMatch) {
+    //         const indexToDelete = parseInt(deleteMatch[2], 10);
 
-            if (isNaN(indexToDelete) || indexToDelete < 1 || indexToDelete > savedCards.length) {
-                sentMessages.push(
-                    ...this.mapTextMessages(
-                        ['Número inválido. Digite: *deletar <número>*'],
-                        from,
-                    ),
-                );
-                return sentMessages;
-            }
+    //         if (isNaN(indexToDelete) || indexToDelete < 1 || indexToDelete > savedCards.length) {
+    //             sentMessages.push(
+    //                 ...this.mapTextMessages(
+    //                     ['Número inválido. Digite: *deletar <número>*'],
+    //                     from,
+    //                 ),
+    //             );
+    //             return sentMessages;
+    //         }
 
-            const cardToDelete = savedCards[indexToDelete - 1];
-            if (!cardToDelete) {
-                sentMessages.push(
-                    ...this.mapTextMessages(
-                        ['Cartão não encontrado. Digite: *deletar <número>*'],
-                        from,
-                    ),
-                );
-                return sentMessages;
-            }
+    //         const cardToDelete = savedCards[indexToDelete - 1];
+    //         if (!cardToDelete) {
+    //             sentMessages.push(
+    //                 ...this.mapTextMessages(
+    //                     ['Cartão não encontrado. Digite: *deletar <número>*'],
+    //                     from,
+    //                 ),
+    //             );
+    //             return sentMessages;
+    //         }
 
-            // Deleta o cartão
-            await this.cardService.deleteCard(cardToDelete._id, state.userId);
+    //         // Deleta o cartão
+    //         await this.cardService.deleteCard(cardToDelete._id, state.userId);
 
-            // Atualiza a lista de cartões
-            const updatedCardsResponse = await this.cardService.getCardsByUserId(state.userId);
-            const updatedCards = updatedCardsResponse.data || [];
+    //         // Atualiza a lista de cartões
+    //         const updatedCardsResponse = await this.cardService.getCardsByUserId(state.userId);
+    //         const updatedCards = updatedCardsResponse.data || [];
 
-            const updatedContext: ConversationContextDTO = {
-                ...state.conversationContext,
-                savedCards: updatedCards as CardDto[],
-            };
-            await this.conversationService.updateConversation(conversationId, {
-                userId: state.userId,
-                conversationContext: updatedContext,
-            });
+    //         const updatedContext: ConversationContextDTO = {
+    //             ...state.conversationContext,
+    //             savedCards: updatedCards as CardDto[],
+    //         };
+    //         await this.conversationService.updateConversation(conversationId, {
+    //             userId: state.userId,
+    //             conversationContext: updatedContext,
+    //         });
 
-            if (updatedCards.length > 0 && updatedCards.length <= 2) {
-                const buttons: InteractiveButton[] = updatedCards.map((card, index) => ({
-                    id: `${index + 1}`,
-                    title: getCardDisplayText(card, updatedCards),
-                }));
+    //         if (updatedCards.length > 0 && updatedCards.length <= 2) {
+    //             const buttons: InteractiveButton[] = updatedCards.map((card, index) => ({
+    //                 id: `${index + 1}`,
+    //                 title: getCardDisplayText(card, updatedCards),
+    //             }));
 
-                buttons.push({ id: `${updatedCards.length + 1}`, title: '💳 Novo Cartão' });
+    //             buttons.push({ id: `${updatedCards.length + 1}`, title: '💳 Novo Cartão' });
 
-                const interactiveMessage = this.whatsappApi.createInteractiveButtonMessage(
-                    from,
-                    '✅ Cartão removido! Escolha outro ou cadastre um novo:',
-                    buttons,
-                    {
-                        headerType: 'text',
-                        headerContent: 'Selecione um Cartão',
-                        footerText: 'Para excluir um cartão salvo, digite: *deletar <número>*',
-                    }
-                );
+    //             const interactiveMessage = this.whatsappApi.createInteractiveButtonMessage(
+    //                 from,
+    //                 '✅ Cartão removido! Escolha outro ou cadastre um novo:',
+    //                 buttons,
+    //                 {
+    //                     headerType: 'text',
+    //                     headerContent: 'Selecione um Cartão',
+    //                     footerText: 'Para excluir um cartão salvo, digite: *deletar <número>*',
+    //                 }
+    //             );
 
-                sentMessages.push(interactiveMessage);
-            } else if (updatedCards.length > 0) {
-                let optionsMessage = '✅ Cartão removido!\n\nEstes são seus cartões atuais:\n\n';
-                updatedCards.forEach((card, index) => {
-                    optionsMessage += `${index + 1}- ${getCardDisplayText(card, updatedCards)}\n`;
-                });
-                optionsMessage += `${updatedCards.length + 1}- *💳 Novo Cartão*\n\n`;
-                optionsMessage += `Para excluir um cartão salvo, digite: *deletar <número>*`;
+    //             sentMessages.push(interactiveMessage);
+    //         } else if (updatedCards.length > 0) {
+    //             let optionsMessage = '✅ Cartão removido!\n\nEstes são seus cartões atuais:\n\n';
+    //             updatedCards.forEach((card, index) => {
+    //                 optionsMessage += `${index + 1}- ${getCardDisplayText(card, updatedCards)}\n`;
+    //             });
+    //             optionsMessage += `${updatedCards.length + 1}- *💳 Novo Cartão*\n\n`;
+    //             optionsMessage += `Para excluir um cartão salvo, digite: *deletar <número>*`;
 
-                sentMessages.push(...this.mapTextMessages([optionsMessage], from));
-            } else {
-                sentMessages.push(...this.mapTextMessages([
-                    '✅ Cartão removido!\n\nVocê não possui mais cartões salvos.\nDigite *1* para adicionar um novo cartão.'
-                ], from));
-            }
+    //             sentMessages.push(...this.mapTextMessages([optionsMessage], from));
+    //         } else {
+    //             sentMessages.push(...this.mapTextMessages([
+    //                 '✅ Cartão removido!\n\nVocê não possui mais cartões salvos.\nDigite *1* para adicionar um novo cartão.'
+    //             ], from));
+    //         }
 
-            return sentMessages;
-        }
+    //         return sentMessages;
+    //     }
 
-        let selection: number = NaN;
-        if (userMessage.startsWith("button_card_")) {
-            selection = parseInt(userMessage.replace("button_card_", "").trim(), 10);
-        }
+    //     let selection: number = NaN;
+    //     if (userMessage.startsWith("button_card_")) {
+    //         selection = parseInt(userMessage.replace("button_card_", "").trim(), 10);
+    //     }
 
-        else if (normalizedInput.includes("novo cartao") ||
-            normalizedInput.includes("novo cartão") ||
-            normalizedInput === "💳 novo cartão") {
-            selection = totalOptions;
-        }
-        else {
-            const selectionMatch = userMessage.trim().match(/^(\d+)/);
-            selection = selectionMatch ? parseInt(selectionMatch[1], 10) : NaN;
-        }
+    //     else if (normalizedInput.includes("novo cartao") ||
+    //         normalizedInput.includes("novo cartão") ||
+    //         normalizedInput === "💳 novo cartão") {
+    //         selection = totalOptions;
+    //     }
+    //     else {
+    //         const selectionMatch = userMessage.trim().match(/^(\d+)/);
+    //         selection = selectionMatch ? parseInt(selectionMatch[1], 10) : NaN;
+    //     }
 
-        if (isNaN(selection) || selection < 1 || selection > totalOptions) {
-            sentMessages.push(
-                ...this.mapTextMessages(
-                    ['Escolha uma opção válida ou digite *deletar <número>* para remover um cartão.'],
-                    from,
-                ),
-            );
-            return sentMessages;
-        }
+    //     if (isNaN(selection) || selection < 1 || selection > totalOptions) {
+    //         sentMessages.push(
+    //             ...this.mapTextMessages(
+    //                 ['Escolha uma opção válida ou digite *deletar <número>* para remover um cartão.'],
+    //                 from,
+    //             ),
+    //         );
+    //         return sentMessages;
+    //     }
 
-        if (selection === totalOptions) {
-            const updatedContext: ConversationContextDTO = {
-                ...state.conversationContext,
-                currentStep: ConversationStep.WaitingForPayment,
-            };
-            await this.conversationService.updateConversation(conversationId, {
-                userId: state.userId,
-                conversationContext: updatedContext,
-            });
+    //     if (selection === totalOptions) {
+    //         const updatedContext: ConversationContextDTO = {
+    //             ...state.conversationContext,
+    //             currentStep: ConversationStep.WaitingForPayment,
+    //         };
+    //         await this.conversationService.updateConversation(conversationId, {
+    //             userId: state.userId,
+    //             conversationContext: updatedContext,
+    //         });
 
-            const transactionResponse = await this.createTransaction(
-                state,
-                PaymentMethod.CREDIT_CARD,
-                state.conversationContext.userName,
-            );
+    //         const transactionResponse = await this.createTransaction(
+    //             state,
+    //             PaymentMethod.CREDIT_CARD,
+    //             state.conversationContext.userName,
+    //         );
 
-            sentMessages = await this.handleCreditCardPayment(
-                from,
-                state,
-                transactionResponse.transactionResponse,
-            );
-            return sentMessages;
-        }
+    //         sentMessages = await this.handleCreditCardPayment(
+    //             from,
+    //             state,
+    //             transactionResponse.transactionResponse,
+    //         );
+    //         return sentMessages;
+    //     }
 
-        const selectedCard = savedCards[selection - 1];
+    //     const selectedCard = savedCards[selection - 1];
 
-        const updatedContext: ConversationContextDTO = {
-            ...state.conversationContext,
-            currentStep: ConversationStep.WaitingForPayment,
-            selectedCardId: selectedCard._id,
-        };
-        await this.conversationService.updateConversation(conversationId, {
-            userId: state.userId,
-            conversationContext: updatedContext,
-        });
+    //     const updatedContext: ConversationContextDTO = {
+    //         ...state.conversationContext,
+    //         currentStep: ConversationStep.WaitingForPayment,
+    //         selectedCardId: selectedCard._id,
+    //     };
+    //     await this.conversationService.updateConversation(conversationId, {
+    //         userId: state.userId,
+    //         conversationContext: updatedContext,
+    //     });
 
-        const transactionResponse = await this.createTransaction(
-            state,
-            PaymentMethod.CREDIT_CARD,
-            state.conversationContext.userName,
-        );
+    //     const transactionResponse = await this.createTransaction(
+    //         state,
+    //         PaymentMethod.CREDIT_CARD,
+    //         state.conversationContext.userName,
+    //     );
 
-        const userPaymentInfo: UserPaymentCreditInfoDto = {
-            transactionId: transactionResponse.transactionResponse._id.toString(),
-            cardId: selectedCard._id,
-        };
+    //     const userPaymentInfo: UserPaymentCreditInfoDto = {
+    //         transactionId: transactionResponse.transactionResponse._id.toString(),
+    //         cardId: selectedCard._id,
+    //     };
 
-        try {
-            await this.ipagService.createCreditCardPayment(userPaymentInfo);
-        } catch (error) {
-            console.log("iPAG CREDIT CARD ERROR", error);
-            const revertContext: ConversationContextDTO = {
-                ...state.conversationContext,
-                currentStep: ConversationStep.SelectSavedCard,
-            };
+    //     try {
+    //         await this.ipagService.createCreditCardPayment(userPaymentInfo);
+    //     } catch (error) {
+    //         console.log("iPAG CREDIT CARD ERROR", error);
+    //         const revertContext: ConversationContextDTO = {
+    //             ...state.conversationContext,
+    //             currentStep: ConversationStep.SelectSavedCard,
+    //         };
 
-            await this.conversationService.updateConversation(conversationId, {
-                userId: state.userId,
-                conversationContext: revertContext,
-            });
+    //         await this.conversationService.updateConversation(conversationId, {
+    //             userId: state.userId,
+    //             conversationContext: revertContext,
+    //         });
 
-            if (savedCards.length <= 2) {
-                const buttons: InteractiveButton[] = savedCards.map((card, index) => ({
-                    id: `${index + 1}`,
-                    title: getCardDisplayText(card, savedCards),
-                }));
+    //         if (savedCards.length <= 2) {
+    //             const buttons: InteractiveButton[] = savedCards.map((card, index) => ({
+    //                 id: `${index + 1}`,
+    //                 title: getCardDisplayText(card, savedCards),
+    //             }));
 
-                buttons.push({ id: `${savedCards.length + 1}`, title: '💳 Novo Cartão' });
+    //             buttons.push({ id: `${savedCards.length + 1}`, title: '💳 Novo Cartão' });
 
-                const interactiveMessage = this.whatsappApi.createInteractiveButtonMessage(
-                    from,
-                    '*Erro no pagamento!* Escolha outro cartão ou cadastre um novo:',
-                    buttons,
-                    {
-                        headerType: 'text',
-                        headerContent: 'Erro no Pagamento',
-                        footerText: 'Para excluir um cartão salvo, digite: *deletar <número>*',
-                    }
-                );
+    //             const interactiveMessage = this.whatsappApi.createInteractiveButtonMessage(
+    //                 from,
+    //                 '*Erro no pagamento!* Escolha outro cartão ou cadastre um novo:',
+    //                 buttons,
+    //                 {
+    //                     headerType: 'text',
+    //                     headerContent: 'Erro no Pagamento',
+    //                     footerText: 'Para excluir um cartão salvo, digite: *deletar <número>*',
+    //                 }
+    //             );
 
-                sentMessages.push(interactiveMessage);
-            } else {
-                let optionsMessage = `*Erro no pagamento!* Escolha outro cartão:\n\n`;
-                savedCards.forEach((card, index) => {
-                    optionsMessage += `${index + 1}- ${getCardDisplayText(card, savedCards)}\n`;
-                });
-                optionsMessage += `${savedCards.length + 1}- *💳 Novo Cartão*\n\n`;
-                optionsMessage += `Para excluir um cartão salvo, digite: *deletar <número>*`;
+    //             sentMessages.push(interactiveMessage);
+    //         } else {
+    //             let optionsMessage = `*Erro no pagamento!* Escolha outro cartão:\n\n`;
+    //             savedCards.forEach((card, index) => {
+    //                 optionsMessage += `${index + 1}- ${getCardDisplayText(card, savedCards)}\n`;
+    //             });
+    //             optionsMessage += `${savedCards.length + 1}- *💳 Novo Cartão*\n\n`;
+    //             optionsMessage += `Para excluir um cartão salvo, digite: *deletar <número>*`;
 
-                sentMessages.push(...this.mapTextMessages([optionsMessage], from));
-            }
+    //             sentMessages.push(...this.mapTextMessages([optionsMessage], from));
+    //         }
 
-            return sentMessages;
-        }
+    //         return sentMessages;
+    //     }
 
-        return sentMessages;
-    }
+    //     return sentMessages;
+    // }
 
 
     private async handleCollectName(
@@ -2381,7 +2337,7 @@ export class MessageService {
             // Atualiza o contexto para seleção do método de pagamento
             const revertContext: ConversationContextDTO = {
                 ...state.conversationContext,
-                currentStep: ConversationStep.PaymentMethodSelection,
+                currentStep: ConversationStep.WaitingForPayment,
             };
 
             await this.conversationService.updateConversation(conversationId, {
@@ -2391,10 +2347,10 @@ export class MessageService {
 
             const paymentMethodMessage = this.whatsappApi.createInteractiveButtonMessage(
                 from,
-                'Houve um erro na geração do PIX. Por favor, escolha novamente a forma de pagamento:',
+                'Houve um erro na geração do PIX. Deseja tentar novamente?',
                 [
-                    { id: "payment_pix", title: "Pagar com PIX" },
-                    { id: "payment_credit", title: "Cartão de Crédito" }
+                    { id: "payment_pix", title: "Tentar Novamente" },
+                    { id: "no_back_to_start", title: "Não, voltar para o início" }
                 ],
                 {
                     headerType: "text",
@@ -2409,164 +2365,164 @@ export class MessageService {
         return sentMessages;
     }
 
-    private async handleCreditCardPayment(
-        from: string,
-        state: ConversationDto,
-        transactionResponse: TransactionDTO
-    ): Promise<ResponseStructureExtended[]> {
-        let sentMessages: ResponseStructureExtended[] = [];
-        // Get payment link for fallback
-        const isDemo = process.env.ENVIRONMENT === 'demo';
-        const paymentLink = `${process.env.CREDIT_CARD_PAYMENT_LINK}?transactionId=${transactionResponse._id}${isDemo ? '&environment=sandbox' : ''}`;
-        this.logger.log(`[handleCreditCardPayment] paymentLink: ${paymentLink}`);
+    // private async handleCreditCardPayment(
+    //     from: string,
+    //     state: ConversationDto,
+    //     transactionResponse: TransactionDTO
+    // ): Promise<ResponseStructureExtended[]> {
+    //     let sentMessages: ResponseStructureExtended[] = [];
+    //     // Get payment link for fallback
+    //     const isDemo = process.env.ENVIRONMENT === 'demo';
+    //     const paymentLink = `${process.env.CREDIT_CARD_PAYMENT_LINK}?transactionId=${transactionResponse._id}${isDemo ? '&environment=sandbox' : ''}`;
+    //     this.logger.log(`[handleCreditCardPayment] paymentLink: ${paymentLink}`);
 
-        try {
-            const flowId = this.environment === 'demo' ? process.env.WHATSAPP_DEMO_CREDITCARD_FLOW_ID : this.environment === 'homologation' || this.environment === 'development' ? process.env.WHATSAPP_TEST_CREDITCARD_FLOW_ID : process.env.WHATSAPP_PROD_CREDITCARD_FLOW_ID;
-            const flowName = this.environment === 'demo' ? process.env.WHATSAPP_DEMO_CREDITCARD_FLOW_NAME : this.environment === 'homologation' || this.environment === 'development' ? process.env.WHATSAPP_TEST_CREDITCARD_FLOW_NAME : process.env.WHATSAPP_PROD_CREDITCARD_FLOW_NAME;
+    //     try {
+    //         const flowId = this.environment === 'demo' ? process.env.WHATSAPP_DEMO_CREDITCARD_FLOW_ID : this.environment === 'homologation' || this.environment === 'development' ? process.env.WHATSAPP_TEST_CREDITCARD_FLOW_ID : process.env.WHATSAPP_PROD_CREDITCARD_FLOW_ID;
+    //         const flowName = this.environment === 'demo' ? process.env.WHATSAPP_DEMO_CREDITCARD_FLOW_NAME : this.environment === 'homologation' || this.environment === 'development' ? process.env.WHATSAPP_TEST_CREDITCARD_FLOW_NAME : process.env.WHATSAPP_PROD_CREDITCARD_FLOW_NAME;
 
-            this.logger.log(`[handleCreditCardPayment] flowId: ${flowId}`);
-            this.logger.log(`[handleCreditCardPayment] flowName: ${flowName}`);
+    //         this.logger.log(`[handleCreditCardPayment] flowId: ${flowId}`);
+    //         this.logger.log(`[handleCreditCardPayment] flowName: ${flowName}`);
 
-            if (!flowId && !flowName) {
-                this.logger.warn('WhatsApp Credit Card Flow ID/Name not configured. Falling back to regular payment link message.');
-                // Fallback to regular text message if flow is not configured
-                sentMessages.push(...this.mapTextMessages(
-                    [
-                        `O valor final da conta é de *${formatToBRL(state.conversationContext.userAmount)}*.`,
-                        `*Clique no link abaixo* para realizar o pagamento com Cartão de Crédito:`,
-                        paymentLink,
-                        `*Não consegue clicar no link?*\n\n*Salve* nosso contato na agenda.\nOu copie e cole em seu navegador.`
-                    ],
-                    from
-                ));
-            } else {
-                // Prepare data for the flow - use a simpler approach without complex payload
-                try {
-                    // Create a basic flow message with minimal configuration
+    //         if (!flowId && !flowName) {
+    //             this.logger.warn('WhatsApp Credit Card Flow ID/Name not configured. Falling back to regular payment link message.');
+    //             // Fallback to regular text message if flow is not configured
+    //             sentMessages.push(...this.mapTextMessages(
+    //                 [
+    //                     `O valor final da conta é de *${formatToBRL(state.conversationContext.userAmount)}*.`,
+    //                     `*Clique no link abaixo* para realizar o pagamento com Cartão de Crédito:`,
+    //                     paymentLink,
+    //                     `*Não consegue clicar no link?*\n\n*Salve* nosso contato na agenda.\nOu copie e cole em seu navegador.`
+    //                 ],
+    //                 from
+    //             ));
+    //         } else {
+    //             // Prepare data for the flow - use a simpler approach without complex payload
+    //             try {
+    //                 // Create a basic flow message with minimal configuration
 
-                    console.log("HOLDER CPF", state.conversationContext.documentNumber);
+    //                 console.log("HOLDER CPF", state.conversationContext.documentNumber);
 
-                    const flowMessage = this.whatsappApi.createFlowMessage(
-                        from,
-                        `O valor final da conta é de ${formatToBRL(state.conversationContext.userAmount)}. Preencha os dados do seu cartão para finalizar o pagamento.`,
-                        {
-                            flowId: flowId,
-                            flowCta: 'Pagar com cartão',
-                            mode: 'published',
-                            flowToken: state._id.toString(),
-                            flowAction: 'navigate',
-                            flowActionPayload: {
-                                screen: "USER_INFO",
-                                data: {
-                                    holder_cpf: this.utilsService.formatCPF(state.conversationContext.documentNumber || ''),
-                                    payment_value: "💰 Valor: " + formatToBRL(state.conversationContext.userAmount),
-                                    table_id: "🪑 Comanda: " + state.tableId,
-                                    transaction_id: transactionResponse._id.toString()
-                                }
-                            }
-                        },
-                        {
-                            headerType: 'text',
-                            headerContent: 'Pagamento com Cartão',
-                            footerText: 'Astra - Pagamento Seguro'
-                        }
-                    );
+    //                 const flowMessage = this.whatsappApi.createFlowMessage(
+    //                     from,
+    //                     `O valor final da conta é de ${formatToBRL(state.conversationContext.userAmount)}. Preencha os dados do seu cartão para finalizar o pagamento.`,
+    //                     {
+    //                         flowId: flowId,
+    //                         flowCta: 'Pagar com cartão',
+    //                         mode: 'published',
+    //                         flowToken: state._id.toString(),
+    //                         flowAction: 'navigate',
+    //                         flowActionPayload: {
+    //                             screen: "USER_INFO",
+    //                             data: {
+    //                                 holder_cpf: this.utilsService.formatCPF(state.conversationContext.documentNumber || ''),
+    //                                 payment_value: "💰 Valor: " + formatToBRL(state.conversationContext.userAmount),
+    //                                 table_id: "🪑 Comanda: " + state.tableId,
+    //                                 transaction_id: transactionResponse._id.toString()
+    //                             }
+    //                         }
+    //                     },
+    //                     {
+    //                         headerType: 'text',
+    //                         headerContent: 'Pagamento com Cartão',
+    //                         footerText: 'Astra - Pagamento Seguro'
+    //                     }
+    //                 );
 
-                    console.log(`[handleCreditCardPayment] flowMessage: ${JSON.stringify(flowMessage)}`);
+    //                 console.log(`[handleCreditCardPayment] flowMessage: ${JSON.stringify(flowMessage)}`);
 
-                    // Add an informative message about the payment process
-                    sentMessages.push(
-                        ...this.mapTextMessages(
-                            [
-                                `Você será guiado para inserir os dados do seu cartão diretamente no WhatsApp de forma segura.`,
-                            ],
-                            from
-                        ),
-                        flowMessage
-                    );
+    //                 // Add an informative message about the payment process
+    //                 sentMessages.push(
+    //                     ...this.mapTextMessages(
+    //                         [
+    //                             `Você será guiado para inserir os dados do seu cartão diretamente no WhatsApp de forma segura.`,
+    //                         ],
+    //                         from
+    //                     ),
+    //                     flowMessage
+    //                 );
 
 
 
-                } catch (flowError) {
-                    this.logger.error(`[handleCreditCardPayment] Flow error: ${flowError.message}`, flowError.stack);
+    //             } catch (flowError) {
+    //                 this.logger.error(`[handleCreditCardPayment] Flow error: ${flowError.message}`, flowError.stack);
 
-                    // After flow error, try with the explicit navigate action as a fallback
-                    try {
-                        this.logger.log(`[handleCreditCardPayment] Trying with explicit flow action and payload`);
+    //                 // After flow error, try with the explicit navigate action as a fallback
+    //                 try {
+    //                     this.logger.log(`[handleCreditCardPayment] Trying with explicit flow action and payload`);
 
-                        const flowMessage = this.whatsappApi.createFlowMessage(
-                            from,
-                            `O valor final da conta é de ${formatToBRL(state.conversationContext.userAmount)}. Preencha os dados do seu cartão para finalizar o pagamento.`,
-                            {
-                                flowId: flowId,
-                                flowCta: 'Pagar com cartão',
-                                flowAction: 'navigate',
-                                flowActionPayload: {
-                                    screen: "CREDIT_CARD",
-                                    data: {
-                                        SUMMARY: {
-                                            holder_cpf: state.conversationContext.documentNumber || ''
-                                        }
-                                    }
-                                },
-                                mode: 'published' // Try published instead of draft
-                            },
-                            {
-                                headerType: 'text',
-                                headerContent: 'Pagamento com Cartão',
-                                footerText: 'Astra - Pagamento Seguro'
-                            }
-                        );
+    //                     const flowMessage = this.whatsappApi.createFlowMessage(
+    //                         from,
+    //                         `O valor final da conta é de ${formatToBRL(state.conversationContext.userAmount)}. Preencha os dados do seu cartão para finalizar o pagamento.`,
+    //                         {
+    //                             flowId: flowId,
+    //                             flowCta: 'Pagar com cartão',
+    //                             flowAction: 'navigate',
+    //                             flowActionPayload: {
+    //                                 screen: "CREDIT_CARD",
+    //                                 data: {
+    //                                     SUMMARY: {
+    //                                         holder_cpf: state.conversationContext.documentNumber || ''
+    //                                     }
+    //                                 }
+    //                             },
+    //                             mode: 'published' // Try published instead of draft
+    //                         },
+    //                         {
+    //                             headerType: 'text',
+    //                             headerContent: 'Pagamento com Cartão',
+    //                             footerText: 'Astra - Pagamento Seguro'
+    //                         }
+    //                     );
 
-                        await this.whatsappApi.sendWhatsAppMessage(flowMessage);
-                        this.logger.log(`[handleCreditCardPayment] Flow message with explicit action sent successfully`);
-                    } catch (explicitFlowError) {
-                        this.logger.error(`[handleCreditCardPayment] Explicit flow error: ${explicitFlowError.message}`, explicitFlowError.stack);
-                        throw flowError; // Re-throw the original error to be caught by the outer catch block
-                    }
+    //                     await this.whatsappApi.sendWhatsAppMessage(flowMessage);
+    //                     this.logger.log(`[handleCreditCardPayment] Flow message with explicit action sent successfully`);
+    //                 } catch (explicitFlowError) {
+    //                     this.logger.error(`[handleCreditCardPayment] Explicit flow error: ${explicitFlowError.message}`, explicitFlowError.stack);
+    //                     throw flowError; // Re-throw the original error to be caught by the outer catch block
+    //                 }
 
-                    // Add an informative message about the payment process
-                    sentMessages.push(
-                        ...this.mapTextMessages(
-                            [
-                                `Você será guiado para inserir os dados do seu cartão diretamente no WhatsApp de forma segura.`,
-                                `Se preferir acessar diretamente pelo navegador, use o link: ${paymentLink}`
-                            ],
-                            from
-                        )
-                    );
-                }
-            }
-        } catch (error) {
-            this.logger.error(`Error sending credit card flow message: ${error.message || error}`);
-            // Fallback to regular text message if flow fails
-            sentMessages.push(...this.mapTextMessages(
-                [
-                    `O valor final da conta é de *${formatToBRL(state.conversationContext.userAmount)}*.`,
-                    `*Clique no link abaixo* para realizar o pagamento com Cartão de Crédito:`,
-                    paymentLink,
-                    `*Não consegue clicar no link?*\n\n*Salve* nosso contato na agenda.\nOu copie e cole em seu navegador.`
-                ],
-                from
-            ));
-        }
+    //                 // Add an informative message about the payment process
+    //                 sentMessages.push(
+    //                     ...this.mapTextMessages(
+    //                         [
+    //                             `Você será guiado para inserir os dados do seu cartão diretamente no WhatsApp de forma segura.`,
+    //                             `Se preferir acessar diretamente pelo navegador, use o link: ${paymentLink}`
+    //                         ],
+    //                         from
+    //                     )
+    //                 );
+    //             }
+    //         }
+    //     } catch (error) {
+    //         this.logger.error(`Error sending credit card flow message: ${error.message || error}`);
+    //         // Fallback to regular text message if flow fails
+    //         sentMessages.push(...this.mapTextMessages(
+    //             [
+    //                 `O valor final da conta é de *${formatToBRL(state.conversationContext.userAmount)}*.`,
+    //                 `*Clique no link abaixo* para realizar o pagamento com Cartão de Crédito:`,
+    //                 paymentLink,
+    //                 `*Não consegue clicar no link?*\n\n*Salve* nosso contato na agenda.\nOu copie e cole em seu navegador.`
+    //             ],
+    //             from
+    //         ));
+    //     }
 
-        // Update conversation state
-        const conversationId = state._id.toString();
-        const updatedContext: ConversationContextDTO = {
-            ...state.conversationContext,
-            currentStep: ConversationStep.WaitingForPayment,
-        };
+    //     // Update conversation state
+    //     const conversationId = state._id.toString();
+    //     const updatedContext: ConversationContextDTO = {
+    //         ...state.conversationContext,
+    //         currentStep: ConversationStep.WaitingForPayment,
+    //     };
 
-        await this.conversationService.updateConversation(conversationId, {
-            userId: state.userId,
-            conversationContext: updatedContext,
-        });
+    //     await this.conversationService.updateConversation(conversationId, {
+    //         userId: state.userId,
+    //         conversationContext: updatedContext,
+    //     });
 
-        this.logger.log(`[handleCreditCardPayment] Updated context}`);
+    //     this.logger.log(`[handleCreditCardPayment] Updated context}`);
 
-        return sentMessages;
-    }
+    //     return sentMessages;
+    // }
 
     public async processPayment(paymentData: PaymentProcessorDTO): Promise<void> {
         const { transactionId, from, state } = paymentData;
@@ -3585,14 +3541,25 @@ export class MessageService {
                 };
 
             default:
-                return {
-                    type: 'text',
-                    content: `🔄 O processo está demorando um pouco mais do que o esperado.\n\n Por favor, mantenha-se à vontade, logo concluiremos! 😄`,
+                const errorMessage = {
+                    type: 'interactive',
+                    content: '',
+                    caption: '',
                     to: conversation.userId,
                     reply: false,
-                    isError: false,
-                    caption: '',
+                    isError: true,
+                    interactive: {
+                        bodyText: 'Estamos enfrentando dificuldades técnicas para processar seu pagamento PIX. Por favor, tente novamente mais tarde.',
+                        buttons: [
+                            { id: 'try_again_later', title: 'Tentar Novamente' }
+                        ],
+                        headerType: 'text',
+                        headerContent: 'Erro no Processamento',
+                        footerText: 'Nossa equipe já foi notificada.'
+                    }
                 };
+
+                return errorMessage as ResponseStructureExtended;
         }
     }
 
@@ -3726,6 +3693,104 @@ export class MessageService {
         };
 
         return stepMessages[step] || 'Estamos aguardando sua ação para continuar.';
+    }
+
+    private async handlePIXError(
+        from: string,
+        userMessage: string,
+        state: ConversationDto
+    ): Promise<ResponseStructureExtended[]> {
+        const sentMessages: ResponseStructureExtended[] = [];
+
+        const tryAgainBtn = this.whatsappApi.createInteractiveButtonMessage(
+            from,
+            'Houve um erro na geração do PIX. Deseja tentar novamente?',
+            [
+                { id: 'retry_pix_generation', title: 'Tentar Novamente' }
+            ],
+            {
+                headerType: 'text',
+                headerContent: 'Erro na Geração do PIX',
+                footerText: ''
+            }
+        );
+
+        await this.conversationService.updateConversation(state._id.toString(), {
+            userId: state.userId,
+            conversationContext: {
+                ...state.conversationContext,
+                currentStep: ConversationStep.WaitingForPayment,
+            },
+        });
+
+        sentMessages.push(tryAgainBtn);
+
+        return sentMessages;
+    }
+
+    private async handleWaitingForPayment(
+        from: string,
+        userMessage: string,
+        state: ConversationDto
+    ): Promise<ResponseStructureExtended[]> {
+        const sentMessages: ResponseStructureExtended[] = [];
+        const conversationId = state._id.toString();
+        const normalizedMessage = userMessage.trim().toLowerCase();
+
+        // Check for button interactions or text equivalents
+        const isRetry = normalizedMessage === 'sim' || normalizedMessage.includes('tentar novamente') || userMessage.startsWith('button_payment_pix:');
+        const isBackToStart = ['não', 'nao', 'n', 'nn', 'voltar para o início'].some(keyword => normalizedMessage.includes(keyword)) || userMessage.startsWith('button_no_back_to_start:');
+
+        if (isRetry) {
+            // Retry PIX generation
+            const updatedContext: ConversationContextDTO = {
+                ...state.conversationContext,
+                currentStep: ConversationStep.CollectName, // Go back to CollectName to retry
+            };
+
+            await this.conversationService.updateConversation(conversationId, {
+                userId: state.userId,
+                conversationContext: updatedContext,
+            });
+
+            sentMessages.push(
+                ...this.mapTextMessages(['Por favor, informe seu nome novamente para tentarmos gerar o PIX.'], from)
+            );
+        } else if (isBackToStart) {
+            // Reset conversation to start
+            const updatedContext: ConversationContextDTO = {
+                ...state.conversationContext,
+                currentStep: ConversationStep.PIXError
+            };
+
+            await this.conversationService.updateConversation(conversationId, {
+                userId: state.userId,
+                conversationContext: updatedContext,
+            });
+
+            sentMessages.push(
+                ...this.mapTextMessages(['Você foi redirecionado para o início. Como posso ajudar?'], from)
+            );
+        } else {
+            // Unrecognized input, resend the options
+            const paymentMethodMessage = this.whatsappApi.createInteractiveButtonMessage(
+                from,
+                'Houve um erro na geração do PIX. Deseja tentar novamente?',
+                [
+                    { id: "payment_pix", title: "Tentar Novamente" },
+                    { id: "no_back_to_start", title: "Não, voltar para o início" }
+                ],
+                {
+                    headerType: "text",
+                    headerContent: "Erro no Pagamento",
+                    footerText: ""
+                }
+            );
+
+            sentMessages.push(paymentMethodMessage);
+        }
+
+        return sentMessages;
     }
 
 }
