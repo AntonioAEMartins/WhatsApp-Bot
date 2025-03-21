@@ -49,4 +49,5 @@ export enum ConversationStep {
   SelectSavedCard = 'select_saved_card',
   UserAbandoned = 'user_abandoned',
   DelayedPayment = 'delayed_payment',
+  PIXError = 'pix_error',
 }
