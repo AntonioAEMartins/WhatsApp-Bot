@@ -3303,7 +3303,6 @@ export class MessageService {
         this.logger.log(`[notifyWaiterAuthenticationStatus] Notificação de status de autenticação: ${message}`);
 
         const messages = this.mapTextMessages([message], groupId);
-        this.whatsappApi.sendGroupMessage(groupId, messages);
         return messages;
     }
 

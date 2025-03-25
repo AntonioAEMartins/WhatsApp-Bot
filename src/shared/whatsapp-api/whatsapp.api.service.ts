@@ -984,6 +984,8 @@ export class WhatsAppApiService {
         to: groupId
       }));
 
+      console.log("groupMessages: ", groupMessages)
+
       // Send the request to the GoRelayBot
       const response = await lastValueFrom(
         this.httpService.post(url, groupMessages, {
