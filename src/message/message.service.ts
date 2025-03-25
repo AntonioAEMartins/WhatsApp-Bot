@@ -6,6 +6,7 @@ import {
     ConversationDto,
     CreateConversationDto,
     FeedbackDTO,
+    MessageDTO,
     ParticipantDTO,
     SplitInfoDTO,
 } from '../conversation/dto/conversation.dto';
@@ -486,6 +487,29 @@ export class MessageService {
                     state.conversationContext.currentStep = ConversationStep.Initial;
                     requestResponse = await this.handleOrderProcessing(from, userMessage, state, message);
                 }
+                else if (request.buttonInteraction && request.buttonInteraction.buttonText.includes("Tentar Novamente")) {
+                    console.log("Salve")
+
+                    // Use the state we already have instead of retrieving it again
+                    state.conversationContext.currentStep = ConversationStep.Initial;
+
+                    // Update the conversation context with the new step
+                    await this.conversationService.updateConversationContext(
+                        state._id.toString(),
+                        state.conversationContext
+                    );
+
+                    // Handle as order processing using existing state
+                    requestResponse = await this.handleOrderProcessing(
+                        from,
+                        userMessage,
+                        state,
+                        message
+                    );
+
+                    // Save the bot responses
+                    await this.saveBotMessages(from, requestResponse);
+                }
                 break;
             case ConversationStep.ConfirmOrder:
                 if (userMessage.includes('pagar a comanda')) {
@@ -573,7 +597,23 @@ export class MessageService {
                 break;
         }
 
-        return requestResponse;
+        // Generate a unique messageId for this user message
+        const messageId = `user-${request.timestamp}-${Math.random().toString(36).substring(2, 9)}`;
+
+        // Save the user message first
+        await this.saveUserMessage(
+            request.from,
+            request.content,
+            messageId
+        );
+
+        // Process the message as you normally would for other cases
+        const responses = requestResponse;
+
+        // Save the bot responses
+        await this.saveBotMessages(request.from, responses);
+
+        return responses;
     }
 
 
@@ -765,7 +805,7 @@ export class MessageService {
         const conversationId = state._id.toString();
 
         try {
-            // Obtém os dados do pedido
+            state.conversationContext.currentStep = ConversationStep.ProcessingOrder
             const retryResponse = await this.retryRequestWithNotification({
                 from,
                 requestFunction: () => this.tableService.orderMessage(tableId),
@@ -2643,6 +2683,20 @@ export class MessageService {
 
     private async sendMessagesDirectly(messages: ResponseStructureExtended[]): Promise<void> {
         await this.whatsappApi.sendWhatsAppMessages(messages);
+
+        // Group messages by recipient to save them properly
+        const messagesByRecipient = messages.reduce((acc, message) => {
+            if (!acc[message.to]) {
+                acc[message.to] = [];
+            }
+            acc[message.to].push(message);
+            return acc;
+        }, {});
+
+        // Save messages for each recipient
+        for (const [recipient, recipientMessages] of Object.entries(messagesByRecipient)) {
+            await this.saveBotMessages(recipient, recipientMessages as ResponseStructureExtended[]);
+        }
     }
 
 
@@ -3032,13 +3086,13 @@ export class MessageService {
 
         try {
             let conversation = state;
-            
+
             // If conversationId is provided, load the conversation
             if (conversationId) {
                 const { data } = await this.conversationService.getConversation(conversationId);
                 conversation = data;
             }
-            
+
             const { orderId, tableId } = conversation;
             const { data: orderData } = await this.orderService.getOrder(orderId);
             const { totalAmount, amountPaidSoFar = 0 } = orderData;
@@ -3465,6 +3519,7 @@ export class MessageService {
                 );
 
                 if (attempts === delayNotificationThreshold && sendDelayNotification) {
+                    console.log("Delay Notification, current step: ", state.conversationContext.currentStep)
                     const delayMessage = this.getDelayMessage(state);
                     this.whatsappApi.sendWhatsAppMessages([delayMessage]);
                 }
@@ -3569,7 +3624,7 @@ export class MessageService {
                     reply: false,
                     isError: true,
                     interactive: {
-                        bodyText: 'Estamos enfrentando dificuldades técnicas para processar seu pagamento PIX. Por favor, tente novamente mais tarde.',
+                        bodyText: 'Estamos enfrentando dificuldades técnicas para processar sua comanda',
                         buttons: [
                             { id: 'try_again_later', title: 'Tentar Novamente' }
                         ],
@@ -3811,5 +3866,63 @@ export class MessageService {
         }
 
         return sentMessages;
+    }
+
+    private async saveUserMessage(userId: string, content: string, messageId: string): Promise<void> {
+        try {
+            const activeConversation = await this.conversationService.getActiveConversation(userId);
+            if (activeConversation?.data) {
+                const newMessage: MessageDTO = {
+                    messageId,
+                    content,
+                    type: MessageType.User,
+                    timestamp: new Date(),
+                    senderId: userId
+                };
+
+                await this.conversationService.addMessage(
+                    activeConversation.data._id.toString(),
+                    newMessage
+                );
+            }
+        } catch (error) {
+            this.logger.error(`Error saving user message: ${error.message}`, error.stack);
+        }
+    }
+
+    private async saveBotMessages(userId: string, responses: ResponseStructureExtended[]): Promise<void> {
+        try {
+            const activeConversation = await this.conversationService.getActiveConversation(userId);
+            if (activeConversation?.data) {
+                const messagesToAdd: MessageDTO[] = [];
+
+                for (const response of responses) {
+                    // Only save text and interactive messages (not media)
+                    if (response.type === 'text' || response.type === 'interactive') {
+                        const messageContent = response.type === 'interactive'
+                            ? JSON.stringify(response.interactive)
+                            : response.content;
+
+                        const newMessage: MessageDTO = {
+                            messageId: `bot-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+                            content: messageContent,
+                            type: MessageType.Bot,
+                            timestamp: new Date()
+                        };
+
+                        messagesToAdd.push(newMessage);
+                    }
+                }
+
+                if (messagesToAdd.length > 0) {
+                    await this.conversationService.addMessages(
+                        activeConversation.data._id.toString(),
+                        messagesToAdd
+                    );
+                }
+            }
+        } catch (error) {
+            this.logger.error(`Error saving bot messages: ${error.message}`, error.stack);
+        }
     }
 }
