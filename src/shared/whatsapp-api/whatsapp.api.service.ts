@@ -975,7 +975,7 @@ export class WhatsAppApiService {
        */
   async sendGroupMessage(groupId: string, messages: ResponseStructureExtended[]): Promise<void> {
     try {
-      const port = '3105';
+      const port = process.env.ENVIRONMENT === 'demo' ? '3110' : '3105';
       const url = `http://localhost:${port}/send-messages`;
 
       // Ensure all messages are sent to the correct group ID
