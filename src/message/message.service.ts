@@ -3021,10 +3021,9 @@ export class MessageService {
 
 
     private async notifyWaiterTableSplit(state: ConversationDto): Promise<ResponseStructureExtended[]> {
-        const groupId = this.waiterGroupId;
-        const message = `👋 Astra Pay - Mesa ${state.tableId} irá compartilhar o pagamento`;
-
-        return this.mapTextMessages([message], groupId);
+        const messages = this.mapTextMessages([`👋 *Astra Pay* - Mesa ${state.tableId} iniciou divisão de conta entre *${state.conversationContext.splitInfo.numberOfPeople}* pessoas.`], this.waiterGroupId);
+        this.whatsappApi.sendGroupMessage(this.waiterGroupId, messages);
+        return messages;
     }
 
     public async notifyWaiterTablePaymentComplete(state?: ConversationDto, conversationId?: string): Promise<ResponseStructureExtended[]> {
@@ -3057,7 +3056,9 @@ export class MessageService {
                 ? `*👋 Astra Pay* - ${tipMessage}\n\nA mesa ${tableId} pagou com sucesso 🚀`
                 : `*👋 Astra Pay* - Mesa ${tableId} pagou com sucesso 🚀`;
 
-            return this.mapTextMessages([message], groupId);
+            const messages = this.mapTextMessages([message], groupId);
+            this.whatsappApi.sendGroupMessage(groupId, messages);
+            return messages;
         } catch (error) {
             this.logger.error(`[notifyWaiterTablePaymentComplete] Error: ${error}`);
             return [];
@@ -3180,7 +3181,9 @@ export class MessageService {
                     message += `\nExcedente: R$ ${Math.abs(userRemainingAmount).toFixed(2)}`;
                 }
 
-                return this.mapTextMessages([message], groupId);
+                const messages = this.mapTextMessages([message], groupId);
+                this.whatsappApi.sendGroupMessage(groupId, messages);
+                return messages;
             }
 
             // Handling multiple participants
@@ -3216,7 +3219,9 @@ export class MessageService {
 
             this.logger.log(`[notifyWaiterPaymentMade] Mensagem de pagamento para o grupo: ${message}`);
 
-            return this.mapTextMessages([message], groupId);
+            const messages = this.mapTextMessages([message], groupId);
+            this.whatsappApi.sendGroupMessage(groupId, messages);
+            return messages;
         } catch (error) {
             this.logger.error(`[notifyWaiterPaymentMade] Error: ${error}`);
             return [];
@@ -3243,7 +3248,9 @@ export class MessageService {
 
         this.logger.log(`[notifyWaiterAuthenticationStatus] Notificação de status de autenticação: ${message}`);
 
-        return this.mapTextMessages([message], groupId);
+        const messages = this.mapTextMessages([message], groupId);
+        this.whatsappApi.sendGroupMessage(groupId, messages);
+        return messages;
     }
 
     /**
@@ -3275,7 +3282,7 @@ export class MessageService {
             fileName = 'comprovante.bin';
         }
 
-        return [
+        const messages: ResponseStructureExtended[] = [
             {
                 type: 'image',
                 content: mediaData,
@@ -3285,6 +3292,9 @@ export class MessageService {
                 isError: false,
             }
         ];
+
+        this.whatsappApi.sendGroupMessage(groupId, messages);
+        return messages;
     }
 
 
@@ -3306,9 +3316,9 @@ export class MessageService {
 
         this.logger.log(`[notifyWaiterTableStartedPayment] Notificação de início de pagamentos para a mesa ${tableNumber}`);
 
-        const message = `👋 *Astra Pay* - A mesa ${tableNumber} iniciou o processo de pagamentos.`;
-        return this.mapTextMessages([message], groupId);
-
+        const messages = this.mapTextMessages([`👋 *Astra Pay* - Mesa ${tableNumber} iniciou pagamento.`], this.waiterGroupId);
+        this.whatsappApi.sendGroupMessage(this.waiterGroupId, messages);
+        return messages;
     }
 
     private notifyRefundRequest(tableNumber: number, refundAmount: number): ResponseStructureExtended[] {
@@ -3316,8 +3326,9 @@ export class MessageService {
 
         this.logger.log(`[notifyRefundRequestToWaiter] Notificação de estorno para a mesa ${tableNumber}`);
 
-        const message = `👋 *Astra Pay* - A mesa ${tableNumber} solicitou um estorno de *${formatToBRL(refundAmount)}*.`;
-        return this.mapTextMessages([message], groupId);
+        const messages = this.mapTextMessages([`👋 *Astra Pay* - Mesa ${tableNumber} solicitou um reembolso no valor de ${refundAmount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`], this.refundGroupId);
+        this.whatsappApi.sendGroupMessage(this.refundGroupId, messages);
+        return messages;
     }
 
     public notifyWaiterWrongOrder(tableNumber: number): ResponseStructureExtended[] {
@@ -3325,8 +3336,9 @@ export class MessageService {
 
         this.logger.log(`[notifyWaiterWrongOrder] Notificação de pedido errado para a mesa ${tableNumber}`);
 
-        const message = `👋 *Astra Pay* - A Mesa ${tableNumber} relatou um problema com os pedidos da comanda.\n\nPor favor, dirija-se à mesa para verificar.`;
-        return this.mapTextMessages([message], groupId);
+        const messages = this.mapTextMessages([`👋 *Astra Pay* - Mesa ${tableNumber} relatou que o pedido está incorreto. Favor verificar.`], this.waiterGroupId);
+        this.whatsappApi.sendGroupMessage(this.waiterGroupId, messages);
+        return messages;
     }
 
 
@@ -3462,7 +3474,7 @@ export class MessageService {
                 }
 
                 const notifyAuthMessages = await this.notifyWaiterAuthenticationStatus(groupMessage, state);
-                // this.whatsappApi.sendWhatsAppMessages(notifyAuthMessages);
+                this.whatsappApi.sendGroupMessage(this.waiterGroupId, notifyAuthMessages);
             }
         }
 
