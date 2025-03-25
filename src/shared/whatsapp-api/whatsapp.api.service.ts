@@ -968,6 +968,37 @@ export class WhatsAppApiService {
     }
   }
 
+  /**
+       * Sends a message to a specified WhatsApp group using the GoRelayBot
+       * @param groupId The ID of the group to send the message to
+       * @param messages Array of messages to send to the group
+       */
+  async sendGroupMessage(groupId: string, messages: ResponseStructureExtended[]): Promise<void> {
+    try {
+      const port = '3105';
+      const url = `http://localhost:${port}/send-messages`;
+
+      // Ensure all messages are sent to the correct group ID
+      const groupMessages = messages.map(message => ({
+        ...message,
+        to: groupId
+      }));
+
+      // Send the request to the GoRelayBot
+      const response = await lastValueFrom(
+        this.httpService.post(url, groupMessages, {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        })
+      );
+
+      this.logger.log(`Successfully sent ${messages.length} messages to group ${groupId} via GoRelayBot. Status: ${response.status}`);
+    } catch (error) {
+      this.logger.error(`Failed to send group messages to ${groupId} via GoRelayBot: ${error.message}`);
+    }
+  }
+
 }
 
 
